@@ -1,187 +1,121 @@
-# so4-oracle
+# SoroRail — frontend
 
-Production Axum service for the SO4.market Soroban oracle and keeper.
+The TypeScript half of [SoroRail](https://github.com/Sororail): the client SDK,
+the reference application, and the documentation site, in one pnpm workspace.
 
-This repository contains a single Rust binary that runs:
-- Price fetching and aggregation from multiple sources (Binance, Coinbase, Pyth)
-- Keeper loop that executes pending orders, deposits, and withdrawals on-chain
-- HTTP API for price feeds and operational endpoints
+The contracts live in
+[Sororail/sororail-contracts](https://github.com/Sororail/sororail-contracts).
+Nothing here can be correct until those are, so that repo leads.
 
-## Architecture.
+> ### Unaudited. Testnet only.
+>
+> The contracts this talks to have not been audited. **Do not use them with
+> real value.** No mainnet addresses will be published before an audit.
+
+## Layout
 
 ```
-so4-oracle  (single statically-deployed binary)
-├── main.rs            tokio::main → load Config → build AppState → spawn loops → serve axum
-├── HTTP API (axum + tower-http CORS/trace)
-│     GET /health                      public   liveness
-│     GET /ready                       public   RPC reachable + keeper funded
-│     GET /prices                      public   serves in-memory PriceCache (frontend)
-│     GET /oracle/status               admin    last cycle, balance, per-token state
-│     GET /keeper/status               admin    pending work + last N executions
-│     GET /keeper/balance              admin    live keeper account XLM balance
-│     GET /oracle/failed-submissions   admin    ring buffer of failures
-│     GET /metrics                     admin    Prometheus metrics
-├── task: price_loop   tokio::interval(~1s)
-│     fetch sources → validate → aggregate min/max → sign → write PriceCache
-└── task: keeper_loop  tokio::interval(~1-2s)
-      poll reader (orders/deposits/withdrawals)
-      → if work: set_prices(needed tokens) → execute_*(key) per item → freeze on budget
-      → record results; never panics the loop
+frontend/
+├── packages/
+│   └── sdk/          @sororail/sdk — typed client        ✅ built
+└── apps/
+    ├── web/          Next.js reference application       ⬜ not started
+    └── docs/         Astro Starlight documentation site  ⬜ not started
 ```
 
-## Deployed Contract Reference
+## Status
 
-Testnet oracle:
+| Piece | State |
+|---|---|
+| `packages/sdk` | Clients for all five contracts, typed error decoding, Freighter + keypair signers, amount helpers. 28 tests passing, typechecks against `@stellar/stellar-sdk` 17.0.1. |
+| `apps/web` | Not started. |
+| `apps/docs` | Not started. |
 
-```text
-ORACLE=CBEMTV23SIJJBIST3V5HTMWHR4MHYGHNBIG4M26U4LGUJTWZXTFSVQEY
-ORDER_HANDLER=CC35OFZVWUTAZPV3B6UKSDVAVORZEWUUMOMTHO33H4YR4C5FKPEFODKY
-DEPOSIT_HANDLER=CDWOFIP4YQJGMCYAOWLSRBAWN2OTJUG2I5WOFC32O2TX2SRU56RWBE5C
-WITHDRAWAL_HANDLER=CCA5HRHMG6E6BVYRICSLZ5CK5KNPAAKXQ7XWDM34WWVGNHWHA26GRVVE
-READER=CC6OZUHF3LVO6PNP3V2EB36ORB3YSVYSH3LWD3RFLO4NUO3BYCXSWSYC
-DATA_STORE=CCZ3VKBEDLNBO2JM3EXL3SNBDJOV5BTN52FVQPER7F6D5GCE53PITQ3J
-ROLE_STORE=CBSUAIAMIFFS4AXQYZ7KR7FNO7IMKAPS5WF4DXANVXDTPKH2F7YUIN6Q
-NETWORK_PASSPHRASE="Test SDF Network ; September 2015"
-RPC_URL=https://soroban-testnet.stellar.org
-```
-
-## Required Environment Variables.
-
-The names below are the exact names the binary reads at startup via
-`Config::from_env()`. Using any other name (e.g. `ORDER_HANDLER_CONTRACT_ID`)
-will silently be ignored and the process will exit with a "required env var
-not set" error (#499).
-
-```bash
-# Network configuration
-STELLAR_NETWORK=testnet           # "testnet" (default) or "mainnet"
-STELLAR_RPC_URL=https://soroban-testnet.stellar.org  # required on mainnet; optional on testnet
-HORIZON_URL=https://horizon-testnet.stellar.org      # optional; defaults to network default
-
-# Contract IDs — use the short names exactly as shown
-ORACLE_CONTRACT_ID=CBEMTV23SIJJBIST3V5HTMWHR4MHYGHNBIG4M26U4LGUJTWZXTFSVQEY
-ORDER_HANDLER=CC35OFZVWUTAZPV3B6UKSDVAVORZEWUUMOMTHO33H4YR4C5FKPEFODKY
-DEPOSIT_HANDLER=CDWOFIP4YQJGMCYAOWLSRBAWN2OTJUG2I5WOFC32O2TX2SRU56RWBE5C
-WITHDRAWAL_HANDLER=CCA5HRHMG6E6BVYRICSLZ5CK5KNPAAKXQ7XWDM34WWVGNHWHA26GRVVE
-READER=CC6OZUHF3LVO6PNP3V2EB36ORB3YSVYSH3LWD3RFLO4NUO3BYCXSWSYC
-DATA_STORE=CCZ3VKBEDLNBO2JM3EXL3SNBDJOV5BTN52FVQPER7F6D5GCE53PITQ3J
-ROLE_STORE=CBSUAIAMIFFS4AXQYZ7KR7FNO7IMKAPS5WF4DXANVXDTPKH2F7YUIN6Q
-
-# Keeper configuration
-KEEPER_PRIVATE_KEY=<64-hex-char ed25519 private key>
-KEEPER_SECRET_KEY=<S...-strkey seed>
-KEEPER_ACCOUNT_ID=<G...-public key>
-KEEPER_INDEX=0
-MIN_KEEPER_BALANCE_XLM=10
-# Optional inclusion fees (stroops); defaults match historical hardcoded values
-SET_PRICES_TX_FEE=1000000
-KEEPER_TX_FEE=2000000
-
-# API configuration
-BIND_ADDR=0.0.0.0:8080
-ADMIN_API_TOKEN=<optional admin token>
-
-# Loop intervals (milliseconds)
-PRICE_LOOP_MS=1000
-KEEPER_LOOP_MS=1500
-
-# Price feed configuration (optional; falls back to embedded config/tokens.json)
-PRICE_FEED_CONFIG=/path/to/tokens.json
-```
-
-> **Note:** `NETWORK_PASSPHRASE` is not read by the binary — the correct
-> passphrase is selected automatically based on `STELLAR_NETWORK`. You do
-> not need to set it.
+The SDK has **not** yet been exercised against the deployed testnet contracts —
+its tests cover the pure logic (error decoding, amount conversion) and the
+whole surface typechecks, but no call has been made over the wire from here.
+That integration pass is the next thing worth doing.
 
 ## Development
 
 ```bash
-# Check the code
-cargo check --workspace
-
-# Run tests
-cargo test --workspace
-
-# Run locally (with .env file)
-cargo run --bin oracle
-
-# Build for production
-cargo build --release --bin oracle
+pnpm install
+pnpm test          # all packages
+pnpm typecheck
+pnpm build
 ```
 
-## Deployment
+Node ≥20. pnpm 10.
 
-### Docker
+## The SDK
 
-```bash
-# Build the image
-docker build -t so4-oracle .
+```ts
+import { StreamClient, KeypairSigner, toStroops, ContractError } from "@sororail/sdk";
+import { Networks } from "@stellar/stellar-sdk";
 
-# Run with environment variables
-docker run -p 8080:8080 \
-  -e STELLAR_RPC_URL=https://soroban-testnet.stellar.org \
-  -e KEEPER_PRIVATE_KEY=<key> \
-  -e KEEPER_SECRET_KEY=<secret> \
-  -e KEEPER_ACCOUNT_ID=<account> \
-  so4-oracle
+const signer = new KeypairSigner(process.env.SECRET_KEY!);
+const stream = new StreamClient({
+  contractId: "CBEE4SRXRGCJDWXP6DDOSX6FR4S2PJ5KHUQCHI3ABY3SQTCHYSA7CGC7",
+  rpcUrl: "https://soroban-testnet.stellar.org",
+  networkPassphrase: Networks.TESTNET,
+  publicKey: signer.publicKey,
+});
+
+// Build and inspect before anyone signs.
+const call = await stream.withdraw();
+const wouldReceive = await call.simulate();
+
+// Then commit.
+try {
+  const { hash, result } = await call.signAndSend(signer);
+} catch (error) {
+  if (error instanceof ContractError && error.is("StreamInsufficientAccrued")) {
+    // error.message is a sentence you can show a user.
+  }
+}
 ```
 
-### Systemd
+### Design rules
 
-```bash
-# Copy the service file
-sudo cp oracle.service /etc/systemd/system/
+**Signing is injected, never performed here.** The SDK builds and submits
+transactions but never holds a secret key. Supply a `Signer` — `FreighterSigner`
+in a browser, `KeypairSigner` for tests and scripts.
 
-# Create environment file
-sudo cp .env /opt/oracle/.env
+**Every stage is separately accessible.** `prepare` → `simulate` →
+`signAndSend`, rather than one opaque call. A confirmation screen can only be
+honest if it can show what a transaction will do *before* asking for a
+signature, so nothing collapses those steps.
 
-# Enable and start
-sudo systemctl enable oracle
-sudo systemctl start oracle
-```
+**Amounts are `bigint`, never `number`.** `Number` loses integer precision above
+2^53, which is well inside the range of a real balance. Use `toStroops` /
+`fromStroops` at the edges — and note the **decimals trap**: 7 is the default
+for classic Stellar assets, but a custom token can declare anything, so read
+`decimals()` off the token rather than assuming.
 
-### Fly.io
+**Errors are decoded, never bare codes.** `ContractError` carries the ABI
+integer, the variant name, the owning contract, and a message written for a
+person. The code table mirrors `sororail_common::errors` and is tested against
+its reserved ranges.
 
-```bash
-# Deploy to Fly.io
-fly deploy
+**Zero framework dependencies.** No React. If React helpers are ever wanted they
+go in a separate `packages/react`.
 
-# Set secrets
-fly secrets set KEEPER_PRIVATE_KEY=<key>
-fly secrets set KEEPER_SECRET_KEY=<secret>
-fly secrets set KEEPER_ACCOUNT_ID=<account>
-```
+## Two contract behaviours to surface in any UI
 
-### Railway
+**Recurring charges do not accrue retroactively.** A payee who forgets to charge
+for three months cannot then take three payments — the next charge is scheduled
+from *now*, and skipped periods are gone. This is deliberate consumer
+protection, and it surprises merchants. Say so in the UI.
 
-```bash
-# Deploy to Railway
-railway up
+**Batch payouts are capped and all-or-nothing.** Read
+`BatchPayoutClient.maxRecipients()` rather than hardcoding, and use
+`BatchPayoutClient.chunk()` to split a larger payroll. If any transfer fails,
+nobody is paid.
 
-# Set environment variables in Railway dashboard
-```
+## Contributing
 
-## Endpoints
+See [CONTRIBUTING.md](CONTRIBUTING.md).
 
-| Endpoint | Method | Auth | Description |
-|----------|--------|------|-------------|
-| `/health` | GET | No | Liveness check |
-| `/ready` | GET | No | Readiness check (RPC + keeper balance) |
-| `/prices` | GET | No | Current price feeds (CORS-enabled) |
-| `/oracle/status` | GET | Admin | Oracle status and recent errors |
-| `/keeper/status` | GET | Admin | Keeper status and execution history |
-| `/keeper/balance` | GET | Admin | Live keeper account XLM balance |
-| `/oracle/failed-submissions` | GET | Admin | Failed submission history |
-| `/metrics` | GET | Admin | Prometheus metrics |
+## License
 
-## Observability
-
-Every request emits a structured JSON log carrying: `timestamp`, `level`, `method`, `route` (matched path, not raw URI), `status`, `latency_ms`, and `request_id`. An `x-request-id` header is accepted on inbound requests; if absent, a UUIDv4 is generated. The request ID is echoed in the response headers and included in all handler-internal log events.
-
-The following HTTP metrics are exposed at `/metrics`:
-- `oracle_http_requests_total{route,method,status_class}` (counter)
-- `oracle_http_request_duration_seconds_bucket{route,le}` (histogram)
-- `oracle_http_requests_in_flight` (gauge)
-- `oracle_http_auth_failures_total{route}` (counter for 401s on admin routes)
-
-> **Note:** Health check traffic (`/health` and `/ready`) is logged at the `debug` level. Because these endpoints are polled frequently (e.g., every 30s by the Docker HEALTHCHECK), logging them at `info` would drown out real traffic.
+Apache-2.0. See [LICENSE](LICENSE).
