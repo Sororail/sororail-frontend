@@ -27,14 +27,20 @@ frontend/
 
 | Piece | State |
 |---|---|
-| `packages/sdk` | Clients for all five contracts, typed error decoding, Freighter + keypair signers, amount helpers. 28 tests passing, typechecks against `@stellar/stellar-sdk` 17.0.1. |
+| `packages/sdk` | Clients for all five contracts, typed error decoding, Freighter + keypair signers, amount helpers. 28 unit tests, 5 runnable examples, typechecks against `@stellar/stellar-sdk` 17.0.1. |
 | `apps/web` | Not started. |
 | `apps/docs` | Not started. |
 
-The SDK has **not** yet been exercised against the deployed testnet contracts —
-its tests cover the pure logic (error decoding, amount conversion) and the
-whole surface typechecks, but no call has been made over the wire from here.
-That integration pass is the next thing worth doing.
+**Verified end-to-end against live testnet.** `examples/stream-lifecycle.ts`
+created and withdrew from a real stream on 2026-09-07 — transactions
+[`520c753b`](https://stellar.expert/explorer/testnet/tx/520c753bb51cb97be5f85d92f77d37cf28b7966c2722eddae167a587287fc20b)
+and
+[`30d080d7`](https://stellar.expert/explorer/testnet/tx/30d080d7e52279c0eee441447269752e2feafb29e792eb992057c9a89a307d33)
+— and the contract's conservation invariant held on-chain.
+
+Not yet done: the SDK is unpublished and the `@sororail` npm scope is not
+reserved. The escrow, vesting, recurring and batch examples typecheck but have
+not each been run live; only the stream one has.
 
 ## Development
 
@@ -43,9 +49,14 @@ pnpm install
 pnpm test          # all packages
 pnpm typecheck
 pnpm build
+pnpm changeset     # describe a change for the next release
 ```
 
 Node ≥20. pnpm 10.
+
+Runnable examples live in [`packages/sdk/examples`](packages/sdk/examples) —
+they run against a real network, so they double as smoke tests. See their
+README for setup.
 
 ## The SDK
 
