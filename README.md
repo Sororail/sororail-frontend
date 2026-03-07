@@ -19,7 +19,7 @@ frontend/
 ├── packages/
 │   └── sdk/          @sororail/sdk — typed client        ✅ built
 └── apps/
-    ├── web/          Next.js reference application       ⬜ not started
+    ├── web/          Next.js reference application       ✅ built
     └── docs/         Astro Starlight documentation site  ⬜ not started
 ```
 
@@ -28,7 +28,7 @@ frontend/
 | Piece | State |
 |---|---|
 | `packages/sdk` | Clients for all five contracts, typed error decoding, Freighter + keypair signers, amount helpers. 28 unit tests, 5 runnable examples, typechecks against `@stellar/stellar-sdk` 17.0.1. |
-| `apps/web` | Not started. |
+| `apps/web` | Overview, payroll, streams, vesting and escrow screens. Builds and serves; typechecks. Wallet-connected flows have not been click-tested against a real wallet. |
 | `apps/docs` | Not started. |
 
 **Verified end-to-end against live testnet.** `examples/stream-lifecycle.ts`
@@ -40,7 +40,18 @@ and
 
 Not yet done: the SDK is unpublished and the `@sororail` npm scope is not
 reserved. The escrow, vesting, recurring and batch examples typecheck but have
-not each been run live; only the stream one has.
+not each been run live; only the stream one has. The app has no indexer, no
+database and no history feed — it is entirely client-side against Soroban RPC —
+and its wallet flows have not been exercised with a real Freighter extension.
+
+## Running the app
+
+```bash
+pnpm --filter @sororail/web dev
+```
+
+Then open http://localhost:3000. You will need
+[Freighter](https://freighter.app) and a funded testnet account.
 
 ## Development
 
