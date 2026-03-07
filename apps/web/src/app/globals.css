@@ -38,8 +38,8 @@
   --radius: 6px;
   --radius-lg: 10px;
 
-  --font-body: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
-    "Helvetica Neue", Arial, sans-serif;
+  --font-body: var(--font-geist-sans), ui-sans-serif, system-ui, -apple-system,
+    "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   /*
    * Monetary figures need true tabular figures so columns align. The system
    * stack is fine for prose but its digits are proportional, so amounts get an
