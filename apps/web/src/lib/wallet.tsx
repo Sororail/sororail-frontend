@@ -5,6 +5,7 @@ import {
   createContext,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
   useState,
   type ReactNode,
@@ -37,10 +38,17 @@ export function WalletProvider({ children }: { children: ReactNode }) {
   const [signer, setSigner] = useState<Signer | null>(null);
   const [connecting, setConnecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /**
+   * Set when the user explicitly disconnects, to stop the restore effect below
+   * immediately reconnecting them. Without it, Disconnect would appear to do
+   * nothing at all.
+   */
+  const [disconnected, setDisconnected] = useState(false);
 
   const connect = useCallback(async () => {
     setConnecting(true);
     setError(null);
+    setDisconnected(false);
     try {
       const connected = await FreighterSigner.connect();
       setSigner(connected);
@@ -55,11 +63,39 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  /**
+   * Restores the session on load.
+   *
+   * The connection lives in React state, so a refresh or a direct link would
+   * otherwise land the user on a disconnected page and make them click
+   * Connect again on every navigation that is not a client-side one.
+   *
+   * Freighter's `isConnected()` reports whether this site is *already*
+   * authorised, so this re-establishes an existing grant rather than asking
+   * for a new one — no popup appears. A failure here is silent by design: not
+   * having a wallet is the normal first-visit state, not an error to report.
+   */
+  useEffect(() => {
+    if (disconnected) return;
+    let cancelled = false;
+    void FreighterSigner.connect()
+      .then((restored) => {
+        if (!cancelled) setSigner(restored);
+      })
+      .catch(() => {
+        /* No wallet, locked, or not yet authorised. Stay disconnected. */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [disconnected]);
+
   const disconnect = useCallback(() => {
     // Forgets the session locally. The extension stays connected to the site
     // until the user revokes it there, which is the extension's call to make.
     setSigner(null);
     setError(null);
+    setDisconnected(true);
   }, []);
 
   const value = useMemo<WalletState>(
