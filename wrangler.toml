@@ -1,6 +1,6 @@
 name = "oracle"
-main = "build/index.js"
+main = "oracle/build/index.js"
 compatibility_date = "2026-05-12"
 
 [build]
-command = "cargo install -q \"worker-build@^0.8\" && worker-build --release --panic-unwind"
+command = "cargo install -q \"worker-build@^0.8\" && cd oracle && worker-build --release --panic-unwind"
