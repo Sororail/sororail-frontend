@@ -1,0 +1,15 @@
+[package]
+name = "oracle"
+version = "0.1.0"
+edition = "2021"
+authors = ["ibrahimijai <sunday.m1701072@st.futminna.edu.ng>"]
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+soroban-client = "0.5.6"
+worker = { version = "0.8", features = ["http", "axum"] }
+worker-macros = { version = "0.8", features = ["http"] }
+axum = { version = "0.8", default-features = false }
+tower-service = "0.3.3"
