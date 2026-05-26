@@ -97,9 +97,11 @@ pub struct AdminTransferProposal {
 // Well-known role constant helper
 // ---------------------------------------------------------------------------
 
-/// Returns the canonical ROLE_ADMIN identifier (32 zero bytes).
-/// Callers that need the admin role should use this value as the `role`
-/// argument.
+/// Returns the canonical `ROLE_ADMIN` identifier (32 zero bytes).
+///
+/// Use this as the `role` argument wherever admin-role membership must be
+/// checked or granted.  The value is stable and deterministic across all
+/// contract invocations.
 pub fn role_admin_id(env: &Env) -> BytesN<32> {
     BytesN::from_array(env, &[0u8; 32])
 }
@@ -117,8 +119,10 @@ impl RoleStore {
     // Bootstrap
     // -----------------------------------------------------------------------
 
-    /// Initialise the contract by granting ROLE_ADMIN to `initial_admin`.
-    /// Can only be called once (panics if already initialised).
+    /// Initialise the contract by granting `ROLE_ADMIN` to `initial_admin`.
+    ///
+    /// Must be called exactly once after deployment; panics if called again.
+    /// No authentication is required for the bootstrap call.
     pub fn initialize(env: Env, initial_admin: Address) {
         let admin_role = role_admin_id(&env);
         let key = RoleMembersKey {
@@ -333,7 +337,9 @@ impl RoleStore {
         env.storage().persistent().set(&key, &updated);
     }
 
-    /// Returns `true` if `account` holds `role`.
+    /// Returns `true` if `account` currently holds `role`, `false` otherwise.
+    ///
+    /// Read-only; no authentication required.
     pub fn has_role(env: Env, role: BytesN<32>, account: Address) -> bool {
         let key = RoleMembersKey { role };
         let members: Vec<Address> = env
@@ -408,6 +414,7 @@ impl RoleStore {
     // Internal helpers
     // -----------------------------------------------------------------------
 
+    /// Panics with [`RoleError::Unauthorized`] if `account` does not hold `role`.
     fn require_role(env: &Env, account: &Address, role: &BytesN<32>) {
         let key = RoleMembersKey { role: role.clone() };
         let members: Vec<Address> = env
