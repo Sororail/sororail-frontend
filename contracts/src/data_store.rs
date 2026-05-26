@@ -22,12 +22,14 @@ impl From<DataError> for soroban_sdk::Error {
 // Storage key types
 // ---------------------------------------------------------------------------
 
+/// Persistent-storage key for a `u128` value indexed by a 32-byte identifier.
 #[contracttype]
 #[derive(Clone)]
 pub struct U128Key {
     pub key: BytesN<32>,
 }
 
+/// Persistent-storage key for an `i128` value indexed by a 32-byte identifier.
 #[contracttype]
 #[derive(Clone)]
 pub struct I128Key {
