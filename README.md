@@ -1,4 +1,4 @@
-# so4-oracle
+# so4-oracle.
 
 Oracle keeper and API server for [SO4 Markets](https://github.com/SO4-Markets) — a decentralised perpetuals and spot exchange on Stellar/Soroban.
 
@@ -123,4 +123,4 @@ wrangler deploy
 
 ## License
 
-MIT
+MIT.
