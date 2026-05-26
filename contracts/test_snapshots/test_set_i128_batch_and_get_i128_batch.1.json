@@ -74,7 +74,7 @@
               "map": [
                 {
                   "key": {
-                    "symbol": "key"
+                    "symbol": "i128_key"
                   },
                   "val": {
                     "bytes": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a"
@@ -96,7 +96,7 @@
                   "map": [
                     {
                       "key": {
-                        "symbol": "key"
+                        "symbol": "i128_key"
                       },
                       "val": {
                         "bytes": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a"
@@ -126,7 +126,7 @@
               "map": [
                 {
                   "key": {
-                    "symbol": "key"
+                    "symbol": "i128_key"
                   },
                   "val": {
                     "bytes": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"
@@ -148,7 +148,7 @@
                   "map": [
                     {
                       "key": {
-                        "symbol": "key"
+                        "symbol": "i128_key"
                       },
                       "val": {
                         "bytes": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"
