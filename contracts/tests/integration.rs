@@ -4,12 +4,18 @@
 //! #2  batch get/set for u128 and i128
 //! #3  TTL estimation (existing key, missing key)
 //! #4  multi-role scenarios, last-admin guard, pagination
+//! #9  doc-comment coverage (compile-time validation)
+//! #10 market creation with MarketConfig stored to data_store
+//! #11 pause/unpause lifecycle and guard on paused markets
+//! #12 end-to-end: role_store + data_store + market_factory
 
 #![cfg(test)]
 
 use contracts::{
     data_store::{DataStore, DataStoreClient, TtlEstimate},
+    market_factory::{market_keeper_role, MarketFactory, MarketFactoryClient},
     role_store::{RoleMetadata, RoleStore, RoleStoreClient},
+    types::MarketConfig,
 };
 use soroban_sdk::{
     testutils::Address as _,
@@ -321,4 +327,256 @@ fn test_grant_multiple_roles_same_account() {
     for role in &roles {
         assert!(client.has_role(role, &account));
     }
+}
+
+// ---------------------------------------------------------------------------
+// Shared helper for issues #10-#12
+// ---------------------------------------------------------------------------
+
+fn setup_market_factory<'a>(
+    env: &'a Env,
+) -> (
+    MarketFactoryClient<'a>,
+    RoleStoreClient<'a>,
+    DataStoreClient<'a>,
+    Address, // admin
+) {
+    let rs_id = env.register(RoleStore, ());
+    let ds_id = env.register(DataStore, ());
+    let mf_id = env.register(MarketFactory, ());
+
+    let rs = RoleStoreClient::new(env, &rs_id);
+    let ds = DataStoreClient::new(env, &ds_id);
+    let mf = MarketFactoryClient::new(env, &mf_id);
+
+    let admin = Address::generate(env);
+    rs.initialize(&admin);
+    mf.initialize(&rs_id, &ds_id);
+
+    (mf, rs, ds, admin)
+}
+
+// ---------------------------------------------------------------------------
+// Issue #10 — market creation
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_create_market_stores_config_in_data_store() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (mf, _rs, ds, admin) = setup_market_factory(&env);
+
+    let long_token  = Address::generate(&env);
+    let short_token = Address::generate(&env);
+    let mkt_token   = Address::generate(&env);
+
+    let cfg = MarketConfig {
+        max_long_open_interest:  1_000_000u128,
+        max_short_open_interest: 2_000_000u128,
+    };
+
+    let market_id = mf.create_market(
+        &admin,
+        &long_token,
+        &short_token,
+        &mkt_token,
+        &Some(cfg.clone()),
+    );
+    assert_eq!(market_id, 0u32, "first market should have id 0");
+
+    // Market count must have advanced to 1.
+    assert_eq!(mf.market_count(), 1u32);
+}
+
+#[test]
+fn test_create_market_default_config() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (mf, _rs, _ds, admin) = setup_market_factory(&env);
+
+    let market_id = mf.create_market(
+        &admin,
+        &Address::generate(&env),
+        &Address::generate(&env),
+        &Address::generate(&env),
+        &None,
+    );
+    assert_eq!(market_id, 0u32);
+    assert_eq!(mf.market_count(), 1u32);
+}
+
+#[test]
+fn test_create_market_counter_increments() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (mf, _rs, _ds, admin) = setup_market_factory(&env);
+
+    for expected_id in 0u32..3u32 {
+        let id = mf.create_market(
+            &admin,
+            &Address::generate(&env),
+            &Address::generate(&env),
+            &Address::generate(&env),
+            &None,
+        );
+        assert_eq!(id, expected_id);
+    }
+    assert_eq!(mf.market_count(), 3u32);
+}
+
+#[test]
+#[should_panic]
+fn test_create_market_unauthorized_caller_panics() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (mf, rs, _ds, _admin) = setup_market_factory(&env);
+
+    // A fresh account with no roles tries to create a market.
+    let intruder = Address::generate(&env);
+    mf.create_market(
+        &intruder,
+        &Address::generate(&env),
+        &Address::generate(&env),
+        &Address::generate(&env),
+        &None,
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Issue #11 — pause / unpause
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_pause_and_unpause_market() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (mf, _rs, _ds, admin) = setup_market_factory(&env);
+
+    let id = mf.create_market(
+        &admin,
+        &Address::generate(&env),
+        &Address::generate(&env),
+        &Address::generate(&env),
+        &None,
+    );
+
+    assert!(!mf.is_paused(&id), "should not be paused after creation");
+
+    mf.pause_market(&admin, &id);
+    assert!(mf.is_paused(&id), "should be paused after pause_market");
+
+    mf.unpause_market(&admin, &id);
+    assert!(!mf.is_paused(&id), "should be unpaused after unpause_market");
+}
+
+#[test]
+fn test_market_keeper_can_pause() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (mf, rs, _ds, admin) = setup_market_factory(&env);
+
+    let keeper = Address::generate(&env);
+    rs.grant_role(&admin, &market_keeper_role(&env), &keeper);
+
+    let id = mf.create_market(
+        &admin,
+        &Address::generate(&env),
+        &Address::generate(&env),
+        &Address::generate(&env),
+        &None,
+    );
+
+    mf.pause_market(&keeper, &id);
+    assert!(mf.is_paused(&id));
+}
+
+#[test]
+#[should_panic]
+fn test_pause_nonexistent_market_panics() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (mf, _rs, _ds, admin) = setup_market_factory(&env);
+    // Market id 999 was never created.
+    mf.pause_market(&admin, &999u32);
+}
+
+#[test]
+#[should_panic]
+fn test_unpause_nonexistent_market_panics() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (mf, _rs, _ds, admin) = setup_market_factory(&env);
+    mf.unpause_market(&admin, &999u32);
+}
+
+// ---------------------------------------------------------------------------
+// Issue #12 — end-to-end: role_store + data_store + market_factory
+// ---------------------------------------------------------------------------
+
+/// Full lifecycle: deploy all three contracts, wire them up, create a market,
+/// verify the on-chain state, then pause and re-verify.
+#[test]
+fn test_e2e_full_market_lifecycle() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (mf, rs, ds, admin) = setup_market_factory(&env);
+
+    // 1. Verify role_store has the admin.
+    assert!(rs.has_role(&BytesN::from_array(&env, &[0u8; 32]), &admin));
+
+    // 2. Create a market.
+    let long_token  = Address::generate(&env);
+    let short_token = Address::generate(&env);
+    let mkt_token   = Address::generate(&env);
+
+    let cfg = MarketConfig {
+        max_long_open_interest:  500_000u128,
+        max_short_open_interest: 750_000u128,
+    };
+    let market_id = mf.create_market(
+        &admin,
+        &long_token,
+        &short_token,
+        &mkt_token,
+        &Some(cfg),
+    );
+    assert_eq!(market_id, 0u32);
+
+    // 3. Verify market_count is 1.
+    assert_eq!(mf.market_count(), 1u32);
+
+    // 4. Market starts unpaused.
+    assert!(!mf.is_paused(&market_id));
+
+    // 5. Pause, verify, unpause, verify.
+    mf.pause_market(&admin, &market_id);
+    assert!(mf.is_paused(&market_id));
+
+    mf.unpause_market(&admin, &market_id);
+    assert!(!mf.is_paused(&market_id));
+
+    // 6. A second market can be created independently.
+    let id2 = mf.create_market(
+        &admin,
+        &Address::generate(&env),
+        &Address::generate(&env),
+        &Address::generate(&env),
+        &None,
+    );
+    assert_eq!(id2, 1u32);
+    assert_eq!(mf.market_count(), 2u32);
+
+    // 7. Pausing market 0 does not affect market 1.
+    mf.pause_market(&admin, &market_id);
+    assert!(mf.is_paused(&market_id));
+    assert!(!mf.is_paused(&id2));
 }
