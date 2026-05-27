@@ -121,3 +121,71 @@ pub fn position_list_key(env: &Env) -> BytesN<32> {
     BytesN::from_array(env, &buf)
 }
 
+// ---------------------------------------------------------------------------
+// Position / open-interest key generators (issues #43, #45, #46)
+// ---------------------------------------------------------------------------
+
+/// Returns the data-store key for the current long open interest of `market_id`.
+pub fn open_interest_long_key(env: &Env, market_id: u32) -> BytesN<32> {
+    market_scoped_key(env, b"oi_long_", market_id)
+}
+
+/// Returns the data-store key for the current short open interest of `market_id`.
+pub fn open_interest_short_key(env: &Env, market_id: u32) -> BytesN<32> {
+    market_scoped_key(env, b"oi_shrt_", market_id)
+}
+
+/// Returns the data-store key for the max open interest cap on the long side.
+pub fn max_open_interest_long_key(env: &Env, market_id: u32) -> BytesN<32> {
+    market_scoped_key(env, b"maxoi_lo", market_id)
+}
+
+/// Returns the data-store key for the max open interest cap on the short side.
+pub fn max_open_interest_short_key(env: &Env, market_id: u32) -> BytesN<32> {
+    market_scoped_key(env, b"maxoi_sh", market_id)
+}
+
+/// Returns the data-store key for the account balance used in PnL settlement.
+pub fn account_balance_key(env: &Env, market_id: u32) -> BytesN<32> {
+    market_scoped_key(env, b"acct_bal", market_id)
+}
+
+// ---------------------------------------------------------------------------
+// Config handler key generators (issue #30)
+// ---------------------------------------------------------------------------
+
+/// Returns the data-store key for the max pool amount of `market_id`.
+pub fn max_pool_amount_key(env: &Env, market_id: u32) -> BytesN<32> {
+    market_scoped_key(env, b"cfgmxpam", market_id)
+}
+
+/// Returns the data-store key for the max open interest of `market_id`.
+pub fn max_open_interest_key(env: &Env, market_id: u32) -> BytesN<32> {
+    market_scoped_key(env, b"cfgmxpoi", market_id)
+}
+
+/// Returns the data-store key for the position fee factor of `market_id`.
+pub fn position_fee_factor_key(env: &Env, market_id: u32) -> BytesN<32> {
+    market_scoped_key(env, b"cfgpffee", market_id)
+}
+
+/// Returns the data-store key for the borrowing factor of `market_id`.
+pub fn borrowing_factor_key(env: &Env, market_id: u32) -> BytesN<32> {
+    market_scoped_key(env, b"cfgbrrwf", market_id)
+}
+
+/// Returns the data-store key for the funding factor of `market_id`.
+pub fn funding_factor_key(env: &Env, market_id: u32) -> BytesN<32> {
+    market_scoped_key(env, b"cfgfundf", market_id)
+}
+
+/// Returns the data-store key for the min collateral factor of `market_id`.
+pub fn min_collateral_factor_key(env: &Env, market_id: u32) -> BytesN<32> {
+    market_scoped_key(env, b"cfgmncol", market_id)
+}
+
+/// Returns the data-store key for the max leverage of `market_id`.
+pub fn max_leverage_key(env: &Env, market_id: u32) -> BytesN<32> {
+    market_scoped_key(env, b"cfgmxlev", market_id)
+}
+
