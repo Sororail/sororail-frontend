@@ -41,7 +41,7 @@ pub fn market_token_key(env: &Env, market_id: u32) -> BytesN<32> {
 }
 
 /// Returns the data-store key that holds a `u128` flag (1 = paused) for
-/// `market_id`.  Used by issue #11 pause/unpause logic.
+/// `market_id`.
 pub fn market_paused_key(env: &Env, market_id: u32) -> BytesN<32> {
     let mut buf = [0u8; 32];
     buf[..8].copy_from_slice(b"mpaused_");
@@ -50,8 +50,7 @@ pub fn market_paused_key(env: &Env, market_id: u32) -> BytesN<32> {
     BytesN::from_array(env, &buf)
 }
 
-/// Returns the data-store key holding the total number of markets ever created
-/// (monotonically increasing counter).
+/// Returns the data-store key holding the total number of markets ever created.
 pub fn market_count_key(env: &Env) -> BytesN<32> {
     let mut buf = [0u8; 32];
     buf[..9].copy_from_slice(b"mkt_count");
@@ -59,10 +58,9 @@ pub fn market_count_key(env: &Env) -> BytesN<32> {
 }
 
 // ---------------------------------------------------------------------------
-// Liquidity key generators (pools, fees) — issues #17, #20
+// Liquidity key generators
 // ---------------------------------------------------------------------------
 
-/// Builds a 32-byte key from an 8-byte ASCII `prefix` and `market_id`.
 fn market_scoped_key(env: &Env, prefix: &[u8; 8], market_id: u32) -> BytesN<32> {
     let mut buf = [0u8; 32];
     buf[..8].copy_from_slice(prefix);
@@ -70,84 +68,121 @@ fn market_scoped_key(env: &Env, prefix: &[u8; 8], market_id: u32) -> BytesN<32> 
     BytesN::from_array(env, &buf)
 }
 
-/// Returns the data-store key for the long-token pool amount of `market_id`.
 pub fn pool_long_amount_key(env: &Env, market_id: u32) -> BytesN<32> {
     market_scoped_key(env, b"plong_am", market_id)
 }
 
-/// Returns the data-store key for the short-token pool amount of `market_id`.
 pub fn pool_short_amount_key(env: &Env, market_id: u32) -> BytesN<32> {
     market_scoped_key(env, b"pshrt_am", market_id)
 }
 
-/// Returns the data-store key for the claimable long-token fee of `market_id`.
-/// Fees accrue here and are claimable by the `fee_handler`.
 pub fn claimable_fee_long_key(env: &Env, market_id: u32) -> BytesN<32> {
     market_scoped_key(env, b"clmfee_l", market_id)
 }
 
-/// Returns the data-store key for the claimable short-token fee of `market_id`.
 pub fn claimable_fee_short_key(env: &Env, market_id: u32) -> BytesN<32> {
     market_scoped_key(env, b"clmfee_s", market_id)
 }
 
-/// Returns the data-store key holding the optional withdrawal fee factor for
-/// `market_id`. When unset (or zero) no fee is charged. The factor is expressed
-/// against [`crate::liquidity_handler::FEE_FACTOR_DENOMINATOR`].
 pub fn withdrawal_fee_factor_key(env: &Env, market_id: u32) -> BytesN<32> {
     market_scoped_key(env, b"wfeefact", market_id)
 }
 
-/// Returns the data-store key holding the maintenance margin factor for
-/// `market_id`.
 pub fn market_maintenance_margin_factor_key(env: &Env, market_id: u32) -> BytesN<32> {
     market_scoped_key(env, b"mm_factr", market_id)
 }
 
+pub fn position_oi_list_key(env: &Env, market_id: u32, is_long: bool) -> BytesN<32> {
+    let mut buf = [0u8; 32];
+    buf[..7].copy_from_slice(b"poilist");
+    let id_bytes = market_id.to_be_bytes();
+    buf[7..11].copy_from_slice(&id_bytes);
+    buf[11] = if is_long { 1 } else { 0 };
+    BytesN::from_array(env, &buf)
+}
+
+pub fn position_list_key(env: &Env) -> BytesN<32> {
+    let mut buf = [0u8; 32];
+    buf[..8].copy_from_slice(b"pos_list");
+    BytesN::from_array(env, &buf)
+}
+
 // ---------------------------------------------------------------------------
-// Position / open-interest key generators (issues #43, #45, #46)
+// Position / open-interest key generators
 // ---------------------------------------------------------------------------
 
-/// Returns the data-store key for the current long open interest of `market_id`.
 pub fn open_interest_long_key(env: &Env, market_id: u32) -> BytesN<32> {
     market_scoped_key(env, b"oi_long_", market_id)
 }
 
-/// Returns the data-store key for the current short open interest of `market_id`.
 pub fn open_interest_short_key(env: &Env, market_id: u32) -> BytesN<32> {
     market_scoped_key(env, b"oi_shrt_", market_id)
 }
 
-/// Returns the data-store key for the max open interest cap on the long side.
 pub fn max_open_interest_long_key(env: &Env, market_id: u32) -> BytesN<32> {
     market_scoped_key(env, b"maxoi_lo", market_id)
 }
 
-/// Returns the data-store key for the max open interest cap on the short side.
 pub fn max_open_interest_short_key(env: &Env, market_id: u32) -> BytesN<32> {
     market_scoped_key(env, b"maxoi_sh", market_id)
 }
 
-/// Returns the data-store key for the account balance used in PnL settlement.
 pub fn account_balance_key(env: &Env, market_id: u32) -> BytesN<32> {
     market_scoped_key(env, b"acct_bal", market_id)
 }
 
-/// Returns the fee bucket key used by market swaps for `market_id`.
 pub fn claimable_fee_amount_key(env: &Env, market_id: u32) -> BytesN<32> {
     market_scoped_key(env, b"clmfee_a", market_id)
 }
 
-/// Expiry window in ledgers for market orders.
 pub fn market_order_expiry_ledgers_key(env: &Env) -> BytesN<32> {
     let mut buf = [0u8; 32];
     buf[..16].copy_from_slice(b"mkt_ord_exp_legd");
     BytesN::from_array(env, &buf)
 }
 
-/// Expiry window in ledgers for limit/stop orders.
 pub fn limit_order_expiry_ledgers_key(env: &Env) -> BytesN<32> {
     let mut buf = [0u8; 32];
     buf[..16].copy_from_slice(b"lmt_ord_exp_legd");
     BytesN::from_array(env, &buf)
+}
+
+// ---------------------------------------------------------------------------
+// Config handler key generators
+// ---------------------------------------------------------------------------
+
+pub fn max_pool_amount_key(env: &Env, market_id: u32) -> BytesN<32> {
+    market_scoped_key(env, b"cfgmxpam", market_id)
+}
+
+pub fn max_open_interest_key(env: &Env, market_id: u32) -> BytesN<32> {
+    market_scoped_key(env, b"cfgmxpoi", market_id)
+}
+
+pub fn position_fee_factor_key(env: &Env, market_id: u32) -> BytesN<32> {
+    market_scoped_key(env, b"cfgpffee", market_id)
+}
+
+pub fn borrowing_factor_key(env: &Env, market_id: u32) -> BytesN<32> {
+    market_scoped_key(env, b"cfgbrrwf", market_id)
+}
+
+pub fn funding_factor_key(env: &Env, market_id: u32) -> BytesN<32> {
+    market_scoped_key(env, b"cfgfundf", market_id)
+}
+
+pub fn min_collateral_factor_key(env: &Env, market_id: u32) -> BytesN<32> {
+    market_scoped_key(env, b"cfgmncol", market_id)
+}
+
+pub fn max_leverage_key(env: &Env, market_id: u32) -> BytesN<32> {
+    market_scoped_key(env, b"cfgmxlev", market_id)
+}
+
+// ---------------------------------------------------------------------------
+// ADL key generators
+// ---------------------------------------------------------------------------
+
+pub fn max_pnl_factor_key(env: &Env, market_id: u32) -> BytesN<32> {
+    market_scoped_key(env, b"maxpnlfc", market_id)
 }

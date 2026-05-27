@@ -1,4 +1,5 @@
 use crate::types::PositionProps;
+use crate::libs::math::checked_sub_u128;
 
 /// Precision denominator for margin factors and price calculations.
 pub const PRECISION: u128 = 1_000_000;
@@ -29,7 +30,7 @@ pub fn is_liquidatable(
         if abs_pnl >= pos.collateral_amount {
             0
         } else {
-            pos.collateral_amount - abs_pnl
+            checked_sub_u128(pos.collateral_amount, abs_pnl)
         }
     };
 
@@ -37,6 +38,20 @@ pub fn is_liquidatable(
     let maintenance_margin = pos.quantity * maintenance_margin_factor / PRECISION;
 
     remaining_collateral < maintenance_margin
+}
+
+/// Returns whether the pool's total PnL exposure has reached `max_pnl_factor`.
+///
+/// ADL is triggered when: `total_pnl / pool_value >= max_pnl_factor / PRECISION`
+/// i.e. `total_pnl * PRECISION >= pool_value * max_pnl_factor`
+///
+/// Returns `false` when `pool_value` is zero to avoid division by zero.
+pub fn is_adl_triggered(total_pnl: i128, pool_value: u128, max_pnl_factor: u128) -> bool {
+    if pool_value == 0 || total_pnl <= 0 {
+        return false;
+    }
+    let pnl = total_pnl as u128;
+    pnl * PRECISION >= pool_value * max_pnl_factor
 }
 
 /// Calculates PnL for a position.
@@ -52,19 +67,20 @@ pub fn calculate_pnl(pos: &PositionProps, current_price: u128) -> i128 {
     
     if pos.is_long {
         if current_price >= pos.average_price {
-            let diff = current_price - pos.average_price;
+            let diff = checked_sub_u128(current_price, pos.average_price);
             (pos.quantity * diff / pos.average_price) as i128
         } else {
-            let diff = pos.average_price - current_price;
+            let diff = checked_sub_u128(pos.average_price, current_price);
             -((pos.quantity * diff / pos.average_price) as i128)
         }
     } else {
         if current_price <= pos.average_price {
-            let diff = pos.average_price - current_price;
+            let diff = checked_sub_u128(pos.average_price, current_price);
             (pos.quantity * diff / pos.average_price) as i128
         } else {
-            let diff = current_price - pos.average_price;
+            let diff = checked_sub_u128(current_price, pos.average_price);
             -((pos.quantity * diff / pos.average_price) as i128)
         }
     }
 }
+

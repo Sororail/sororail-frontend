@@ -50,7 +50,8 @@ fn setup() -> Setup {
     rs.initialize(&admin);
     ds.initialize(&admin);
     lh.initialize(&rs_addr, &ds_addr);
-    oh.initialize(&rs_addr, &ds_addr, &lh_addr);
+    oh.initialize(&ds_addr);
+    oh.configure(&rs_addr, &lh_addr);
 
     rs.grant_role(&admin, &order_keeper_role(&env), &keeper);
     oh.set_adl_handler(&admin, &adl_handler);
