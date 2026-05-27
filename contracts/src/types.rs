@@ -240,6 +240,8 @@ pub enum OrderError {
     UnsatisfiedTrigger = 40,
     /// The order does not exist.
     OrderNotFound = 41,
+    /// The swap output is below the caller-specified minimum.
+    InsufficientOutput = 42,
 }
 
 impl From<OrderError> for soroban_sdk::Error {
@@ -283,6 +285,12 @@ pub enum OrderType {
     LimitIncrease,
     /// Close or decrease a position when price drops to / below trigger_price.
     StopLossDecrease,
+    /// Swap tokens when the execution price satisfies the trigger condition.
+    /// For a sell swap: executes when `price <= trigger_price`.
+    /// For a buy swap:  executes when `price >= trigger_price`.
+    LimitSwap,
+    /// Swap tokens immediately at the current market price along a given path.
+    MarketSwap,
 }
 
 /// A pending order.
