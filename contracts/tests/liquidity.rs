@@ -13,10 +13,32 @@ use contracts::{
     role_store::{RoleStore, RoleStoreClient},
 };
 use soroban_sdk::{
+    contract, contractimpl,
     testutils::Address as _,
     token::{StellarAssetClient, TokenClient},
-    Address, Env,
+    Address, Env, IntoVal, InvokeError, Symbol, Vec,
 };
+
+#[contract]
+pub struct MultiAction;
+
+#[contractimpl]
+impl MultiAction {
+    pub fn send_tokens_then_invalid_deposit(
+        env: Env,
+        caller: Address,
+        lh: Address,
+        token: Address,
+        amount: u128,
+        market_id: u32,
+    ) {
+        if amount > 0 {
+            TokenClient::new(&env, &token).transfer(&caller, &lh, &(amount as i128));
+        }
+        let lhc = LiquidityHandlerClient::new(&env, &lh);
+        lhc.execute_deposit(&caller, &market_id, &0u128, &0u128, &caller);
+    }
+}
 
 const MARKET: u32 = 0;
 
@@ -198,6 +220,41 @@ fn test_concurrent_deposits_consistent_lp_and_price() {
         value_before * supply_after <= value_after * supply_before,
         "price per LP must not decrease across the second deposit"
     );
+}
+
+#[test]
+fn test_multicall_rolls_back_on_invalid_deposit() {
+    let env = Env::default();
+    let s = setup(&env);
+    let lhc = LiquidityHandlerClient::new(&env, &s.lh);
+    let long_tok = TokenClient::new(&env, &s.long);
+    let action = env.register(MultiAction, ());
+
+    let user = Address::generate(&env);
+    mint(&env, &s.long, &user, 1000);
+    assert_eq!(long_tok.balance(&user), 1000);
+
+    let args = Vec::from_array(
+        &env,
+        [
+            user.clone().into_val(&env),
+            s.lh.clone().into_val(&env),
+            s.long.clone().into_val(&env),
+            100u128.into_val(&env),
+            MARKET.into_val(&env),
+        ],
+    );
+    let result = env.try_invoke_contract::<(), InvokeError>(
+        &action,
+        &Symbol::new(&env, "send_tokens_then_invalid_deposit"),
+        args,
+    );
+    assert!(result.is_err(), "invalid deposit should abort the transaction");
+
+    assert_eq!(long_tok.balance(&user), 1000, "token transfer rolled back");
+    assert_eq!(long_tok.balance(&s.lh), 0, "pool received no tokens");
+    assert_eq!(lhc.pool_amounts(&MARKET), (0u128, 0u128), "pool amounts unchanged");
+    assert_eq!(lhc.lp_supply(&MARKET), 0u128, "LP supply unchanged");
 }
 
 // ---------------------------------------------------------------------------

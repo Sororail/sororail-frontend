@@ -1,4 +1,4 @@
-use soroban_sdk::{contracttype, Address};
+use soroban_sdk::{contracttype, Address, BytesN};
 
 // ---------------------------------------------------------------------------
 // Liquidity (deposit / withdrawal) errors
@@ -114,6 +114,9 @@ pub struct MarketConfig {
     /// Maximum open interest allowed on the short side (u128 units).
     /// Defaults to `u128::MAX` when not provided.
     pub max_short_open_interest: u128,
+    /// Maintenance margin factor, scaled by 1,000,000.
+    /// E.g., 50,000 = 5%.
+    pub maintenance_margin_factor: u128,
 }
 
 // ---------------------------------------------------------------------------
@@ -141,4 +144,79 @@ pub struct MarketProps {
     pub max_short_open_interest: u128,
     /// Whether the market is currently paused.
     pub is_paused: bool,
+    /// Maintenance margin factor.
+    pub maintenance_margin_factor: u128,
+}
+
+/// On-chain record for a position owned by an account.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PositionProps {
+    /// Unique identifier for the position entry.
+    pub position_key: BytesN<32>,
+    /// Account that owns the position.
+    pub account: Address,
+    /// Market ID associated with the position.
+    pub market_id: u32,
+    /// Position quantity / notional value.
+    pub quantity: u128,
+    /// Collateral amount held for the position.
+    pub collateral_amount: u128,
+    /// Average entry price.
+    pub average_price: u128,
+    /// Whether the position is long.
+    pub is_long: bool,
+    /// Whether the position remains open.
+    pub is_open: bool,
+}
+
+/// Errors returned by the `position_handler` contract.
+#[contracttype]
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[repr(u32)]
+pub enum PositionError {
+    /// The requested position does not exist.
+    PositionNotFound = 30,
+}
+
+impl From<PositionError> for soroban_sdk::Error {
+    fn from(e: PositionError) -> Self {
+        soroban_sdk::Error::from_contract_error(e as u32)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Router actions (issue #22)
+// ---------------------------------------------------------------------------
+
+/// A discrete action executed by the `Router`'s `multicall` loop.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum RouterAction {
+    /// Transfer tokens from the caller to a receiver: (token, receiver, amount).
+    SendTokens(Address, Address, u128),
+
+    /// Create a deposit request: (market_id, long_amount, short_amount, receiver).
+    CreateDeposit(u32, u128, u128, Address),
+
+    /// Placeholder for cancelling a pending deposit: (deposit_id).
+    CancelDeposit(u32),
+
+    /// Create a pending withdrawal: (market_id, lp_amount, receiver, min_long_out, min_short_out).
+    CreateWithdrawal(u32, u128, Address, u128, u128),
+
+    /// Placeholder for cancelling a pending withdrawal: (withdrawal_id).
+    CancelWithdrawal(u32),
+
+    /// Placeholder for creating a new order: (market_id, size_delta, is_long).
+    CreateOrder(u32, i128, bool),
+
+    /// Placeholder for updating an existing order: (order_id, size_delta).
+    UpdateOrder(u32, i128),
+
+    /// Placeholder for cancelling a pending order: (order_id).
+    CancelOrder(u32),
+
+    /// Placeholder for claiming accrued funding fees: (market_id, receiver).
+    ClaimFundingFees(u32, Address),
 }

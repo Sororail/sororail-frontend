@@ -4,7 +4,7 @@ use crate::{
     data_store::DataStoreClient,
     keys::{
         market_count_key, market_long_token_key, market_paused_key, market_props_key,
-        market_short_token_key, market_token_key,
+        market_short_token_key, market_token_key, market_maintenance_margin_factor_key,
     },
     role_store::{role_admin_id, RoleStoreClient},
     types::{MarketConfig, MarketError},
@@ -98,6 +98,7 @@ impl MarketFactory {
         let cfg = config.unwrap_or(MarketConfig {
             max_long_open_interest: u128::MAX,
             max_short_open_interest: u128::MAX,
+            maintenance_margin_factor: 0,
         });
 
         // Persist per-token address keys.
@@ -122,6 +123,13 @@ impl MarketFactory {
             &caller,
             &market_props_key(&env, market_id),
             &cfg.max_long_open_interest,
+        );
+
+        // Persist maintenance margin factor.
+        ds.set_u128(
+            &caller,
+            &market_maintenance_margin_factor_key(&env, market_id),
+            &cfg.maintenance_margin_factor,
         );
 
         // Advance the counter.
