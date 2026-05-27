@@ -1,4 +1,4 @@
-use soroban_sdk::{contract, contractimpl, panic_with_error, Address, BytesN, Env};
+use soroban_sdk::{contract, contractimpl, contracttype, panic_with_error, Address, BytesN, Env};
 
 use crate::{
     data_store::DataStoreClient,
@@ -9,6 +9,16 @@ use crate::{
     role_store::{role_admin_id, RoleStoreClient},
     types::{MarketConfig, MarketError},
 };
+
+/// Composite key for the reverse-lookup index that maps a
+/// `(index_token, long_token, short_token)` triple to the corresponding
+/// `market_token` address.
+#[contracttype]
+pub struct MarketByTokensKey {
+    pub index_token: Address,
+    pub long_token: Address,
+    pub short_token: Address,
+}
 
 // ---------------------------------------------------------------------------
 // Well-known role identifiers
@@ -78,6 +88,7 @@ impl MarketFactory {
     pub fn create_market(
         env: Env,
         caller: Address,
+        index_token: Address,
         long_token: Address,
         short_token: Address,
         market_token: Address,
@@ -127,9 +138,19 @@ impl MarketFactory {
         // Advance the counter.
         ds.set_u128(&caller, &count_key, &((market_id as u128) + 1));
 
+        // Store reverse-lookup: (index_token, long_token, short_token) → market_token.
+        let lookup_key = MarketByTokensKey {
+            index_token: index_token.clone(),
+            long_token: long_token.clone(),
+            short_token: short_token.clone(),
+        };
+        env.storage()
+            .persistent()
+            .set(&lookup_key, &market_token);
+
         // Emit an event so off-chain indexers can track market creation.
         env.events()
-            .publish(("create_market",), (market_id, long_token, short_token, market_token));
+            .publish(("create_market",), (market_id, index_token, long_token, short_token, market_token));
 
         market_id
     }
@@ -177,6 +198,26 @@ impl MarketFactory {
     // -----------------------------------------------------------------------
     // Queries
     // -----------------------------------------------------------------------
+
+    /// Look up a market's `market_token` address by its backing token triple.
+    ///
+    /// Reconstructs the deterministic storage key from `(index_token,
+    /// long_token, short_token)` and returns `Some(market_token)` if the
+    /// combination has been registered via [`create_market`], or `None`
+    /// otherwise.  This saves frontends from iterating the entire market list.
+    pub fn get_market_by_tokens(
+        env: Env,
+        index_token: Address,
+        long_token: Address,
+        short_token: Address,
+    ) -> Option<Address> {
+        let lookup_key = MarketByTokensKey {
+            index_token,
+            long_token,
+            short_token,
+        };
+        env.storage().persistent().get(&lookup_key)
+    }
 
     /// Returns whether `market_id` is currently paused.
     ///

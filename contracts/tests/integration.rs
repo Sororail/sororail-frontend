@@ -942,6 +942,7 @@ fn test_create_market_stores_config_in_data_store() {
 
     let (mf, _rs, ds, admin) = setup_market_factory(&env);
 
+    let index_token = Address::generate(&env);
     let long_token  = Address::generate(&env);
     let short_token = Address::generate(&env);
     let mkt_token   = Address::generate(&env);
@@ -953,6 +954,7 @@ fn test_create_market_stores_config_in_data_store() {
 
     let market_id = mf.create_market(
         &admin,
+        &index_token,
         &long_token,
         &short_token,
         &mkt_token,
@@ -976,6 +978,7 @@ fn test_create_market_default_config() {
         &Address::generate(&env),
         &Address::generate(&env),
         &Address::generate(&env),
+        &Address::generate(&env),
         &None,
     );
     assert_eq!(market_id, 0u32);
@@ -992,6 +995,7 @@ fn test_create_market_counter_increments() {
     for expected_id in 0u32..3u32 {
         let id = mf.create_market(
             &admin,
+            &Address::generate(&env),
             &Address::generate(&env),
             &Address::generate(&env),
             &Address::generate(&env),
@@ -1017,6 +1021,7 @@ fn test_create_market_unauthorized_caller_panics() {
         &Address::generate(&env),
         &Address::generate(&env),
         &Address::generate(&env),
+        &Address::generate(&env),
         &None,
     );
 }
@@ -1034,6 +1039,7 @@ fn test_pause_and_unpause_market() {
 
     let id = mf.create_market(
         &admin,
+        &Address::generate(&env),
         &Address::generate(&env),
         &Address::generate(&env),
         &Address::generate(&env),
@@ -1061,6 +1067,7 @@ fn test_market_keeper_can_pause() {
 
     let id = mf.create_market(
         &admin,
+        &Address::generate(&env),
         &Address::generate(&env),
         &Address::generate(&env),
         &Address::generate(&env),
@@ -1109,6 +1116,7 @@ fn test_e2e_full_market_lifecycle() {
     assert!(rs.has_role(&BytesN::from_array(&env, &[0u8; 32]), &admin));
 
     // 2. Create a market.
+    let index_token = Address::generate(&env);
     let long_token  = Address::generate(&env);
     let short_token = Address::generate(&env);
     let mkt_token   = Address::generate(&env);
@@ -1119,6 +1127,7 @@ fn test_e2e_full_market_lifecycle() {
     };
     let market_id = mf.create_market(
         &admin,
+        &index_token,
         &long_token,
         &short_token,
         &mkt_token,
@@ -1145,6 +1154,7 @@ fn test_e2e_full_market_lifecycle() {
         &Address::generate(&env),
         &Address::generate(&env),
         &Address::generate(&env),
+        &Address::generate(&env),
         &None,
     );
     assert_eq!(id2, 1u32);
@@ -1154,4 +1164,49 @@ fn test_e2e_full_market_lifecycle() {
     mf.pause_market(&admin, &market_id);
     assert!(mf.is_paused(&market_id));
     assert!(!mf.is_paused(&id2));
+}
+
+// ---------------------------------------------------------------------------
+// Issue #29 — get_market_by_tokens view
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_get_market_by_tokens_returns_some_for_existing_market() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (mf, _rs, _ds, admin) = setup_market_factory(&env);
+
+    let index_token = Address::generate(&env);
+    let long_token  = Address::generate(&env);
+    let short_token = Address::generate(&env);
+    let mkt_token   = Address::generate(&env);
+
+    mf.create_market(
+        &admin,
+        &index_token,
+        &long_token,
+        &short_token,
+        &mkt_token,
+        &None,
+    );
+
+    let result = mf.get_market_by_tokens(&index_token, &long_token, &short_token);
+    assert!(result.is_some(), "expected Some for registered token combination");
+    assert_eq!(result.unwrap(), mkt_token);
+}
+
+#[test]
+fn test_get_market_by_tokens_returns_none_for_unregistered_combination() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (mf, _rs, _ds, _admin) = setup_market_factory(&env);
+
+    let index_token = Address::generate(&env);
+    let long_token  = Address::generate(&env);
+    let short_token = Address::generate(&env);
+
+    let result = mf.get_market_by_tokens(&index_token, &long_token, &short_token);
+    assert!(result.is_none(), "expected None for unregistered token combination");
 }
