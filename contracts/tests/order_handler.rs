@@ -697,3 +697,50 @@ fn test_limit_swap_buy_at_trigger_executes() {
     assert_eq!(ds.get_u128(&pool_short_amount_key(&env, market_id)).unwrap_or(0), 8_000);
     assert_eq!(ds.get_u128(&pool_long_amount_key(&env, market_id)).unwrap_or(0), 7_000);
 }
+
+// ---------------------------------------------------------------------------
+// Issue #31 — MarketSwap: swap_with_path + min_output_amount check
+// ---------------------------------------------------------------------------
+
+/// MarketSwap executes along a path and updates pool balances.
+#[test]
+fn test_market_swap_executes_and_updates_pools() {
+    let env = Env::default();
+    let (ds, admin) = setup(&env);
+    let market_id: u32 = 30;
+
+    ds.set_u128(&admin, &pool_long_amount_key(&env, market_id), &20_000u128);
+    ds.set_u128(&admin, &pool_short_amount_key(&env, market_id), &5_000u128);
+
+    let path = [(market_id, true)]; // single-hop sell
+    let result = contracts::swap_utils::swap_with_path(
+        &env, &ds, &admin, &path, 3_000u128, 1_000u128, 100u128,
+    );
+
+    assert!(result.is_ok());
+    assert_eq!(result.unwrap(), 3_000);
+    assert_eq!(ds.get_u128(&pool_long_amount_key(&env, market_id)).unwrap_or(0), 17_000);
+    assert_eq!(ds.get_u128(&pool_short_amount_key(&env, market_id)).unwrap_or(0), 8_000);
+}
+
+/// MarketSwap reverts with InsufficientOutput when output < min_output_amount.
+#[test]
+fn test_market_swap_insufficient_output_reverts() {
+    let env = Env::default();
+    let (ds, admin) = setup(&env);
+    let market_id: u32 = 31;
+
+    ds.set_u128(&admin, &pool_long_amount_key(&env, market_id), &20_000u128);
+    ds.set_u128(&admin, &pool_short_amount_key(&env, market_id), &5_000u128);
+
+    let path = [(market_id, true)];
+    // min_output is higher than the swap output → InsufficientOutput
+    let result = contracts::swap_utils::swap_with_path(
+        &env, &ds, &admin, &path, 500u128, 1_000u128, 100u128,
+    );
+
+    assert!(
+        matches!(result, Err(OrderError::InsufficientOutput)),
+        "should return InsufficientOutput"
+    );
+}
