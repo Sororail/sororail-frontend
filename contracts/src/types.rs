@@ -227,7 +227,6 @@ pub enum RouterAction {
     ClaimFundingFees(u32, Address),
 }
 
-
 // ---------------------------------------------------------------------------
 // Order / position types (issues #43, #44, #45, #46)
 // ---------------------------------------------------------------------------
@@ -241,6 +240,14 @@ pub enum OrderError {
     UnsatisfiedTrigger = 40,
     /// The order does not exist.
     OrderNotFound = 41,
+    /// Caller is not authorized for the requested order action.
+    Unauthorized = 42,
+    /// Market orders cannot be updated once created.
+    CannotUpdateMarketOrder = 43,
+    /// Order has not yet reached its expiry ledger.
+    OrderNotExpired = 44,
+    /// Order type is not supported by the requested execution path.
+    InvalidOrderType = 45,
 }
 
 impl From<OrderError> for soroban_sdk::Error {
@@ -275,6 +282,8 @@ pub struct Position {
 #[contracttype]
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum OrderType {
+    /// Swap from one market pool token to the other at the current price.
+    MarketSwap,
     /// Open or increase a position at the current market price.
     MarketIncrease,
     /// Close or decrease a position at the current market price.
@@ -290,6 +299,8 @@ pub enum OrderType {
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Order {
+    /// Monotonic storage key for the order.
+    pub key: u32,
     /// Account that placed the order.
     pub account: Address,
     pub market_id: u32,
@@ -301,4 +312,16 @@ pub struct Order {
     pub collateral_delta: u128,
     /// Trigger price (0 for market orders).
     pub trigger_price: u128,
+    /// Max execution price for increase orders or min execution price for decreases.
+    pub acceptable_price: u128,
+    /// Minimum output amount for swap orders.
+    pub min_output_amount: u128,
+    /// Input or collateral token associated with the order.
+    pub collateral_token: Address,
+    /// Input amount for swaps.
+    pub amount_in: u128,
+    /// Ledger sequence at creation time.
+    pub created_at: u32,
+    /// Whether the order is currently frozen.
+    pub is_frozen: bool,
 }

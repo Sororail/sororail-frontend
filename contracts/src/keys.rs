@@ -132,3 +132,22 @@ pub fn max_open_interest_short_key(env: &Env, market_id: u32) -> BytesN<32> {
 pub fn account_balance_key(env: &Env, market_id: u32) -> BytesN<32> {
     market_scoped_key(env, b"acct_bal", market_id)
 }
+
+/// Returns the fee bucket key used by market swaps for `market_id`.
+pub fn claimable_fee_amount_key(env: &Env, market_id: u32) -> BytesN<32> {
+    market_scoped_key(env, b"clmfee_a", market_id)
+}
+
+/// Expiry window in ledgers for market orders.
+pub fn market_order_expiry_ledgers_key(env: &Env) -> BytesN<32> {
+    let mut buf = [0u8; 32];
+    buf[..16].copy_from_slice(b"mkt_ord_exp_legd");
+    BytesN::from_array(env, &buf)
+}
+
+/// Expiry window in ledgers for limit/stop orders.
+pub fn limit_order_expiry_ledgers_key(env: &Env) -> BytesN<32> {
+    let mut buf = [0u8; 32];
+    buf[..16].copy_from_slice(b"lmt_ord_exp_legd");
+    BytesN::from_array(env, &buf)
+}
