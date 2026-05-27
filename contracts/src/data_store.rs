@@ -1,7 +1,10 @@
+
 use soroban_sdk::{
     contract, contractimpl, contracttype, panic_with_error, symbol_short,
     Address, BytesN, Env, Vec,
 };
+
+use crate::types::PositionProps;
 
 // ---------------------------------------------------------------------------
 // Error codes
@@ -63,6 +66,13 @@ pub enum DataInstanceKey {
 pub enum DataPersistentKey {
     /// Stores the `Vec<Address>` of authorised keeper/controller addresses.
     Controllers,
+}
+
+#[contracttype]
+#[derive(Clone)]
+pub enum DataKey {
+    PositionProps(BytesN<32>),
+    AccountPositionList(Address),
 }
 
 // ---------------------------------------------------------------------------
@@ -348,6 +358,82 @@ impl DataStore {
                 .get(&I128Key { i128_key: key })
                 .unwrap_or(0i128);
             results.push_back(val);
+        }
+        results
+    }
+
+    // -----------------------------------------------------------------------
+    // Position props and account position list support
+    // -----------------------------------------------------------------------
+
+    pub fn set_position_props(
+        env: Env,
+        caller: Address,
+        position_key: BytesN<32>,
+        props: PositionProps,
+    ) {
+        caller.require_auth();
+        env.storage()
+            .persistent()
+            .set(&DataKey::PositionProps(position_key), &props);
+    }
+
+    pub fn get_position_props(env: Env, position_key: BytesN<32>) -> Option<PositionProps> {
+        env.storage()
+            .persistent()
+            .get(&DataKey::PositionProps(position_key))
+    }
+
+    pub fn add_account_position(
+        env: Env,
+        caller: Address,
+        account: Address,
+        position_key: BytesN<32>,
+    ) {
+        caller.require_auth();
+        let mut list: Vec<BytesN<32>> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::AccountPositionList(account.clone()))
+            .unwrap_or_else(|| Vec::new(&env));
+        if !list.contains(&position_key) {
+            list.push_back(position_key.clone());
+            env.storage()
+                .persistent()
+                .set(&DataKey::AccountPositionList(account), &list);
+        }
+    }
+
+    pub fn get_account_positions(
+        env: Env,
+        account: Address,
+        start: u32,
+        end: u32,
+    ) -> Vec<PositionProps> {
+        let list: Vec<BytesN<32>> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::AccountPositionList(account))
+            .unwrap_or_else(|| Vec::new(&env));
+
+        let len = list.len();
+        if start >= len || start >= end {
+            return Vec::new(&env);
+        }
+        let end = if end > len { len } else { end };
+
+        let mut results: Vec<PositionProps> = Vec::new(&env);
+        for idx in start..end {
+            let key = list.get(idx).unwrap();
+            if let Some(props) = env
+                .storage()
+                .persistent()
+                .get::<DataKey, PositionProps>(&DataKey::PositionProps(key.clone()))
+            {
+                if props.is_open {
+                    results.push_back(props);
+                }
+            }
         }
         results
     }

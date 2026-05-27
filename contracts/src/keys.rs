@@ -97,3 +97,9 @@ pub fn claimable_fee_short_key(env: &Env, market_id: u32) -> BytesN<32> {
 pub fn withdrawal_fee_factor_key(env: &Env, market_id: u32) -> BytesN<32> {
     market_scoped_key(env, b"wfeefact", market_id)
 }
+
+/// Returns the data-store key holding the maintenance margin factor for
+/// `market_id`.
+pub fn market_maintenance_margin_factor_key(env: &Env, market_id: u32) -> BytesN<32> {
+    market_scoped_key(env, b"mm_factr", market_id)
+}

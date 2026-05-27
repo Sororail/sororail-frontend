@@ -131,7 +131,7 @@ impl LiquidityHandler {
         }
 
         let tokens = Self::market_tokens(&env, market_id);
-        let prices = Self::oracle_prices(&env, market_id);
+        let prices = Self::oracle_prices_internal(&env, market_id);
         let ds = Self::data_store(&env);
         let writer = env.current_contract_address();
 
@@ -229,7 +229,7 @@ impl LiquidityHandler {
         let tokens = Self::market_tokens(&env, w.market_id);
         // Oracle prices must be set for the market (they may have moved since
         // the deposit — withdrawal uses current pool value).
-        let _ = Self::oracle_prices(&env, w.market_id);
+        let _ = Self::oracle_prices_internal(&env, w.market_id);
 
         let ds = Self::data_store(&env);
         let writer = env.current_contract_address();
@@ -371,7 +371,11 @@ impl LiquidityHandler {
         }
     }
 
-    fn oracle_prices(env: &Env, market_id: u32) -> OraclePrices {
+    pub fn oracle_prices(env: Env, market_id: u32) -> OraclePrices {
+        Self::oracle_prices_internal(&env, market_id)
+    }
+
+    fn oracle_prices_internal(env: &Env, market_id: u32) -> OraclePrices {
         match env.storage().persistent().get(&LhKey::Price(market_id)) {
             Some(p) => p,
             None => panic_with_error!(env, LiquidityError::PricesNotSet),
