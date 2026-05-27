@@ -5,15 +5,15 @@
 
 #![cfg(test)]
 
-use contracts::position_utils::{is_adl_triggered, PRECISION};
+use contracts::position_utils::is_adl_triggered;
 
 // max_pnl_factor = 50% expressed in PRECISION units = 500_000
 const MAX_PNL_FACTOR: u128 = 500_000;
 // pool_value = 1_000_000 units
 const POOL_VALUE: u128 = 1_000_000;
 // Exact boundary: total_pnl / pool_value == 0.5
-// => total_pnl = pool_value * max_pnl_factor / PRECISION = 500
-const BOUNDARY_PNL: i128 = 500;
+// => total_pnl = pool_value * max_pnl_factor / PRECISION = 500_000
+const BOUNDARY_PNL: i128 = 500_000;
 
 #[test]
 fn test_adl_triggered_at_exact_boundary() {
@@ -42,8 +42,8 @@ fn test_adl_triggered_one_unit_above_boundary() {
 #[test]
 fn test_adl_accounts_for_both_long_and_short_pnl() {
     // Net PnL = long_pnl - short_pnl; only triggers if net is positive and >= factor.
-    let long_pnl: i128 = 700;
-    let short_pnl: i128 = 300; // shorts are losing = negative contribution
+    let long_pnl: i128 = 700_000;
+    let short_pnl: i128 = 300_000; // shorts are losing = negative contribution
     let net_pnl = long_pnl - short_pnl; // 400 < 500 boundary
     assert!(
         !is_adl_triggered(net_pnl, POOL_VALUE, MAX_PNL_FACTOR),
