@@ -45,6 +45,7 @@ fn create_market(env: &Env, mf: &MarketFactoryClient, admin: &Address) -> u32 {
         &Address::generate(env),
         &Address::generate(env),
         &Address::generate(env),
+        &Address::generate(env),
         &None,
     )
 }
