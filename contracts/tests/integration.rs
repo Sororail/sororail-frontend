@@ -17,9 +17,12 @@
 
 use contracts::{
     data_store::{apply_delta_to_u128, DataStore, DataStoreClient, TtlEstimate},
+    keys::market_maintenance_margin_factor_key,
+    liquidity_handler::{LiquidityHandler, LiquidityHandlerClient},
+    position_handler::{PositionHandler, PositionHandlerClient},
     market_factory::{market_keeper_role, MarketFactory, MarketFactoryClient},
     role_store::{RoleMetadata, RoleStore, RoleStoreClient},
-    types::MarketConfig,
+    types::{MarketConfig, PositionProps},
 };
 use soroban_sdk::{
     testutils::{Address as _, Events as _, Ledger as _},
@@ -30,11 +33,11 @@ use soroban_sdk::{
 // Helpers
 // ---------------------------------------------------------------------------
 
-fn make_key(env: &Env, seed: u8) -> BytesN<<32> {
+fn make_key(env: &Env, seed: u8) -> BytesN<32> {
     BytesN::from_array(env, &[seed; 32])
 }
 
-fn admin_role(env: &Env) -> BytesN<<32> {
+fn admin_role(env: &Env) -> BytesN<32> {
     BytesN::from_array(env, &[0u8; 32])
 }
 
@@ -80,6 +83,66 @@ fn setup_market_factory<'a>(
     mf.initialize(&rs_id, &ds_id);
 
     (mf, rs, ds, admin)
+}
+
+#[test]
+fn test_position_handler_is_liquidatable_uses_worst_case_pricing() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let rs_id = env.register(RoleStore, ());
+    let rs = RoleStoreClient::new(&env, &rs_id);
+    let admin = Address::generate(&env);
+    rs.initialize(&admin);
+
+    let ds_id = env.register(DataStore, ());
+    let ds = DataStoreClient::new(&env, &ds_id);
+    ds.initialize(&admin);
+
+    let lh_id = env.register(LiquidityHandler, ());
+    let lhc = LiquidityHandlerClient::new(&env, &lh_id);
+    lhc.initialize(&rs_id, &ds_id);
+
+    let ph_id = env.register(PositionHandler, ());
+    let phc = PositionHandlerClient::new(&env, &ph_id);
+    phc.initialize(&ds_id, &lh_id);
+
+    let market_id = 0u32;
+    lhc.set_oracle_prices(&admin, &market_id, &10u128, &200u128);
+    ds.set_u128(
+        &admin,
+        &market_maintenance_margin_factor_key(&env, market_id),
+        &50_000u128,
+    );
+
+    let user = Address::generate(&env);
+    let long_key = make_key(&env, 1);
+    let long_position = PositionProps {
+        position_key: long_key.clone(),
+        account: user.clone(),
+        market_id,
+        quantity: 100u128,
+        collateral_amount: 10u128,
+        average_price: 10u128,
+        is_long: true,
+        is_open: true,
+    };
+    ds.set_position_props(&admin, &long_key, &long_position);
+    assert!(!phc.is_liquidatable(&long_key), "position above threshold should not be liquidatable");
+
+    let short_key = make_key(&env, 2);
+    let short_position = PositionProps {
+        position_key: short_key.clone(),
+        account: user.clone(),
+        market_id,
+        quantity: 100u128,
+        collateral_amount: 10u128,
+        average_price: 10u128,
+        is_long: false,
+        is_open: true,
+    };
+    ds.set_position_props(&admin, &short_key, &short_position);
+    assert!(phc.is_liquidatable(&short_key), "position below threshold should be liquidatable");
 }
 
 // ---------------------------------------------------------------------------
@@ -130,7 +193,7 @@ fn test_set_u128_batch_and_get_u128_batch() {
     let k2 = make_key(&env, 2);
     let k3 = make_key(&env, 3);
 
-    let entries: Vec<(BytesN<<32>, u128)> = vec![
+    let entries: Vec<(BytesN<32>, u128)> = vec![
         &env,
         (k1.clone(), 100u128),
         (k2.clone(), 200u128),
@@ -138,7 +201,7 @@ fn test_set_u128_batch_and_get_u128_batch() {
     ];
     client.set_u128_batch(&caller, &entries);
 
-    let keys: Vec<<BytesN<<32>> = vec![&env, k1, k2, k3];
+    let keys: Vec<BytesN<32>> = vec![&env, k1, k2, k3];
     let results = client.get_u128_batch(&keys);
 
     assert_eq!(results.get(0).unwrap(), 100u128);
@@ -153,7 +216,7 @@ fn test_get_u128_batch_missing_key_returns_zero() {
     let client = setup_data_store(&env);
 
     let missing = make_key(&env, 42);
-    let keys: Vec<<BytesN<<32>> = vec![&env, missing];
+    let keys: Vec<BytesN<32>> = vec![&env, missing];
     let results = client.get_u128_batch(&keys);
     assert_eq!(results.get(0).unwrap(), 0u128);
 }
@@ -168,14 +231,14 @@ fn test_set_i128_batch_and_get_i128_batch() {
     let k1 = make_key(&env, 10);
     let k2 = make_key(&env, 11);
 
-    let entries: Vec<(BytesN<<32>, i128)> = vec![
+    let entries: Vec<(BytesN<32>, i128)> = vec![
         &env,
         (k1.clone(), -500i128),
         (k2.clone(), 999i128),
     ];
     client.set_i128_batch(&caller, &entries);
 
-    let keys: Vec<<BytesN<<32>> = vec![&env, k1, k2];
+    let keys: Vec<BytesN<32>> = vec![&env, k1, k2];
     let results = client.get_i128_batch(&keys);
 
     assert_eq!(results.get(0).unwrap(), -500i128);
@@ -208,7 +271,7 @@ fn test_estimate_ttl_missing_key_returns_zero() {
     let client = setup_data_store(&env);
 
     let missing = make_key(&env, 77);
-    let keys: Vec<<BytesN<<32>> = vec![&env, missing.clone()];
+    let keys: Vec<BytesN<32>> = vec![&env, missing.clone()];
     let estimates = client.estimate_ttl(&keys);
 
     let est: TtlEstimate = estimates.get(0).unwrap();
@@ -226,13 +289,74 @@ fn test_estimate_ttl_existing_key_nonzero() {
     let key = make_key(&env, 55);
     client.set_u128(&caller, &key, &1u128);
 
-    let keys: Vec<<BytesN<<32>> = vec![&env, key.clone()];
+    let keys: Vec<BytesN<32>> = vec![&env, key.clone()];
     let estimates = client.estimate_ttl(&keys);
 
     let est: TtlEstimate = estimates.get(0).unwrap();
     assert_eq!(est.key, key);
     // After writing, the entry has a non-zero TTL in the test environment.
     assert!(est.remaining_ledgers > 0);
+}
+
+#[test]
+fn test_get_account_positions_paginates_and_filters_closed_positions() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = setup_data_store(&env);
+    let caller = Address::generate(&env);
+    let account = Address::generate(&env);
+
+    let open_positions: [BytesN<32>; 3] = [
+        make_key(&env, 1),
+        make_key(&env, 2),
+        make_key(&env, 3),
+    ];
+    let closed_position = make_key(&env, 4);
+
+    for (idx, pos_key) in open_positions.iter().enumerate() {
+        client.add_account_position(&caller, &account, pos_key);
+        client.set_position_props(
+            &caller,
+            pos_key,
+            &PositionProps {
+                position_key: pos_key.clone(),
+                account: account.clone(),
+                market_id: 100 + idx as u32,
+                quantity: 10 + (idx as u128 * 10),
+                collateral_amount: 0,
+                average_price: 0,
+                is_long: true,
+                is_open: true,
+            },
+        );
+    }
+
+    client.add_account_position(&caller, &account, &closed_position);
+    client.set_position_props(
+        &caller,
+        &closed_position,
+        &PositionProps {
+            position_key: closed_position.clone(),
+            account: account.clone(),
+            market_id: 200,
+            quantity: 999,
+            collateral_amount: 0,
+            average_price: 0,
+            is_long: true,
+            is_open: false,
+        },
+    );
+
+    let all_positions = client.get_account_positions(&account, &0u32, &10u32);
+    assert_eq!(all_positions.len(), 3);
+    assert_eq!(all_positions.get(0).unwrap().position_key, open_positions[0]);
+    assert_eq!(all_positions.get(1).unwrap().position_key, open_positions[1]);
+    assert_eq!(all_positions.get(2).unwrap().position_key, open_positions[2]);
+
+    let page = client.get_account_positions(&account, &0u32, &2u32);
+    assert_eq!(page.len(), 2);
+    assert_eq!(page.get(0).unwrap().position_key, open_positions[0]);
+    assert_eq!(page.get(1).unwrap().position_key, open_positions[1]);
 }
 
 // ---------------------------------------------------------------------------
@@ -305,7 +429,7 @@ fn test_get_role_members_pagination() {
     let total: u32 = 25;
 
     // Grant the role to 25 distinct accounts.
-    let mut all_accounts: Vec<<Address> = Vec::new(&env);
+    let mut all_accounts: Vec<Address> = Vec::new(&env);
     for _ in 0..total {
         let acc = Address::generate(&env);
         client.grant_role(&admin, &role, &acc);
@@ -331,7 +455,7 @@ fn test_get_role_members_pagination() {
     assert_eq!(page3.len(), 0);
 
     // All pages together must cover all 25 accounts without duplicates.
-    let mut seen: Vec<<Address> = Vec::new(&env);
+    let mut seen: Vec<Address> = Vec::new(&env);
     for p in [page0, page1, page2].iter() {
         for acc in p.iter() {
             assert!(!seen.contains(&acc), "duplicate in pagination");
@@ -349,7 +473,7 @@ fn test_grant_multiple_roles_same_account() {
     let (client, admin) = setup_role_store(&env);
 
     let account = Address::generate(&env);
-    let roles: [BytesN<<32>; 3] = [
+    let roles: [BytesN<32>; 3] = [
         make_key(&env, 1),
         make_key(&env, 2),
         make_key(&env, 3),
@@ -372,7 +496,7 @@ fn test_grant_multiple_roles_same_account() {
 // `update_current_contract_wasm` is guarded by `#[cfg(not(test))]` in the
 // contract so that unit tests can exercise auth + event emission without
 // needing a compiled WASM artifact in the test registry.
-fn dummy_wasm_hash(env: &Env, seed: u8) -> BytesN<<32> {
+fn dummy_wasm_hash(env: &Env, seed: u8) -> BytesN<32> {
     BytesN::from_array(env, &[seed; 32])
 }
 
@@ -627,7 +751,7 @@ fn test_prune_keys_removes_zero_u128_entries() {
     client.set_u128(&writer, &key_zero_b, &0u128);
 
     // Prune all three keys.
-    let keys: Vec<<BytesN<<32>> = vec![
+    let keys: Vec<BytesN<32>> = vec![
         &env,
         key_zero_a.clone(),
         key_nonzero.clone(),
@@ -658,7 +782,7 @@ fn test_prune_keys_removes_zero_i128_entries() {
     client.set_i128(&writer, &key_zero, &0i128);
     client.set_i128(&writer, &key_neg, &-42i128);
 
-    let keys: Vec<<BytesN<<32>> = vec![&env, key_zero.clone(), key_neg.clone()];
+    let keys: Vec<BytesN<32>> = vec![&env, key_zero.clone(), key_neg.clone()];
     client.prune_keys(&controller, &keys);
 
     assert!(client.get_i128(&key_zero).is_none());
@@ -676,7 +800,7 @@ fn test_prune_keys_handles_absent_keys_gracefully() {
 
     // Prune a key that was never written — must not panic.
     let ghost_key = make_key(&env, 0xDD);
-    let keys: Vec<<BytesN<<32>> = vec![&env, ghost_key.clone()];
+    let keys: Vec<BytesN<32>> = vec![&env, ghost_key.clone()];
     client.prune_keys(&controller, &keys);
 
     // Still absent after prune.
@@ -691,7 +815,7 @@ fn test_prune_keys_by_non_controller_panics() {
     let (client, _admin) = setup_data_store_with_admin(&env);
 
     let non_controller = Address::generate(&env);
-    let keys: Vec<<BytesN<<32>> = vec![&env, make_key(&env, 0x99)];
+    let keys: Vec<BytesN<32>> = vec![&env, make_key(&env, 0x99)];
 
     // No controller role → must panic.
     client.prune_keys(&non_controller, &keys);
@@ -699,7 +823,7 @@ fn test_prune_keys_by_non_controller_panics() {
 
 #[test]
 fn test_prune_keys_mixed_u128_and_i128_same_key() {
-    // The same BytesN<<32> seed indexes independent U128Key and I128Key slots.
+    // The same BytesN<32> seed indexes independent U128Key and I128Key slots.
     // Prune should handle each slot independently.
     let env = Env::default();
     env.mock_all_auths();
@@ -715,7 +839,7 @@ fn test_prune_keys_mixed_u128_and_i128_same_key() {
     client.set_u128(&writer, &key, &0u128);
     client.set_i128(&writer, &key, &-7i128);
 
-    let keys: Vec<<BytesN<<32>> = vec![&env, key.clone()];
+    let keys: Vec<BytesN<32>> = vec![&env, key.clone()];
     client.prune_keys(&controller, &keys);
 
     // u128 slot removed; i128 slot intact.
@@ -949,6 +1073,7 @@ fn test_create_market_stores_config_in_data_store() {
     let cfg = MarketConfig {
         max_long_open_interest:  1_000_000u128,
         max_short_open_interest: 2_000_000u128,
+        maintenance_margin_factor: 50_000u128,
     };
 
     let market_id = mf.create_market(
@@ -1116,6 +1241,7 @@ fn test_e2e_full_market_lifecycle() {
     let cfg = MarketConfig {
         max_long_open_interest:  500_000u128,
         max_short_open_interest: 750_000u128,
+        maintenance_margin_factor: 50_000u128,
     };
     let market_id = mf.create_market(
         &admin,
