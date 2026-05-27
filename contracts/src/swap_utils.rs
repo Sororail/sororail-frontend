@@ -1,10 +1,8 @@
 //! Utilities for executing swap orders.
 //!
-//! Issue #32: implement the `LimitSwap` branch. Before calling `swap`,
-//! verify that the current execution price satisfies the trigger condition:
-//!   - sell swap: `price <= trigger_price`
-//!   - buy  swap: `price >= trigger_price`
-//! Revert with [`OrderError::UnsatisfiedTrigger`] if not met.
+//! Issue #32: implement the `LimitSwap` branch — trigger price check.
+//! Issue #31: implement `swap_with_path` for `MarketSwap` — validates
+//!   `min_output_amount` and updates pool accounting.
 
 use soroban_sdk::Env;
 
@@ -84,4 +82,35 @@ pub fn swap(
     }
 
     amount
+}
+
+/// Execute a `MarketSwap` along a multi-hop path.
+///
+/// Each hop in `path` is a `(market_id, is_sell)` pair. The output of one
+/// hop becomes the input of the next. After all hops, the final output is
+/// checked against `min_output_amount`; if it falls short the function
+/// returns `Err(OrderError::InsufficientOutput)`.
+///
+/// On success the function returns `Ok(output_amount)` and the caller is
+/// responsible for removing the order record and emitting `order_exec`.
+pub fn swap_with_path(
+    env: &Env,
+    ds: &DataStoreClient,
+    caller: &soroban_sdk::Address,
+    path: &[(u32, bool)],   // (market_id, is_sell) per hop
+    amount_in: u128,
+    min_output_amount: u128,
+    execution_price: u128,
+) -> Result<u128, OrderError> {
+    let mut amount = amount_in;
+
+    for &(market_id, is_sell) in path {
+        amount = swap(env, ds, caller, market_id, amount, is_sell, execution_price);
+    }
+
+    if amount < min_output_amount {
+        return Err(OrderError::InsufficientOutput);
+    }
+
+    Ok(amount)
 }
