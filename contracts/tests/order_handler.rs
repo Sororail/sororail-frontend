@@ -10,18 +10,25 @@
 //!   (2) LimitIncrease executes when price drops to trigger.
 //!   (3) StopLossDecrease triggers only when price drops below stop level.
 //!   (4) StopLossDecrease does NOT trigger when price is above stop level.
+//!
+//! Issue #32 — LimitSwap trigger price validation:
+//!   (1) Sell LimitSwap does NOT execute when price is above trigger.
+//!   (2) Sell LimitSwap executes when price drops to/below trigger.
+//!   (3) Buy  LimitSwap does NOT execute when price is below trigger.
+//!   (4) Buy  LimitSwap executes when price rises to/above trigger.
 
 #![cfg(test)]
 
 use contracts::{
     data_store::{DataStore, DataStoreClient},
     decrease_position_utils::decrease_position,
-    increase_position_utils::increase_position,
+    increase_position_utils::{check_increase_order_trigger, increase_position},
     keys::{
         account_balance_key, max_open_interest_long_key, open_interest_long_key,
         pool_long_amount_key, pool_short_amount_key,
     },
     role_store::{RoleStore, RoleStoreClient},
+    swap_utils::{check_limit_swap_trigger, swap},
     types::{Order, OrderError, OrderType, Position},
 };
 use soroban_sdk::{testutils::Address as _, Address, Env};
@@ -94,19 +101,6 @@ fn execute_market_decrease(
         "expected a decrease order type"
     );
     decrease_position(env, ds, caller, position, order.size_delta_usd, index_price)
-}
-
-/// Check trigger condition for a LimitIncrease (long): executes only when
-/// `current_price <= trigger_price`.
-///
-/// Returns `Ok(())` if the condition is met, `Err(OrderError::UnsatisfiedTrigger)`
-/// otherwise.
-fn check_limit_increase_long(order: &Order, current_price: u128) -> Result<(), OrderError> {
-    if current_price <= order.trigger_price {
-        Ok(())
-    } else {
-        Err(OrderError::UnsatisfiedTrigger)
-    }
 }
 
 /// Check trigger condition for a StopLossDecrease: executes only when
@@ -416,7 +410,7 @@ fn test_limit_increase_long_above_trigger_not_executed() {
 
     // Current price is 100 (above trigger) → should NOT execute.
     let current_price: u128 = 100;
-    let result = check_limit_increase_long(&order, current_price);
+    let result = check_increase_order_trigger(&order, current_price);
     assert!(
         matches!(result, Err(OrderError::UnsatisfiedTrigger)),
         "should return UnsatisfiedTrigger when price > trigger"
@@ -455,7 +449,7 @@ fn test_limit_increase_long_at_trigger_executes() {
 
     // Price drops exactly to trigger → should execute.
     let current_price: u128 = 90;
-    let result = check_limit_increase_long(&order, current_price);
+    let result = check_increase_order_trigger(&order, current_price);
     assert!(result.is_ok(), "should execute when price == trigger");
 
     // Actually execute the increase.
@@ -481,6 +475,180 @@ fn test_limit_increase_long_at_trigger_executes() {
     assert_eq!(pos.collateral_amount, 500);
     // size_in_tokens = 5000 / 90 = 55 (integer division)
     assert_eq!(pos.size_in_tokens, 55);
+}
+
+/// LimitIncrease for a short does NOT execute when price is BELOW trigger.
+#[test]
+fn test_limit_increase_short_below_trigger_not_executed() {
+    let env = Env::default();
+
+    let order = Order {
+        key: 0,
+        account: Address::generate(&env),
+        market_id: 41,
+        order_type: OrderType::LimitIncrease,
+        is_long: false,
+        size_delta_usd: 5_000u128,
+        collateral_delta: 500u128,
+        trigger_price: 110u128,
+        acceptable_price: 0,
+        min_output_amount: 0,
+        collateral_token: Address::generate(&env),
+        amount_in: 0,
+        created_at: 0,
+        is_frozen: false,
+    };
+
+    let result = check_increase_order_trigger(&order, 100u128);
+    assert!(
+        matches!(result, Err(OrderError::UnsatisfiedTrigger)),
+        "short limit increase should not execute when price < trigger"
+    );
+}
+
+/// LimitIncrease for a short EXECUTES when price rises to trigger.
+#[test]
+fn test_limit_increase_short_at_trigger_executes() {
+    let env = Env::default();
+
+    let order = Order {
+        key: 0,
+        account: Address::generate(&env),
+        market_id: 42,
+        order_type: OrderType::LimitIncrease,
+        is_long: false,
+        size_delta_usd: 5_000u128,
+        collateral_delta: 500u128,
+        trigger_price: 110u128,
+        acceptable_price: 0,
+        min_output_amount: 0,
+        collateral_token: Address::generate(&env),
+        amount_in: 0,
+        created_at: 0,
+        is_frozen: false,
+    };
+
+    let result = check_increase_order_trigger(&order, 110u128);
+    assert!(
+        result.is_ok(),
+        "short limit increase should execute when price >= trigger"
+    );
+}
+
+/// StopIncrease for a long does NOT execute when price is BELOW trigger.
+#[test]
+fn test_stop_increase_long_below_trigger_not_executed() {
+    let env = Env::default();
+
+    let order = Order {
+        key: 0,
+        account: Address::generate(&env),
+        market_id: 43,
+        order_type: OrderType::StopIncrease,
+        is_long: true,
+        size_delta_usd: 5_000u128,
+        collateral_delta: 500u128,
+        trigger_price: 110u128,
+        acceptable_price: 0,
+        min_output_amount: 0,
+        collateral_token: Address::generate(&env),
+        amount_in: 0,
+        created_at: 0,
+        is_frozen: false,
+    };
+
+    let result = check_increase_order_trigger(&order, 100u128);
+    assert!(
+        matches!(result, Err(OrderError::UnsatisfiedTrigger)),
+        "long stop increase should not execute when price < trigger"
+    );
+}
+
+/// StopIncrease for a long EXECUTES when price rises to trigger.
+#[test]
+fn test_stop_increase_long_at_trigger_executes() {
+    let env = Env::default();
+
+    let order = Order {
+        key: 0,
+        account: Address::generate(&env),
+        market_id: 44,
+        order_type: OrderType::StopIncrease,
+        is_long: true,
+        size_delta_usd: 5_000u128,
+        collateral_delta: 500u128,
+        trigger_price: 110u128,
+        acceptable_price: 0,
+        min_output_amount: 0,
+        collateral_token: Address::generate(&env),
+        amount_in: 0,
+        created_at: 0,
+        is_frozen: false,
+    };
+
+    let result = check_increase_order_trigger(&order, 110u128);
+    assert!(
+        result.is_ok(),
+        "long stop increase should execute when price >= trigger"
+    );
+}
+
+/// StopIncrease for a short does NOT execute when price is ABOVE trigger.
+#[test]
+fn test_stop_increase_short_above_trigger_not_executed() {
+    let env = Env::default();
+
+    let order = Order {
+        key: 0,
+        account: Address::generate(&env),
+        market_id: 45,
+        order_type: OrderType::StopIncrease,
+        is_long: false,
+        size_delta_usd: 5_000u128,
+        collateral_delta: 500u128,
+        trigger_price: 90u128,
+        acceptable_price: 0,
+        min_output_amount: 0,
+        collateral_token: Address::generate(&env),
+        amount_in: 0,
+        created_at: 0,
+        is_frozen: false,
+    };
+
+    let result = check_increase_order_trigger(&order, 100u128);
+    assert!(
+        matches!(result, Err(OrderError::UnsatisfiedTrigger)),
+        "short stop increase should not execute when price > trigger"
+    );
+}
+
+/// StopIncrease for a short EXECUTES when price drops to trigger.
+#[test]
+fn test_stop_increase_short_at_trigger_executes() {
+    let env = Env::default();
+
+    let order = Order {
+        key: 0,
+        account: Address::generate(&env),
+        market_id: 46,
+        order_type: OrderType::StopIncrease,
+        is_long: false,
+        size_delta_usd: 5_000u128,
+        collateral_delta: 500u128,
+        trigger_price: 90u128,
+        acceptable_price: 0,
+        min_output_amount: 0,
+        collateral_token: Address::generate(&env),
+        amount_in: 0,
+        created_at: 0,
+        is_frozen: false,
+    };
+
+    let result = check_increase_order_trigger(&order, 90u128);
+    assert!(
+        result.is_ok(),
+        "short stop increase should execute when price <= trigger"
+    );
 }
 
 /// (3) StopLossDecrease does NOT trigger when price is ABOVE stop level.
@@ -695,4 +863,117 @@ fn test_partial_close_insufficient_remaining_collateral_panics() {
     // remaining_size = 100, remaining_collateral = 1
     // min_collateral = 100 / 10 = 10 → 1 < 10 → should panic.
     decrease_position(&env, &ds, &admin, &mut pos, 9_900u128, 100u128);
+}
+
+// ---------------------------------------------------------------------------
+// Issue #32 — LimitSwap trigger price validation
+// ---------------------------------------------------------------------------
+
+/// (1) Sell LimitSwap does NOT execute when price is ABOVE trigger.
+#[test]
+fn test_limit_swap_sell_above_trigger_not_executed() {
+    let result = check_limit_swap_trigger(90u128, 100u128, true);
+    assert!(
+        matches!(result, Err(OrderError::UnsatisfiedTrigger)),
+        "sell swap should not execute when price > trigger"
+    );
+}
+
+/// (2) Sell LimitSwap executes when price drops to/below trigger; pool updated.
+#[test]
+fn test_limit_swap_sell_at_trigger_executes() {
+    let env = Env::default();
+    let (ds, admin) = setup(&env);
+    let market_id: u32 = 20;
+
+    ds.set_u128(&admin, &pool_long_amount_key(&env, market_id), &10_000u128);
+    ds.set_u128(&admin, &pool_short_amount_key(&env, market_id), &5_000u128);
+
+    // Price exactly at trigger → should pass.
+    let trigger: u128 = 90;
+    let current: u128 = 90;
+    assert!(check_limit_swap_trigger(trigger, current, true).is_ok());
+
+    // Execute swap: sell 1_000 units.
+    let out = swap(&env, &ds, &admin, market_id, 1_000u128, true, current);
+    assert_eq!(out, 1_000);
+    assert_eq!(ds.get_u128(&pool_long_amount_key(&env, market_id)).unwrap_or(0), 9_000);
+    assert_eq!(ds.get_u128(&pool_short_amount_key(&env, market_id)).unwrap_or(0), 6_000);
+}
+
+/// (3) Buy LimitSwap does NOT execute when price is BELOW trigger.
+#[test]
+fn test_limit_swap_buy_below_trigger_not_executed() {
+    let result = check_limit_swap_trigger(110u128, 100u128, false);
+    assert!(
+        matches!(result, Err(OrderError::UnsatisfiedTrigger)),
+        "buy swap should not execute when price < trigger"
+    );
+}
+
+/// (4) Buy LimitSwap executes when price rises to/above trigger; pool updated.
+#[test]
+fn test_limit_swap_buy_at_trigger_executes() {
+    let env = Env::default();
+    let (ds, admin) = setup(&env);
+    let market_id: u32 = 21;
+
+    ds.set_u128(&admin, &pool_long_amount_key(&env, market_id), &5_000u128);
+    ds.set_u128(&admin, &pool_short_amount_key(&env, market_id), &10_000u128);
+
+    let trigger: u128 = 110;
+    let current: u128 = 110;
+    assert!(check_limit_swap_trigger(trigger, current, false).is_ok());
+
+    let out = swap(&env, &ds, &admin, market_id, 2_000u128, false, current);
+    assert_eq!(out, 2_000);
+    assert_eq!(ds.get_u128(&pool_short_amount_key(&env, market_id)).unwrap_or(0), 8_000);
+    assert_eq!(ds.get_u128(&pool_long_amount_key(&env, market_id)).unwrap_or(0), 7_000);
+}
+
+// ---------------------------------------------------------------------------
+// Issue #31 — MarketSwap: swap_with_path + min_output_amount check
+// ---------------------------------------------------------------------------
+
+/// MarketSwap executes along a path and updates pool balances.
+#[test]
+fn test_market_swap_executes_and_updates_pools() {
+    let env = Env::default();
+    let (ds, admin) = setup(&env);
+    let market_id: u32 = 30;
+
+    ds.set_u128(&admin, &pool_long_amount_key(&env, market_id), &20_000u128);
+    ds.set_u128(&admin, &pool_short_amount_key(&env, market_id), &5_000u128);
+
+    let path = [(market_id, true)]; // single-hop sell
+    let result = contracts::swap_utils::swap_with_path(
+        &env, &ds, &admin, &path, 3_000u128, 1_000u128, 100u128,
+    );
+
+    assert!(result.is_ok());
+    assert_eq!(result.unwrap(), 3_000);
+    assert_eq!(ds.get_u128(&pool_long_amount_key(&env, market_id)).unwrap_or(0), 17_000);
+    assert_eq!(ds.get_u128(&pool_short_amount_key(&env, market_id)).unwrap_or(0), 8_000);
+}
+
+/// MarketSwap reverts with InsufficientOutput when output < min_output_amount.
+#[test]
+fn test_market_swap_insufficient_output_reverts() {
+    let env = Env::default();
+    let (ds, admin) = setup(&env);
+    let market_id: u32 = 31;
+
+    ds.set_u128(&admin, &pool_long_amount_key(&env, market_id), &20_000u128);
+    ds.set_u128(&admin, &pool_short_amount_key(&env, market_id), &5_000u128);
+
+    let path = [(market_id, true)];
+    // min_output is higher than the swap output → InsufficientOutput
+    let result = contracts::swap_utils::swap_with_path(
+        &env, &ds, &admin, &path, 500u128, 1_000u128, 100u128,
+    );
+
+    assert!(
+        matches!(result, Err(OrderError::InsufficientOutput)),
+        "should return InsufficientOutput"
+    );
 }

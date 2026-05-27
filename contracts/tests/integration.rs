@@ -16,13 +16,15 @@
 #![cfg(test)]
 
 use contracts::{
+    adl_handler::{AdlHandler, AdlHandlerClient},
     data_store::{apply_delta_to_u128, DataStore, DataStoreClient, TtlEstimate},
-    keys::market_maintenance_margin_factor_key,
+    keys::{market_maintenance_margin_factor_key, max_pnl_factor_key, pool_long_amount_key, pool_short_amount_key},
     liquidity_handler::{LiquidityHandler, LiquidityHandlerClient},
     position_handler::{PositionHandler, PositionHandlerClient},
     market_factory::{market_keeper_role, MarketFactory, MarketFactoryClient},
     role_store::{RoleMetadata, RoleStore, RoleStoreClient},
     types::{MarketConfig, PositionProps},
+    order_handler::{OrderHandler, OrderHandlerClient},
 };
 use soroban_sdk::{
     testutils::{Address as _, Events as _, Ledger as _},
@@ -1335,4 +1337,425 @@ fn test_get_market_by_tokens_returns_none_for_unregistered_combination() {
 
     let result = mf.get_market_by_tokens(&index_token, &long_token, &short_token);
     assert!(result.is_none(), "expected None for unregistered token combination");
+}
+
+fn setup_order_handler<'a>(env: &'a Env, data_store: &'a Address) -> OrderHandlerClient<'a> {
+    let contract_id = env.register(OrderHandler, ());
+    let client = OrderHandlerClient::new(env, &contract_id);
+    client.initialize(data_store);
+    client
+}
+
+#[test]
+fn test_order_handler_position_and_oi_lists() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let ds = setup_data_store(&env);
+    let admin = Address::generate(&env);
+    ds.initialize(&admin);
+
+    let oh = setup_order_handler(&env, &ds.address);
+
+    let user = Address::generate(&env);
+    let market_id = 1u32;
+    let is_long = true;
+
+    let pos_key1 = make_key(&env, 101);
+    let pos_key2 = make_key(&env, 102);
+
+    // 1. Open two long positions in the same market
+    oh.increase_position(
+        &user,
+        &pos_key1,
+        &user,
+        &market_id,
+        &1000u128,
+        &100u128,
+        &10u128,
+        &is_long,
+    );
+
+    oh.increase_position(
+        &user,
+        &pos_key2,
+        &user,
+        &market_id,
+        &2000u128,
+        &200u128,
+        &10u128,
+        &is_long,
+    );
+
+    // Verify global counts and lists
+    assert_eq!(ds.get_position_count(), 2);
+    assert_eq!(ds.get_account_position_count(&user), 2);
+    assert_eq!(ds.get_position_oi_list_count(&market_id, &is_long), 2);
+
+    // Verify we can retrieve all positions for market/side
+    let market_positions = ds.get_all_positions_for_market(&market_id, &is_long, &0u32, &10u32);
+    assert_eq!(market_positions.len(), 2);
+    assert_eq!(market_positions.get(0).unwrap().position_key, pos_key1);
+    assert_eq!(market_positions.get(1).unwrap().position_key, pos_key2);
+
+    // 2. Close first position using market decrease
+    oh.execute_market_decrease(&user, &pos_key1);
+
+    // Verify decrement
+    assert_eq!(ds.get_position_count(), 1);
+    assert_eq!(ds.get_account_position_count(&user), 1);
+    assert_eq!(ds.get_position_oi_list_count(&market_id, &is_long), 1);
+
+    // 3. Close second position using liquidation
+    oh.execute_liquidation(&user, &pos_key2);
+
+    // Verify all counts are now 0
+    assert_eq!(ds.get_position_count(), 0);
+    assert_eq!(ds.get_account_position_count(&user), 0);
+    assert_eq!(ds.get_position_oi_list_count(&market_id, &is_long), 0);
+}
+
+// ---------------------------------------------------------------------------
+// Issue #59 — ADL handler
+// ---------------------------------------------------------------------------
+
+fn setup_adl_handler<'a>(
+    env: &'a Env,
+    data_store: &Address,
+    liquidity_handler: &Address,
+) -> AdlHandlerClient<'a> {
+    let contract_id = env.register(AdlHandler, ());
+    let client = AdlHandlerClient::new(env, &contract_id);
+    client.initialize(data_store, liquidity_handler);
+    client
+}
+
+#[test]
+#[should_panic]
+fn test_adl_rejected_when_position_not_profitable() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let ds_id = env.register(DataStore, ());
+    let ds = DataStoreClient::new(&env, &ds_id);
+    ds.initialize(&admin);
+
+    let rs_id = env.register(RoleStore, ());
+    let rs = RoleStoreClient::new(&env, &rs_id);
+    rs.initialize(&admin);
+
+    let lh_id = env.register(LiquidityHandler, ());
+    let lhc = LiquidityHandlerClient::new(&env, &lh_id);
+    lhc.initialize(&rs_id, &ds_id);
+
+    let adl = setup_adl_handler(&env, &ds_id, &lh_id);
+
+    let market_id = 0u32;
+    // Price is below entry → position is losing.
+    lhc.set_oracle_prices(&admin, &market_id, &8u128, &8u128);
+
+    let user = Address::generate(&env);
+    let pos_key = make_key(&env, 0xA1);
+    ds.set_position_props(
+        &admin,
+        &pos_key,
+        &PositionProps {
+            position_key: pos_key.clone(),
+            account: user.clone(),
+            market_id,
+            quantity: 1_000u128,
+            collateral_amount: 200u128,
+            average_price: 10u128,
+            is_long: true,
+            is_open: true,
+        },
+    );
+
+    // Should panic: position has negative PnL.
+    adl.execute_adl(&user, &pos_key, &1_000u128);
+}
+
+#[test]
+#[should_panic]
+fn test_adl_rejected_when_pnl_factor_below_threshold() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let ds_id = env.register(DataStore, ());
+    let ds = DataStoreClient::new(&env, &ds_id);
+    ds.initialize(&admin);
+
+    let rs_id = env.register(RoleStore, ());
+    let rs = RoleStoreClient::new(&env, &rs_id);
+    rs.initialize(&admin);
+
+    let lh_id = env.register(LiquidityHandler, ());
+    let lhc = LiquidityHandlerClient::new(&env, &lh_id);
+    lhc.initialize(&rs_id, &ds_id);
+
+    let adl = setup_adl_handler(&env, &ds_id, &lh_id);
+
+    let market_id = 0u32;
+    // Price above entry → position is profitable.
+    lhc.set_oracle_prices(&admin, &market_id, &12u128, &12u128);
+
+    // Large pool so PnL factor stays low.
+    ds.set_u128(&admin, &pool_long_amount_key(&env, market_id), &1_000_000u128);
+    ds.set_u128(&admin, &pool_short_amount_key(&env, market_id), &1_000_000u128);
+
+    // Max PnL factor set very high so ADL is not required.
+    ds.set_u128(
+        &admin,
+        &max_pnl_factor_key(&env, market_id),
+        &900_000u128, // 90%
+    );
+
+    let user = Address::generate(&env);
+    let pos_key = make_key(&env, 0xA2);
+    ds.set_position_props(
+        &admin,
+        &pos_key,
+        &PositionProps {
+            position_key: pos_key.clone(),
+            account: user.clone(),
+            market_id,
+            quantity: 1_000u128,
+            collateral_amount: 200u128,
+            average_price: 10u128,
+            is_long: true,
+            is_open: true,
+        },
+    );
+    ds.add_position(&admin, &pos_key);
+    ds.add_account_position(&admin, &user, &pos_key);
+    ds.add_position_to_oi_list(&admin, &market_id, &true, &pos_key);
+
+    // Should panic: PnL factor is below threshold.
+    adl.execute_adl(&user, &pos_key, &1_000u128);
+}
+
+#[test]
+fn test_adl_full_close_reduces_pnl_factor() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let ds_id = env.register(DataStore, ());
+    let ds = DataStoreClient::new(&env, &ds_id);
+    ds.initialize(&admin);
+
+    let rs_id = env.register(RoleStore, ());
+    let rs = RoleStoreClient::new(&env, &rs_id);
+    rs.initialize(&admin);
+
+    let lh_id = env.register(LiquidityHandler, ());
+    let lhc = LiquidityHandlerClient::new(&env, &lh_id);
+    lhc.initialize(&rs_id, &ds_id);
+
+    let adl = setup_adl_handler(&env, &ds_id, &lh_id);
+
+    let market_id = 0u32;
+    // Price 20x entry → large PnL.
+    lhc.set_oracle_prices(&admin, &market_id, &200u128, &200u128);
+
+    // Small pool so PnL factor is high.
+    ds.set_u128(&admin, &pool_long_amount_key(&env, market_id), &500u128);
+    ds.set_u128(&admin, &pool_short_amount_key(&env, market_id), &500u128);
+
+    // Pool value = 500*200 + 500*200 = 200_000
+    // PnL = 1000 * (200-10)/10 = 19_000
+    // PnL factor = 19_000 * 1_000_000 / 200_000 = 95_000 (9.5%)
+
+    // Max PnL factor = 50_000 (5%) → ADL required.
+    ds.set_u128(
+        &admin,
+        &max_pnl_factor_key(&env, market_id),
+        &50_000u128,
+    );
+
+    let user = Address::generate(&env);
+    let pos_key = make_key(&env, 0xB1);
+    let pos = PositionProps {
+        position_key: pos_key.clone(),
+        account: user.clone(),
+        market_id,
+        quantity: 1_000u128,
+        collateral_amount: 200u128,
+        average_price: 10u128,
+        is_long: true,
+        is_open: true,
+    };
+    ds.set_position_props(&admin, &pos_key, &pos);
+    ds.add_position(&admin, &pos_key);
+    ds.add_account_position(&admin, &user, &pos_key);
+    ds.add_position_to_oi_list(&admin, &market_id, &true, &pos_key);
+
+    // Full close ADL.
+    adl.execute_adl(&user, &pos_key, &1_000u128);
+
+    // Position should be closed.
+    let closed = ds.get_position_props(&pos_key).unwrap();
+    assert!(!closed.is_open, "position should be closed after full ADL");
+    assert_eq!(ds.get_position_count(), 0);
+}
+
+#[test]
+fn test_adl_partial_close_reduces_pnl_factor() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let ds_id = env.register(DataStore, ());
+    let ds = DataStoreClient::new(&env, &ds_id);
+    ds.initialize(&admin);
+
+    let rs_id = env.register(RoleStore, ());
+    let rs = RoleStoreClient::new(&env, &rs_id);
+    rs.initialize(&admin);
+
+    let lh_id = env.register(LiquidityHandler, ());
+    let lhc = LiquidityHandlerClient::new(&env, &lh_id);
+    lhc.initialize(&rs_id, &ds_id);
+
+    let adl = setup_adl_handler(&env, &ds_id, &lh_id);
+
+    let market_id = 0u32;
+    lhc.set_oracle_prices(&admin, &market_id, &200u128, &200u128);
+
+    // Small pool so PnL factor is high.
+    ds.set_u128(&admin, &pool_long_amount_key(&env, market_id), &500u128);
+    ds.set_u128(&admin, &pool_short_amount_key(&env, market_id), &500u128);
+
+    // Max PnL factor = 50_000 (5%) → ADL required.
+    ds.set_u128(
+        &admin,
+        &max_pnl_factor_key(&env, market_id),
+        &50_000u128,
+    );
+
+    let user = Address::generate(&env);
+    let pos_key = make_key(&env, 0xB2);
+    let pos = PositionProps {
+        position_key: pos_key.clone(),
+        account: user.clone(),
+        market_id,
+        quantity: 1_000u128,
+        collateral_amount: 200u128,
+        average_price: 10u128,
+        is_long: true,
+        is_open: true,
+    };
+    ds.set_position_props(&admin, &pos_key, &pos);
+    ds.add_position(&admin, &pos_key);
+    ds.add_account_position(&admin, &user, &pos_key);
+    ds.add_position_to_oi_list(&admin, &market_id, &true, &pos_key);
+
+    // Partial close: reduce by half.
+    adl.execute_adl(&user, &pos_key, &500u128);
+
+    let updated = ds.get_position_props(&pos_key).unwrap();
+    assert!(updated.is_open, "position should remain open after partial ADL");
+    assert_eq!(updated.quantity, 500u128, "quantity should be halved");
+    assert_eq!(updated.collateral_amount, 100u128, "collateral should be halved");
+}
+
+// ---------------------------------------------------------------------------
+// Issue #59 — OI imbalance → high PnL factor → ADL reduces it
+// ---------------------------------------------------------------------------
+
+/// Scenario: OI imbalance causes a high PnL factor. ADL on the profitable
+/// position reduces the PnL factor below the threshold.
+#[test]
+fn test_adl_oi_imbalance_high_pnl_factor_adl_reduces_it() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let ds_id = env.register(DataStore, ());
+    let ds = DataStoreClient::new(&env, &ds_id);
+    ds.initialize(&admin);
+
+    let rs_id = env.register(RoleStore, ());
+    let rs = RoleStoreClient::new(&env, &rs_id);
+    rs.initialize(&admin);
+
+    let lh_id = env.register(LiquidityHandler, ());
+    let lhc = LiquidityHandlerClient::new(&env, &lh_id);
+    lhc.initialize(&rs_id, &ds_id);
+
+    let adl = setup_adl_handler(&env, &ds_id, &lh_id);
+
+    let market_id = 0u32;
+
+    // Oracle price: long = 100, short = 100.
+    lhc.set_oracle_prices(&admin, &market_id, &100u128, &100u128);
+
+    // Small pool: 1000 long tokens, 1000 short tokens.
+    // Pool value = 1000*100 + 1000*100 = 200_000.
+    ds.set_u128(&admin, &pool_long_amount_key(&env, market_id), &1_000u128);
+    ds.set_u128(&admin, &pool_short_amount_key(&env, market_id), &1_000u128);
+
+    // Max PnL factor = 30_000 (3%).
+    ds.set_u128(
+        &admin,
+        &max_pnl_factor_key(&env, market_id),
+        &30_000u128,
+    );
+
+    // Open three long positions entered at price 10, now worth 100.
+    // PnL per position = quantity * (100 - 10) / 10 = quantity * 9.
+    let user1 = Address::generate(&env);
+    let user2 = Address::generate(&env);
+    let user3 = Address::generate(&env);
+
+    let pk1 = make_key(&env, 0xC1);
+    let pk2 = make_key(&env, 0xC2);
+    let pk3 = make_key(&env, 0xC3);
+
+    for (pk, user, qty) in [(pk1.clone(), user1.clone(), 5_000u128), (pk2.clone(), user2.clone(), 5_000u128), (pk3.clone(), user3.clone(), 5_000u128)] {
+        let pos = PositionProps {
+            position_key: pk.clone(),
+            account: user.clone(),
+            market_id,
+            quantity: qty,
+            collateral_amount: 500u128,
+            average_price: 10u128,
+            is_long: true,
+            is_open: true,
+        };
+        ds.set_position_props(&admin, &pk, &pos);
+        ds.add_position(&admin, &pk);
+        ds.add_account_position(&admin, &user, &pk);
+        ds.add_position_to_oi_list(&admin, &market_id, &true, &pk);
+    }
+
+    // Total PnL = 3 * 5000 * 9 = 135_000.
+    // Pool value = 200_000.
+    // PnL factor = 135_000 * 1_000_000 / 200_000 = 675_000 (67.5%).
+    // Max = 30_000 (3%) → ADL required.
+
+    // ADL the first position (full close).
+    adl.execute_adl(&user1, &pk1, &5_000u128);
+
+    // After ADL: only 2 positions remain.
+    // Total PnL = 2 * 5000 * 9 = 90_000.
+    // Pool value = 200_000 (unchanged — ADL doesn't move pool tokens).
+    // PnL factor = 90_000 * 1_000_000 / 200_000 = 450_000 (45%).
+    // Still above 30_000 threshold.
+
+    // ADL the second position.
+    adl.execute_adl(&user2, &pk2, &5_000u128);
+
+    // After ADL: only 1 position remains.
+    // Total PnL = 1 * 5000 * 9 = 45_000.
+    // PnL factor = 45_000 * 1_000_000 / 200_000 = 225_000 (22.5%).
+    // Still above 30_000.
+
+    // ADL the third position.
+    adl.execute_adl(&user3, &pk3, &5_000u128);
+
+    // All long positions closed → no positions → PnL factor = 0.
+    assert_eq!(ds.get_position_count(), 0, "all positions should be closed");
 }
