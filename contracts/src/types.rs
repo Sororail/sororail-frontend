@@ -170,13 +170,19 @@ pub struct PositionProps {
     pub is_open: bool,
 }
 
-/// Errors returned by the `position_handler` contract.
+/// Errors returned by the `position_handler` contract and position utility
+/// functions.
 #[contracttype]
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 #[repr(u32)]
 pub enum PositionError {
     /// The requested position does not exist.
     PositionNotFound = 30,
+    /// The resulting position size would exceed the market's max open interest.
+    MaxOpenInterestExceeded = 20,
+    /// The remaining collateral after a partial close is below the minimum
+    /// collateral factor.
+    InsufficientCollateral = 21,
 }
 
 impl From<PositionError> for soroban_sdk::Error {
@@ -221,29 +227,10 @@ pub enum RouterAction {
     ClaimFundingFees(u32, Address),
 }
 
-// ---------------------------------------------------------------------------
-// Position types (issues #43, #45, #46)
-// ---------------------------------------------------------------------------
 
-/// Errors returned by position utility functions.
-#[contracttype]
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-#[repr(u32)]
-pub enum PositionError {
-    /// The resulting position size would exceed the market's max open interest.
-    MaxOpenInterestExceeded = 20,
-    /// The remaining collateral after a partial close is below the minimum
-    /// collateral factor.
-    InsufficientCollateral = 21,
-    /// The position does not exist.
-    PositionNotFound = 22,
-}
-
-impl From<PositionError> for soroban_sdk::Error {
-    fn from(e: PositionError) -> Self {
-        soroban_sdk::Error::from_contract_error(e as u32)
-    }
-}
+// ---------------------------------------------------------------------------
+// Order / position types (issues #43, #44, #45, #46)
+// ---------------------------------------------------------------------------
 
 /// Errors returned by order handler functions.
 #[contracttype]
@@ -251,9 +238,9 @@ impl From<PositionError> for soroban_sdk::Error {
 #[repr(u32)]
 pub enum OrderError {
     /// The trigger price condition for the order is not yet satisfied.
-    UnsatisfiedTrigger = 30,
+    UnsatisfiedTrigger = 40,
     /// The order does not exist.
-    OrderNotFound = 31,
+    OrderNotFound = 41,
 }
 
 impl From<OrderError> for soroban_sdk::Error {
@@ -262,7 +249,11 @@ impl From<OrderError> for soroban_sdk::Error {
     }
 }
 
-/// An open trading position.
+/// A lightweight position used by the position utility functions.
+///
+/// Distinct from [`PositionProps`] (which is the full on-chain record stored
+/// by the position_handler). This struct is used as a mutable working copy
+/// inside `increase_position_utils` and `decrease_position_utils`.
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Position {
