@@ -1,0 +1,87 @@
+//! Utilities for executing swap orders.
+//!
+//! Issue #32: implement the `LimitSwap` branch. Before calling `swap`,
+//! verify that the current execution price satisfies the trigger condition:
+//!   - sell swap: `price <= trigger_price`
+//!   - buy  swap: `price >= trigger_price`
+//! Revert with [`OrderError::UnsatisfiedTrigger`] if not met.
+
+use soroban_sdk::Env;
+
+use crate::{
+    data_store::DataStoreClient,
+    keys::{pool_long_amount_key, pool_short_amount_key},
+    types::OrderError,
+};
+
+/// Check whether the current price satisfies the trigger condition for a
+/// `LimitSwap` order.
+///
+/// * `is_sell` – `true` for sell swaps (execute when `price ≤ trigger`),
+///               `false` for buy swaps (execute when `price ≥ trigger`).
+///
+/// Returns `Ok(())` when the condition is met, `Err(OrderError::UnsatisfiedTrigger)`
+/// otherwise.
+pub fn check_limit_swap_trigger(
+    trigger_price: u128,
+    current_price: u128,
+    is_sell: bool,
+) -> Result<(), OrderError> {
+    let satisfied = if is_sell {
+        current_price <= trigger_price
+    } else {
+        current_price >= trigger_price
+    };
+
+    if satisfied {
+        Ok(())
+    } else {
+        Err(OrderError::UnsatisfiedTrigger)
+    }
+}
+
+/// Execute a swap: move `amount` from the long pool to the short pool (or
+/// vice-versa for a buy swap) at `execution_price`.
+///
+/// This is a minimal implementation used by the order handler. Real swap
+/// logic would involve token transfers; here we update the pool accounting
+/// in the data store.
+///
+/// # Panics
+/// Panics if the source pool has insufficient balance.
+pub fn swap(
+    env: &Env,
+    ds: &DataStoreClient,
+    caller: &soroban_sdk::Address,
+    market_id: u32,
+    amount: u128,
+    is_sell: bool,
+    execution_price: u128,
+) -> u128 {
+    let long_key = pool_long_amount_key(env, market_id);
+    let short_key = pool_short_amount_key(env, market_id);
+
+    // amount_out is the equivalent value at execution_price.
+    // For simplicity: amount_out = amount (1:1 accounting in pool tokens).
+    let _ = execution_price; // used by callers to satisfy the trigger check
+
+    if is_sell {
+        // Sell: reduce long pool, increase short pool.
+        let long_bal = ds.get_u128(&long_key).unwrap_or(0);
+        assert!(long_bal >= amount, "insufficient long pool balance");
+        ds.set_u128(caller, &long_key, &(long_bal - amount));
+
+        let short_bal = ds.get_u128(&short_key).unwrap_or(0);
+        ds.set_u128(caller, &short_key, &(short_bal + amount));
+    } else {
+        // Buy: reduce short pool, increase long pool.
+        let short_bal = ds.get_u128(&short_key).unwrap_or(0);
+        assert!(short_bal >= amount, "insufficient short pool balance");
+        ds.set_u128(caller, &short_key, &(short_bal - amount));
+
+        let long_bal = ds.get_u128(&long_key).unwrap_or(0);
+        ds.set_u128(caller, &long_key, &(long_bal + amount));
+    }
+
+    amount
+}

@@ -284,6 +284,10 @@ pub enum OrderType {
     LimitIncrease,
     /// Close or decrease a position when price drops to / below trigger_price.
     StopLossDecrease,
+    /// Swap tokens when the execution price satisfies the trigger condition.
+    /// For a sell swap: executes when `price <= trigger_price`.
+    /// For a buy swap:  executes when `price >= trigger_price`.
+    LimitSwap,
 }
 
 /// A pending order.
