@@ -254,6 +254,59 @@ fn test_position_handler_one_unit_above_threshold_not_liquidatable() {
     );
 }
 
+#[test]
+fn test_position_handler_deeply_underwater_with_fees_is_liquidatable() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let rs_id = env.register(RoleStore, ());
+    let rs = RoleStoreClient::new(&env, &rs_id);
+    let admin = Address::generate(&env);
+    rs.initialize(&admin);
+
+    let ds_id = env.register(DataStore, ());
+    let ds = DataStoreClient::new(&env, &ds_id);
+    ds.initialize(&admin);
+
+    let lh_id = env.register(LiquidityHandler, ());
+    let lhc = LiquidityHandlerClient::new(&env, &lh_id);
+    lhc.initialize(&rs_id, &ds_id);
+
+    let ph_id = env.register(PositionHandler, ());
+    let phc = PositionHandlerClient::new(&env, &ph_id);
+    phc.initialize(&ds_id, &lh_id);
+
+    let market_id = 0u32;
+    lhc.set_oracle_prices(&admin, &market_id, &1u128, &1u128);
+    ds.set_u128(
+        &admin,
+        &market_maintenance_margin_factor_key(&env, market_id),
+        &50_000u128,
+    );
+    ds.set_u128(&admin, &funding_factor_key(&env, market_id), &10_000u128);
+    ds.set_u128(&admin, &borrowing_factor_key(&env, market_id), &10_000u128);
+
+    let user = Address::generate(&env);
+    let pos_key = make_key(&env, 5);
+    let pos = PositionProps {
+        position_key: pos_key.clone(),
+        account: user,
+        market_id,
+        quantity: 10_000u128,
+        collateral_amount: 100u128,
+        average_price: 100u128,
+        is_long: true,
+        is_open: true,
+        referral_code: soroban_sdk::BytesN::from_array(&env, &[0u8; 32]),
+    };
+    ds.set_position_props(&admin, &pos_key, &pos);
+
+    assert!(
+        phc.is_liquidatable(&pos_key),
+        "deeply underwater position with accrued fees should be liquidatable"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Issue #1 — role metadata
 // ---------------------------------------------------------------------------
