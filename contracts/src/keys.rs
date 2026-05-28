@@ -196,6 +196,18 @@ pub fn price_impact_factor_key(env: &Env, market_id: u32) -> BytesN<32> {
     market_scoped_key(env, b"pimpactf", market_id)
 }
 
+/// Fixed-point (FACTOR_DENOMINATOR-scaled) exponent applied to the imbalance
+/// term of the price-impact curve. `1_000_000` means `^1` (linear).
+pub fn price_impact_exponent_factor_key(env: &Env, market_id: u32) -> BytesN<32> {
+    market_scoped_key(env, b"pimpexpf", market_id)
+}
+
+/// Balance of the per-market impact pool that funds favorable price impact.
+/// Favorable impact paid to traders can never exceed this balance.
+pub fn impact_pool_amount_key(env: &Env, market_id: u32) -> BytesN<32> {
+    market_scoped_key(env, b"impactpl", market_id)
+}
+
 // ---------------------------------------------------------------------------
 // Referral key generators
 // ---------------------------------------------------------------------------
