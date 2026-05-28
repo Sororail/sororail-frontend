@@ -46,7 +46,7 @@ pub fn is_liquidatable(
     // Maintenance Margin = Notional * Factor
     let maintenance_margin = pos.quantity * maintenance_margin_factor / PRECISION;
 
-    collateral_after_fees < maintenance_margin
+    collateral_after_fees <= maintenance_margin
 }
 
 fn calculate_total_fees(quantity: u128, funding_factor: u128, borrowing_factor: u128) -> u128 {
@@ -99,6 +99,64 @@ pub fn calculate_pnl(pos: &PositionProps, current_price: u128) -> i128 {
     }
 }
 
+pub fn get_position_pnl_usd(pos: &PositionProps, current_price: u128) -> i128 {
+    calculate_pnl(pos, current_price)
+}
+
+pub fn get_position_fees(
+    quantity: u128,
+    funding_factor: u128,
+    borrowing_factor: u128,
+    position_fee_factor: u128,
+) -> (u128, u128, u128, u128) {
+    let funding_fee = quantity.saturating_mul(funding_factor) / PRECISION;
+    let borrowing_fee = quantity.saturating_mul(borrowing_factor) / PRECISION;
+    let position_fee = quantity.saturating_mul(position_fee_factor) / PRECISION;
+    let total_fee = funding_fee.saturating_add(borrowing_fee).saturating_add(position_fee);
+    (funding_fee, borrowing_fee, position_fee, total_fee)
+}
+
+pub fn get_position_liquidation_price(
+    pos: &PositionProps,
+    maintenance_margin_factor: u128,
+    funding_factor: u128,
+    borrowing_factor: u128,
+    position_fee_factor: u128,
+) -> u128 {
+    if pos.average_price == 0 || pos.quantity == 0 {
+        return 0;
+    }
+
+    let maintenance_margin = pos.quantity.saturating_mul(maintenance_margin_factor) / PRECISION;
+    let (_funding_fee, _borrowing_fee, _position_fee, total_fee) =
+        get_position_fees(pos.quantity, funding_factor, borrowing_factor, position_fee_factor);
+    let fees = total_fee;
+
+    let delta = if maintenance_margin.saturating_add(fees) > pos.collateral_amount {
+        maintenance_margin.saturating_add(fees) - pos.collateral_amount
+    } else {
+        pos.collateral_amount - maintenance_margin.saturating_add(fees)
+    };
+
+    let price_offset = (pos.average_price as u128)
+        .saturating_mul(delta)
+        / pos.quantity;
+
+    if maintenance_margin.saturating_add(fees) > pos.collateral_amount {
+        if pos.is_long {
+            pos.average_price.saturating_add(price_offset)
+        } else {
+            pos.average_price.saturating_sub(price_offset)
+        }
+    } else {
+        if pos.is_long {
+            pos.average_price.saturating_sub(price_offset)
+        } else {
+            pos.average_price.saturating_add(price_offset)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -132,8 +190,10 @@ mod tests {
         let env = Env::default();
         let pos = borderline_long(&env);
         let margin_factor = 100_000; // 10 %
+        let funding_factor = 0;
+        let borrowing_factor = 0;
         // maximize = true: worst-case price for a long is the lower price.
-        assert!(is_liquidatable(&pos, 90, margin_factor));
+        assert!(is_liquidatable(&pos, 90, margin_factor, funding_factor, borrowing_factor));
     }
 
     #[test]
@@ -141,9 +201,11 @@ mod tests {
         let env = Env::default();
         let pos = borderline_long(&env);
         let margin_factor = 100_000;
+        let funding_factor = 0;
+        let borrowing_factor = 0;
         // maximize = false: optimistic price for a long is the higher price.
         // The same position that is liquidatable at 90 is healthy at 110.
-        assert!(!is_liquidatable(&pos, 110, margin_factor));
+        assert!(!is_liquidatable(&pos, 110, margin_factor, funding_factor, borrowing_factor));
     }
 }
 
