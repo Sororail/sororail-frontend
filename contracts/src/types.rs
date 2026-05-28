@@ -100,6 +100,45 @@ pub struct PositionProps {
 
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PositionFees {
+    pub borrowing_fee: u128,
+    pub funding_fee: u128,
+    pub position_fee: u128,
+    pub total_fee: u128,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FundingInfo {
+    pub borrowing_factor: u128,
+    pub funding_factor: u128,
+    pub position_fee_factor: u128,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PositionInfo {
+    pub position: PositionProps,
+    pub pnl_usd: i128,
+    pub pending_fees: PositionFees,
+    pub liquidation_price: u128,
+    pub funding_info: FundingInfo,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PoolValueInfo {
+    pub pool_value: u128,
+    pub long_pnl: i128,
+    pub short_pnl: i128,
+    pub impact_pool_amount: u128,
+    pub net_pnl: i128,
+    pub lp_supply: u128,
+    pub index_token_price: u128,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ExecutionPriceResult {
     pub price_without_impact: i128,
     pub price_with_impact: i128,
