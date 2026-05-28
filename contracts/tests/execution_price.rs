@@ -4,7 +4,10 @@
 
 use contracts::{
     data_store::{DataStore, DataStoreClient},
-    keys::{open_interest_long_key, open_interest_short_key, price_impact_factor_key},
+    keys::{
+        impact_pool_amount_key, open_interest_long_key, open_interest_short_key,
+        price_impact_exponent_factor_key, price_impact_factor_key,
+    },
     liquidity_handler::{LiquidityHandler, LiquidityHandlerClient},
     reader::{Reader, ReaderClient},
     role_store::{RoleStore, RoleStoreClient},
@@ -113,4 +116,79 @@ fn test_get_execution_price_balanced_oi_no_impact() {
     let result = reader.get_execution_price(&key, &2_000, &true);
     assert_eq!(result.price_without_impact, 200);
     assert_eq!(result.price_with_impact, 200);
+}
+
+#[test]
+fn test_get_execution_price_squared_exponent() {
+    let env = Env::default();
+    let (reader, ds, lh, admin) = setup(&env);
+
+    let market_id: u32 = 9;
+    let key = make_key(&env, 99);
+    ds.set_position_props(
+        &admin,
+        &key,
+        &PositionProps {
+            position_key: key.clone(),
+            account: Address::generate(&env),
+            market_id,
+            quantity: 10_000,
+            collateral_amount: 1_000,
+            average_price: 100,
+            is_long: true,
+            is_open: true,
+            referral_code: zero_code(&env),
+        },
+    );
+
+    lh.set_oracle_prices(&admin, &market_id, &100, &100);
+    ds.set_u128(&admin, &open_interest_long_key(&env, market_id), &8_000);
+    ds.set_u128(&admin, &open_interest_short_key(&env, market_id), &2_000);
+    ds.set_u128(&admin, &price_impact_factor_key(&env, market_id), &100_000);
+    // ratio=0.6, squared -> 0.36; impact = 100 * 0.1 * 0.36 = 3 (floored).
+    ds.set_u128(
+        &admin,
+        &price_impact_exponent_factor_key(&env, market_id),
+        &2_000_000,
+    );
+
+    let result = reader.get_execution_price(&key, &1_000, &true);
+    assert_eq!(result.price_without_impact, 100);
+    assert_eq!(result.price_with_impact, 103);
+}
+
+#[test]
+fn test_get_execution_price_favorable_impact_paid_from_pool() {
+    let env = Env::default();
+    let (reader, ds, lh, admin) = setup(&env);
+
+    let market_id: u32 = 10;
+    let key = make_key(&env, 100);
+    ds.set_position_props(
+        &admin,
+        &key,
+        &PositionProps {
+            position_key: key.clone(),
+            account: Address::generate(&env),
+            market_id,
+            quantity: 10_000,
+            collateral_amount: 1_000,
+            average_price: 100,
+            is_long: true,
+            is_open: true,
+            referral_code: zero_code(&env),
+        },
+    );
+
+    lh.set_oracle_prices(&admin, &market_id, &100, &100);
+    ds.set_u128(&admin, &open_interest_long_key(&env, market_id), &8_000);
+    ds.set_u128(&admin, &open_interest_short_key(&env, market_id), &2_000);
+    ds.set_u128(&admin, &price_impact_factor_key(&env, market_id), &100_000);
+    // Closing a long while longs dominate improves the imbalance; the funded
+    // impact pool pays the 6-unit favorable impact, raising the exit price.
+    ds.set_u128(&admin, &impact_pool_amount_key(&env, market_id), &10);
+
+    let result = reader.get_execution_price(&key, &1_000, &false);
+    assert_eq!(result.price_without_impact, 100);
+    assert_eq!(result.price_with_impact, 106);
 }
