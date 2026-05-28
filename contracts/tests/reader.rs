@@ -8,7 +8,9 @@
 
 use contracts::{
     data_store::{DataStore, DataStoreClient},
+    keys::{borrowing_factor_key, funding_factor_key, impact_pool_amount_key, market_maintenance_margin_factor_key, position_fee_factor_key, pool_long_amount_key, pool_short_amount_key},
     liquidity_handler::{LiquidityHandler, LiquidityHandlerClient},
+    market_utils,
     reader::{Reader, ReaderClient},
     role_store::{RoleStore, RoleStoreClient},
     types::PositionProps,
@@ -202,4 +204,71 @@ fn test_get_adl_targets_empty_market() {
 
     let targets = reader.get_adl_targets(&market_id, &true, &5);
     assert_eq!(targets.len(), 0, "empty market should return empty");
+}
+
+#[test]
+fn test_get_position_info_computes_pnl_and_liquidation_price() {
+    let env = Env::default();
+    let (reader, ds, lh, admin) = setup(&env);
+
+    let market_id: u32 = 5;
+    let position_key = make_key(&env, 42);
+    let account = Address::generate(&env);
+    let pos = PositionProps {
+        position_key: position_key.clone(),
+        account: account.clone(),
+        market_id,
+        quantity: 1_000,
+        collateral_amount: 50,
+        average_price: 100,
+        is_long: true,
+        is_open: true,
+        referral_code: soroban_sdk::BytesN::from_array(&env, &[0u8; 32]),
+    };
+
+    ds.set_position_props(&admin, &position_key, &pos);
+    ds.add_position_to_oi_list(&admin, &market_id, &true, &position_key);
+    ds.set_u128(&admin, &funding_factor_key(&env, market_id), &10_000u128);
+    ds.set_u128(&admin, &borrowing_factor_key(&env, market_id), &20_000u128);
+    ds.set_u128(&admin, &position_fee_factor_key(&env, market_id), &5_000u128);
+    ds.set_u128(&admin, &market_maintenance_margin_factor_key(&env, market_id), &100_000u128);
+
+    lh.set_oracle_prices(&admin, &market_id, &90u128, &110u128);
+
+    let info_worst = reader.get_position_info(&position_key, &true);
+    let info_best = reader.get_position_info(&position_key, &false);
+
+    assert_eq!(info_worst.position.position_key, position_key);
+    assert_eq!(info_worst.pnl_usd, -100);
+    assert_eq!(info_best.pnl_usd, 100);
+    assert_eq!(info_worst.pending_fees.total_fee, 35);
+    assert_eq!(info_best.pending_fees.position_fee, 5);
+    assert_eq!(info_worst.funding_info.funding_factor, 10_000);
+    assert_eq!(info_worst.funding_info.borrowing_factor, 20_000);
+    assert_eq!(info_worst.funding_info.position_fee_factor, 5_000);
+    assert!(info_worst.liquidation_price > 0);
+}
+
+#[test]
+fn test_get_market_pool_value_info_matches_direct_helper() {
+    let env = Env::default();
+    let (reader, ds, lh, admin) = setup(&env);
+    let market_id: u32 = 6;
+
+    lh.set_oracle_prices(&admin, &market_id, &2u128, &1u128);
+    let long_amount = 500u128;
+    let short_amount = 300u128;
+    ds.set_u128(&admin, &pool_long_amount_key(&env, market_id), &long_amount);
+    ds.set_u128(&admin, &pool_short_amount_key(&env, market_id), &short_amount);
+    ds.set_u128(&admin, &impact_pool_amount_key(&env, market_id), &123u128);
+    ds.set_u128(&admin, &funding_factor_key(&env, market_id), &0u128);
+    ds.set_u128(&admin, &borrowing_factor_key(&env, market_id), &0u128);
+
+    let info_false = reader.get_market_pool_value_info(&market_id, &2u128, &1u128, &false);
+    let expected_false = market_utils::get_pool_value(long_amount, short_amount, 2u128, 1u128, 123u128, lh.lp_supply(&market_id), false);
+    assert_eq!(info_false, expected_false);
+
+    let info_true = reader.get_market_pool_value_info(&market_id, &2u128, &1u128, &true);
+    let expected_true = market_utils::get_pool_value(long_amount, short_amount, 2u128, 1u128, 123u128, lh.lp_supply(&market_id), true);
+    assert_eq!(info_true, expected_true);
 }
