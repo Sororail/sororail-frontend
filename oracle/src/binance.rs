@@ -1,4 +1,5 @@
 use serde::Deserialize;
+use worker::Fetch;
 
 pub const BINANCE_TICKER_PRICE_URL: &str = "https://api.binance.com/api/v3/ticker/price";
 pub const FLOAT_PRECISION: i128 = 1_000_000_000_000_000_000_000_000_000_000;
@@ -33,6 +34,30 @@ pub fn parse_ticker_response_body(
         }
     }
     Ok(results)
+}
+
+pub fn parse_ticker_http_response(
+    status_code: u16,
+    body: &str,
+    symbols: &[String],
+) -> Result<Vec<(String, i128)>, BinancePriceError> {
+    if status_code != 200 {
+        return Err(BinancePriceError::HttpError(status_code));
+    }
+    parse_ticker_response_body(body, symbols)
+}
+
+pub async fn fetch_spot_prices(symbols: &[String]) -> Result<Vec<(String, i128)>, BinancePriceError> {
+    let response = Fetch::Url(BINANCE_TICKER_PRICE_URL)
+        .send()
+        .await
+        .map_err(|err| BinancePriceError::NetworkError(err.to_string()))?;
+    let status = response.status_code();
+    let body = response
+        .text()
+        .await
+        .map_err(|err| BinancePriceError::NetworkError(err.to_string()))?;
+    parse_ticker_http_response(status, &body, symbols)
 }
 
 pub fn parse_price_to_precision(raw: &str) -> Result<i128, BinancePriceError> {
@@ -90,7 +115,10 @@ pub fn parse_price_to_precision(raw: &str) -> Result<i128, BinancePriceError> {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_price_to_precision, parse_ticker_response_body, FLOAT_PRECISION};
+    use super::{
+        parse_price_to_precision, parse_ticker_http_response, parse_ticker_response_body,
+        BinancePriceError, FLOAT_PRECISION,
+    };
 
     #[test]
     fn parse_price_integer() {
@@ -118,5 +146,12 @@ mod tests {
         assert_eq!(parsed.len(), 1);
         assert_eq!(parsed[0].0, "ETHUSDT".to_string());
         assert_eq!(parsed[0].1, 10 * FLOAT_PRECISION + (FLOAT_PRECISION / 2));
+    }
+
+    #[test]
+    fn parse_ticker_http_response_non_200_returns_error() {
+        let symbols = vec!["BTCUSDT".to_string()];
+        let err = parse_ticker_http_response(503, "[]", &symbols).unwrap_err();
+        assert_eq!(err, BinancePriceError::HttpError(503));
     }
 }
