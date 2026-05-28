@@ -9,8 +9,10 @@ use soroban_sdk::{panic_with_error, Env};
 
 use crate::{
     data_store::DataStoreClient,
-    keys::{max_open_interest_long_key, max_open_interest_short_key,
-           open_interest_long_key, open_interest_short_key},
+    keys::{
+        max_open_interest_long_key, max_open_interest_short_key, open_interest_long_key,
+        open_interest_short_key,
+    },
     types::{Order, OrderError, OrderType, Position, PositionError},
 };
 

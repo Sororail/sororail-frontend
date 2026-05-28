@@ -10,9 +10,7 @@
 use contracts::{
     data_store::{DataStore, DataStoreClient},
     fee_handler::{FeeError, FeeHandler, FeeHandlerClient},
-    keys::{
-        claimable_funding_amount_key, claimable_protocol_fee_key, ui_claimable_fee_amount_key,
-    },
+    keys::{claimable_funding_amount_key, claimable_protocol_fee_key, ui_claimable_fee_amount_key},
     role_store::{RoleStore, RoleStoreClient},
 };
 use soroban_sdk::{
@@ -49,7 +47,13 @@ fn setup<'a>(env: &'a Env) -> Fx<'a> {
     let fh = FeeHandlerClient::new(env, &fh_id);
     fh.initialize(&ds_id, &receiver);
 
-    Fx { fh, fh_id, ds, admin, receiver }
+    Fx {
+        fh,
+        fh_id,
+        ds,
+        admin,
+        receiver,
+    }
 }
 
 // ===========================================================================
@@ -101,7 +105,10 @@ fn test_get_ui_claimable_fee_defaults_zero() {
         .register_stellar_asset_contract_v2(fx.admin.clone())
         .address();
 
-    assert_eq!(fx.fh.get_ui_claimable_fee(&ui_receiver, &0u32, &token), 0u128);
+    assert_eq!(
+        fx.fh.get_ui_claimable_fee(&ui_receiver, &0u32, &token),
+        0u128
+    );
 }
 
 #[test]
@@ -116,7 +123,10 @@ fn test_get_ui_claimable_fee_reflects_storage() {
 
     let key = ui_claimable_fee_amount_key(&env, &ui_receiver, 3u32, &token);
     fx.ds.set_u128(&fx.admin, &key, &1_234u128);
-    assert_eq!(fx.fh.get_ui_claimable_fee(&ui_receiver, &3u32, &token), 1_234u128);
+    assert_eq!(
+        fx.fh.get_ui_claimable_fee(&ui_receiver, &3u32, &token),
+        1_234u128
+    );
 }
 
 #[test]
@@ -167,25 +177,43 @@ fn test_claim_ui_fees_transfers_and_zeroes_pending() {
 
     let markets: Vec<u32> = vec![&env, 0u32, 1u32];
     let tokens: Vec<Address> = vec![&env, token_addr.clone()];
-    assert_eq!(fx.fh.claim_ui_fees(&ui_receiver, &markets, &tokens), 500i128);
+    assert_eq!(
+        fx.fh.claim_ui_fees(&ui_receiver, &markets, &tokens),
+        500i128
+    );
     assert_eq!(token_view.balance(&ui_receiver), 500i128);
     assert_eq!(token_view.balance(&fx.fh_id), 0i128);
 
     assert_eq!(
         fx.ds
-            .get_u128(&ui_claimable_fee_amount_key(&env, &ui_receiver, 0u32, &token_addr))
+            .get_u128(&ui_claimable_fee_amount_key(
+                &env,
+                &ui_receiver,
+                0u32,
+                &token_addr
+            ))
             .unwrap_or(0),
         0u128,
     );
     assert_eq!(
         fx.ds
-            .get_u128(&ui_claimable_fee_amount_key(&env, &ui_receiver, 1u32, &token_addr))
+            .get_u128(&ui_claimable_fee_amount_key(
+                &env,
+                &ui_receiver,
+                1u32,
+                &token_addr
+            ))
             .unwrap_or(0),
         0u128,
     );
     assert_eq!(
         fx.ds
-            .get_u128(&ui_claimable_fee_amount_key(&env, &ui_receiver, 9u32, &token_addr))
+            .get_u128(&ui_claimable_fee_amount_key(
+                &env,
+                &ui_receiver,
+                9u32,
+                &token_addr
+            ))
             .unwrap_or(0),
         50u128,
     );
@@ -359,8 +387,14 @@ fn test_get_claimable_protocol_fee_reflects_storage() {
         .address();
     let key = claimable_protocol_fee_key(&env, 4u32, &token_addr);
     fx.ds.set_u128(&fx.admin, &key, &123u128);
-    assert_eq!(fx.fh.get_claimable_protocol_fee(&4u32, &token_addr), 123u128);
-    assert_eq!(fx.fh.get_claimable_protocol_fee(&999u32, &token_addr), 0u128);
+    assert_eq!(
+        fx.fh.get_claimable_protocol_fee(&4u32, &token_addr),
+        123u128
+    );
+    assert_eq!(
+        fx.fh.get_claimable_protocol_fee(&999u32, &token_addr),
+        0u128
+    );
 }
 
 // ===========================================================================
@@ -423,19 +457,34 @@ fn test_claim_funding_fees_credits_account_and_zeroes_slot() {
     assert_eq!(token_view.balance(&acct), 150i128);
     assert_eq!(
         fx.ds
-            .get_u128(&claimable_funding_amount_key(&env, 0u32, &token_addr, &acct))
+            .get_u128(&claimable_funding_amount_key(
+                &env,
+                0u32,
+                &token_addr,
+                &acct
+            ))
             .unwrap_or(0),
         0u128,
     );
     assert_eq!(
         fx.ds
-            .get_u128(&claimable_funding_amount_key(&env, 1u32, &token_addr, &acct))
+            .get_u128(&claimable_funding_amount_key(
+                &env,
+                1u32,
+                &token_addr,
+                &acct
+            ))
             .unwrap_or(0),
         0u128,
     );
     assert_eq!(
         fx.ds
-            .get_u128(&claimable_funding_amount_key(&env, 0u32, &token_addr, &other))
+            .get_u128(&claimable_funding_amount_key(
+                &env,
+                0u32,
+                &token_addr,
+                &other
+            ))
             .unwrap_or(0),
         999u128,
     );
@@ -451,9 +500,15 @@ fn test_get_claimable_funding_reflects_storage() {
         .address();
     let key = claimable_funding_amount_key(&env, 7u32, &token_addr, &acct);
     fx.ds.set_u128(&fx.admin, &key, &42u128);
-    assert_eq!(fx.fh.get_claimable_funding(&acct, &7u32, &token_addr), 42u128);
+    assert_eq!(
+        fx.fh.get_claimable_funding(&acct, &7u32, &token_addr),
+        42u128
+    );
     let other = Address::generate(&env);
-    assert_eq!(fx.fh.get_claimable_funding(&other, &7u32, &token_addr), 0u128);
+    assert_eq!(
+        fx.fh.get_claimable_funding(&other, &7u32, &token_addr),
+        0u128
+    );
 }
 
 #[test]

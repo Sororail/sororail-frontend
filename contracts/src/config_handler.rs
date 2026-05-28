@@ -48,31 +48,80 @@ impl ConfigHandler {
     // -----------------------------------------------------------------------
 
     pub fn set_max_pool_amount(env: Env, caller: Address, market_id: u32, value: u128) {
-        Self::set_config_value(&env, &caller, market_id, max_pool_amount_key, value, "max_pool_amount");
+        Self::set_config_value(
+            &env,
+            &caller,
+            market_id,
+            max_pool_amount_key,
+            value,
+            "max_pool_amount",
+        );
     }
 
     pub fn set_max_open_interest(env: Env, caller: Address, market_id: u32, value: u128) {
-        Self::set_config_value(&env, &caller, market_id, max_open_interest_key, value, "max_open_interest");
+        Self::set_config_value(
+            &env,
+            &caller,
+            market_id,
+            max_open_interest_key,
+            value,
+            "max_open_interest",
+        );
     }
 
     pub fn set_position_fee_factor(env: Env, caller: Address, market_id: u32, value: u128) {
-        Self::set_config_value(&env, &caller, market_id, position_fee_factor_key, value, "position_fee_factor");
+        Self::set_config_value(
+            &env,
+            &caller,
+            market_id,
+            position_fee_factor_key,
+            value,
+            "position_fee_factor",
+        );
     }
 
     pub fn set_borrowing_factor(env: Env, caller: Address, market_id: u32, value: u128) {
-        Self::set_config_value(&env, &caller, market_id, borrowing_factor_key, value, "borrowing_factor");
+        Self::set_config_value(
+            &env,
+            &caller,
+            market_id,
+            borrowing_factor_key,
+            value,
+            "borrowing_factor",
+        );
     }
 
     pub fn set_funding_factor(env: Env, caller: Address, market_id: u32, value: u128) {
-        Self::set_config_value(&env, &caller, market_id, funding_factor_key, value, "funding_factor");
+        Self::set_config_value(
+            &env,
+            &caller,
+            market_id,
+            funding_factor_key,
+            value,
+            "funding_factor",
+        );
     }
 
     pub fn set_min_collateral_factor(env: Env, caller: Address, market_id: u32, value: u128) {
-        Self::set_config_value(&env, &caller, market_id, min_collateral_factor_key, value, "min_collateral_factor");
+        Self::set_config_value(
+            &env,
+            &caller,
+            market_id,
+            min_collateral_factor_key,
+            value,
+            "min_collateral_factor",
+        );
     }
 
     pub fn set_max_leverage(env: Env, caller: Address, market_id: u32, value: u128) {
-        Self::set_config_value(&env, &caller, market_id, max_leverage_key, value, "max_leverage");
+        Self::set_config_value(
+            &env,
+            &caller,
+            market_id,
+            max_leverage_key,
+            value,
+            "max_leverage",
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -158,11 +207,7 @@ impl ConfigHandler {
         );
     }
 
-    fn get_config_value(
-        env: &Env,
-        market_id: u32,
-        key_fn: fn(&Env, u32) -> BytesN<32>,
-    ) -> u128 {
+    fn get_config_value(env: &Env, market_id: u32, key_fn: fn(&Env, u32) -> BytesN<32>) -> u128 {
         let (_, ds_addr) = Self::deps(env);
         let ds = DataStoreClient::new(env, &ds_addr);
         ds.get_u128(&key_fn(env, market_id)).unwrap_or(0)

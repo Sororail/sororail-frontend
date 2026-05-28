@@ -49,8 +49,10 @@ struct JsonRpcFault {
 #[derive(Debug, Clone, Deserialize)]
 struct GetLatestLedgerResult {
     sequence: u32,
+    #[allow(dead_code)]
     id: String,
     #[serde(rename = "protocolVersion")]
+    #[allow(dead_code)]
     protocol_version: String,
 }
 

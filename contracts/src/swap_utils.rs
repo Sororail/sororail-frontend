@@ -97,7 +97,7 @@ pub fn swap_with_path(
     env: &Env,
     ds: &DataStoreClient,
     caller: &soroban_sdk::Address,
-    path: &[(u32, bool)],   // (market_id, is_sell) per hop
+    path: &[(u32, bool)], // (market_id, is_sell) per hop
     amount_in: u128,
     min_output_amount: u128,
     execution_price: u128,

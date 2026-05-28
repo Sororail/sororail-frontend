@@ -1,21 +1,29 @@
 #![cfg(test)]
 
 use contracts::{
-    liquidity_handler::{LiquidityHandler, LiquidityHandlerClient},
-    router::{Router, RouterClient},
-    role_store::{RoleStore, RoleStoreClient},
     data_store::{DataStore, DataStoreClient},
-    types::{RouterAction},
+    liquidity_handler::{LiquidityHandler, LiquidityHandlerClient},
+    role_store::{RoleStore, RoleStoreClient},
+    router::{Router, RouterClient},
+    types::RouterAction,
 };
 use soroban_sdk::{
     testutils::{Address as _, Events as _},
     token::{StellarAssetClient, TokenClient},
-    Address, Env, vec, IntoVal,
+    vec, Address, Env, IntoVal,
 };
 
 const MARKET: u32 = 1;
 
-fn setup(env: &Env) -> (RouterClient<'_>, LiquidityHandlerClient<'_>, Address, Address, Address) {
+fn setup(
+    env: &Env,
+) -> (
+    RouterClient<'_>,
+    LiquidityHandlerClient<'_>,
+    Address,
+    Address,
+    Address,
+) {
     let rs_addr = env.register(RoleStore, ());
     let ds_addr = env.register(DataStore, ());
     let lh_addr = env.register(LiquidityHandler, ());
@@ -74,7 +82,7 @@ fn test_multicall_3_actions_success() {
     // 2. Verify CreateDeposit
     // 200 tokens * 100 price = 20000 LP (since it's the first deposit)
     assert_eq!(lh.lp_balance_of(&MARKET, &user), 20000u128);
-    
+
     // 3. Verify user balance
     // 1000 - 100 (sent) - 200 (deposited) = 700
     assert_eq!(long_tok.balance(&user), 700);
@@ -112,7 +120,19 @@ fn test_multicall_atomicity_reverts_entirely() {
     assert!(result.is_err(), "multicall should have failed");
 
     // Verify atomicity: Action 1 must have been rolled back.
-    assert_eq!(long_tok.balance(&receiver), 0, "Action 1 should be rolled back");
-    assert_eq!(long_tok.balance(&user), 1000, "User balance should be restored");
-    assert_eq!(lh.lp_balance_of(&MARKET, &user), 0, "No LP should have been minted");
+    assert_eq!(
+        long_tok.balance(&receiver),
+        0,
+        "Action 1 should be rolled back"
+    );
+    assert_eq!(
+        long_tok.balance(&user),
+        1000,
+        "User balance should be restored"
+    );
+    assert_eq!(
+        lh.lp_balance_of(&MARKET, &user),
+        0,
+        "No LP should have been minted"
+    );
 }

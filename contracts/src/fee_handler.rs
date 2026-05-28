@@ -22,15 +22,12 @@
 //! that handshake.
 
 use soroban_sdk::{
-    contract, contractimpl, contracttype, panic_with_error, symbol_short, token, Address,
-    Env, Vec,
+    contract, contractimpl, contracttype, panic_with_error, symbol_short, token, Address, Env, Vec,
 };
 
 use crate::{
     data_store::DataStoreClient,
-    keys::{
-        claimable_funding_amount_key, claimable_protocol_fee_key, ui_claimable_fee_amount_key,
-    },
+    keys::{claimable_funding_amount_key, claimable_protocol_fee_key, ui_claimable_fee_amount_key},
 };
 
 #[contract]

@@ -61,7 +61,9 @@ pub fn decrease_position(
     };
 
     let remaining_size = position.size_in_usd.saturating_sub(actual_delta);
-    let remaining_collateral = position.collateral_amount.saturating_sub(released_collateral);
+    let remaining_collateral = position
+        .collateral_amount
+        .saturating_sub(released_collateral);
 
     // Validate remaining position (only for partial closes).
     if !is_full_close && remaining_size > 0 {

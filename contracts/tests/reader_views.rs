@@ -44,7 +44,13 @@ fn setup<'a>(env: &'a Env) -> Fx<'a> {
     let reader = ReaderClient::new(env, &reader_id);
     reader.initialize(&ds_id, &lh_id);
 
-    Fx { reader, ds, lh, lh_id, admin }
+    Fx {
+        reader,
+        ds,
+        lh,
+        lh_id,
+        admin,
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -60,9 +66,15 @@ fn test_get_funding_info_returns_stored_values() {
 
     // Write funding state directly through the data store — this is the same
     // path the funding fee accrual writes through.
-    fx.ds.set_i128(&writer, &funding_factor_key(&env, market_id), &-12_345i128);
-    fx.ds.set_u128(&writer, &open_interest_long_key(&env, market_id), &1_000u128);
-    fx.ds.set_u128(&writer, &open_interest_short_key(&env, market_id), &750u128);
+    fx.ds
+        .set_i128(&writer, &funding_factor_key(&env, market_id), &-12_345i128);
+    fx.ds.set_u128(
+        &writer,
+        &open_interest_long_key(&env, market_id),
+        &1_000u128,
+    );
+    fx.ds
+        .set_u128(&writer, &open_interest_short_key(&env, market_id), &750u128);
 
     let info = fx.reader.get_funding_info(&market_id);
     assert_eq!(info.funding_factor_per_second, -12_345i128);
@@ -115,7 +127,8 @@ fn register_market_and_seed_lp(
     // (i.e. 2 * lp_amount). Caller can then create a withdrawal up to that.
     soroban_sdk::token::StellarAssetClient::new(env, &long).mint(user, &(lp_amount as i128));
     soroban_sdk::token::StellarAssetClient::new(env, &short).mint(user, &(lp_amount as i128));
-    fx.lh.execute_deposit(user, &MARKET, &lp_amount, &lp_amount, user);
+    fx.lh
+        .execute_deposit(user, &MARKET, &lp_amount, &lp_amount, user);
     (long, short, MARKET)
 }
 
@@ -157,8 +170,7 @@ fn test_get_account_withdrawals_filters_and_paginates() {
     let bob = Address::generate(&env);
 
     // Seed market + alice's first 500 LP withdrawal.
-    let (long_tok, short_tok, market_id) =
-        register_market_and_seed_lp(&env, &fx, &alice, 500);
+    let (long_tok, short_tok, market_id) = register_market_and_seed_lp(&env, &fx, &alice, 500);
     let _a0 = fx
         .lh
         .create_withdrawal(&alice, &market_id, &100u128, &alice, &0u128, &0u128);

@@ -48,8 +48,8 @@ impl std::fmt::Display for ConfigError {
 /// [{"symbol":"BTC","stellar_address":"C...","sources":["binance","coinbase"]}]
 /// ```
 pub fn parse_price_feed_config(raw: &str) -> Result<PriceFeedConfig, ConfigError> {
-    let tokens: Vec<TokenFeedConfig> = serde_json::from_str(raw)
-        .map_err(|e| ConfigError::MalformedJson(e.to_string()))?;
+    let tokens: Vec<TokenFeedConfig> =
+        serde_json::from_str(raw).map_err(|e| ConfigError::MalformedJson(e.to_string()))?;
 
     if tokens.is_empty() {
         return Err(ConfigError::EmptyTokenList);

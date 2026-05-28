@@ -55,7 +55,9 @@ fn setup(env: &Env) -> Setup {
     let vault = DepositVaultClient::new(env, &vault_id);
     vault.initialize(&rs_id, &controller);
 
-    let token = env.register_stellar_asset_contract_v2(admin.clone()).address();
+    let token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
     StellarAssetClient::new(env, &token).mint(&user, &1000i128);
 
     Setup {

@@ -51,8 +51,7 @@ pub fn load_keeper_config(
 /// Logs a critical warning and optionally returns the balance even when below
 /// threshold so the caller can decide whether to skip submission.
 pub async fn check_keeper_balance(cfg: &KeeperBalanceConfig) -> Result<i64, RpcError> {
-    let stroops =
-        get_account_balance_stroops(&cfg.horizon_url, &cfg.account_id).await?;
+    let stroops = get_account_balance_stroops(&cfg.horizon_url, &cfg.account_id).await?;
 
     let xlm = stroops as f64 / XLM_IN_STROOPS as f64;
     if xlm < cfg.min_balance_xlm {

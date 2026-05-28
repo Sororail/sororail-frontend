@@ -1,9 +1,6 @@
 use soroban_sdk::{contract, contractimpl, contracttype, token, Address, Env, Vec};
 
-use crate::{
-    liquidity_handler::LiquidityHandlerClient,
-    types::RouterAction,
-};
+use crate::{liquidity_handler::LiquidityHandlerClient, types::RouterAction};
 
 #[contract]
 pub struct Router;
@@ -20,7 +17,9 @@ impl Router {
         if env.storage().instance().has(&RouterKey::LiquidityHandler) {
             panic!("already initialised");
         }
-        env.storage().instance().set(&RouterKey::LiquidityHandler, &liquidity_handler);
+        env.storage()
+            .instance()
+            .set(&RouterKey::LiquidityHandler, &liquidity_handler);
     }
 
     /// Execute a sequence of actions atomically. If any action fails, the
@@ -42,20 +41,20 @@ impl Router {
 
                 RouterAction::CreateDeposit(market_id, long_amount, short_amount, receiver) => {
                     let lh = Self::liquidity_handler(&env);
-                    lh.execute_deposit(
-                        &caller,
-                        &market_id,
-                        &long_amount,
-                        &short_amount,
-                        &receiver,
-                    );
+                    lh.execute_deposit(&caller, &market_id, &long_amount, &short_amount, &receiver);
                 }
 
                 RouterAction::CancelDeposit(_) => {
                     // Placeholder: pending-request logic not yet implemented.
                 }
 
-                RouterAction::CreateWithdrawal(market_id, lp_amount, receiver, min_long_out, min_short_out) => {
+                RouterAction::CreateWithdrawal(
+                    market_id,
+                    lp_amount,
+                    receiver,
+                    min_long_out,
+                    min_short_out,
+                ) => {
                     let lh = Self::liquidity_handler(&env);
                     lh.create_withdrawal(
                         &caller,
@@ -89,7 +88,8 @@ impl Router {
             }
         }
 
-        env.events().publish(("multicall",), (caller, actions.len()));
+        env.events()
+            .publish(("multicall",), (caller, actions.len()));
     }
 
     // -----------------------------------------------------------------------

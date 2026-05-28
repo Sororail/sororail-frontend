@@ -3,8 +3,8 @@ use soroban_sdk::{contract, contractimpl, contracttype, panic_with_error, Addres
 use crate::{
     data_store::DataStoreClient,
     keys::{
-        market_count_key, market_long_token_key, market_paused_key, market_props_key,
-        market_short_token_key, market_token_key, market_maintenance_margin_factor_key,
+        market_count_key, market_long_token_key, market_maintenance_margin_factor_key,
+        market_paused_key, market_props_key, market_short_token_key, market_token_key,
     },
     role_store::{role_admin_id, RoleStoreClient},
     types::{MarketConfig, MarketError},
@@ -102,9 +102,7 @@ impl MarketFactory {
 
         // Assign the next market ID from the counter.
         let count_key = market_count_key(&env);
-        let market_id: u32 = ds
-            .get_u128(&count_key)
-            .unwrap_or(0) as u32;
+        let market_id: u32 = ds.get_u128(&count_key).unwrap_or(0) as u32;
 
         let cfg = config.unwrap_or(MarketConfig {
             max_long_open_interest: u128::MAX,
@@ -152,13 +150,19 @@ impl MarketFactory {
             long_token: long_token.clone(),
             short_token: short_token.clone(),
         };
-        env.storage()
-            .persistent()
-            .set(&lookup_key, &market_token);
+        env.storage().persistent().set(&lookup_key, &market_token);
 
         // Emit an event so off-chain indexers can track market creation.
-        env.events()
-            .publish(("create_market",), (market_id, index_token, long_token, short_token, market_token));
+        env.events().publish(
+            ("create_market",),
+            (
+                market_id,
+                index_token,
+                long_token,
+                short_token,
+                market_token,
+            ),
+        );
 
         market_id
     }
@@ -277,10 +281,7 @@ impl MarketFactory {
     /// Panics with [`MarketError::MarketNotFound`] if `market_id` has no
     /// entry in `data_store`.
     fn assert_market_exists(env: &Env, ds: &DataStoreClient, market_id: u32) {
-        if ds
-            .get_u128(&market_props_key(env, market_id))
-            .is_none()
-        {
+        if ds.get_u128(&market_props_key(env, market_id)).is_none() {
             panic_with_error!(env, MarketError::MarketNotFound);
         }
     }

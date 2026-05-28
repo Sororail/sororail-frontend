@@ -1,5 +1,5 @@
-use soroban_sdk::{Address, BytesN, Env};
 use soroban_sdk::xdr::ToXdr;
+use soroban_sdk::{Address, BytesN, Env};
 
 // ---------------------------------------------------------------------------
 // Market key generators
@@ -212,7 +212,11 @@ pub fn impact_pool_amount_key(env: &Env, market_id: u32) -> BytesN<32> {
 // Referral key generators
 // ---------------------------------------------------------------------------
 
-pub fn claimable_referral_amount_key(env: &Env, code_owner: &Address, token: &Address) -> BytesN<32> {
+pub fn claimable_referral_amount_key(
+    env: &Env,
+    code_owner: &Address,
+    token: &Address,
+) -> BytesN<32> {
     let mut buf = [0u8; 32];
     buf[..8].copy_from_slice(b"clmref_a");
     let owner_bytes: [u8; 32] = env.crypto().sha256(&code_owner.to_xdr(env)).to_array();

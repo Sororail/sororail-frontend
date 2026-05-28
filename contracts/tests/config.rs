@@ -21,7 +21,14 @@ fn admin_role(env: &Env) -> soroban_sdk::BytesN<32> {
     soroban_sdk::BytesN::from_array(env, &[0u8; 32])
 }
 
-fn setup(env: &Env) -> (ConfigHandlerClient<'_>, MarketFactoryClient<'_>, RoleStoreClient<'_>, Address) {
+fn setup(
+    env: &Env,
+) -> (
+    ConfigHandlerClient<'_>,
+    MarketFactoryClient<'_>,
+    RoleStoreClient<'_>,
+    Address,
+) {
     let rs_id = env.register(RoleStore, ());
     let ds_id = env.register(DataStore, ());
     let mf_id = env.register(MarketFactory, ());

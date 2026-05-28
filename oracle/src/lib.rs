@@ -1,3 +1,5 @@
+#![allow(unused_must_use)]
+
 use axum::{routing::get, Router};
 use tower_service::Service;
 use worker::*;
@@ -40,9 +42,7 @@ async fn fetch(
 }
 
 /// `GET /keeper/balance` — current XLM balance of the keeper account.
-async fn handle_keeper_balance(
-    env: &Env,
-) -> Result<axum::http::Response<axum::body::Body>> {
+async fn handle_keeper_balance(env: &Env) -> Result<axum::http::Response<axum::body::Body>> {
     let net_cfg = match network_config::load_network_config(env) {
         Ok(c) => c,
         Err(e) => return json_error(503, &e.to_string()),
@@ -184,10 +184,7 @@ async fn scheduled(_event: ScheduledEvent, env: Env, _ctx: ScheduleContext) -> R
     // 6. Compute confidence interval (10th/90th percentile spread).
     let price_values: Vec<i128> = raw_prices.iter().map(|(_, p)| *p).collect();
     let spread = prices::compute_confidence_interval(&price_values);
-    console_log!(
-        "[oracle] price spread: {:?} at ledger {ledger_seq}",
-        spread
-    );
+    console_log!("[oracle] price spread: {:?} at ledger {ledger_seq}", spread);
 
     // 7. TODO: sign PriceProps {min, max} with KEEPER_SECRET_KEY, build and
     //    submit the Soroban set_prices transaction XDR:

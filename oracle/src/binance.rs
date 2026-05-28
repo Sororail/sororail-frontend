@@ -22,8 +22,8 @@ pub fn parse_ticker_response_body(
     body: &str,
     symbols: &[String],
 ) -> Result<Vec<(String, i128)>, BinancePriceError> {
-    let entries: Vec<BinanceTickerEntry> = serde_json::from_str(body)
-        .map_err(|err| BinancePriceError::JsonError(err.to_string()))?;
+    let entries: Vec<BinanceTickerEntry> =
+        serde_json::from_str(body).map_err(|err| BinancePriceError::JsonError(err.to_string()))?;
 
     let mut results = Vec::new();
     for symbol in symbols {
@@ -51,12 +51,13 @@ pub fn parse_ticker_http_result(
     response: Result<(u16, String), String>,
     symbols: &[String],
 ) -> Result<Vec<(String, i128)>, BinancePriceError> {
-    let (status_code, body) =
-        response.map_err(BinancePriceError::NetworkError)?;
+    let (status_code, body) = response.map_err(BinancePriceError::NetworkError)?;
     parse_ticker_http_response(status_code, &body, symbols)
 }
 
-pub async fn fetch_spot_prices(symbols: &[String]) -> Result<Vec<(String, i128)>, BinancePriceError> {
+pub async fn fetch_spot_prices(
+    symbols: &[String],
+) -> Result<Vec<(String, i128)>, BinancePriceError> {
     let binance_url = Url::parse(BINANCE_TICKER_PRICE_URL)
         .map_err(|err| BinancePriceError::NetworkError(err.to_string()))?;
     let mut response = Fetch::Url(binance_url)
@@ -128,8 +129,7 @@ pub fn parse_price_to_precision(raw: &str) -> Result<i128, BinancePriceError> {
 mod tests {
     use super::{
         parse_price_to_precision, parse_ticker_http_response, parse_ticker_http_result,
-        parse_ticker_response_body,
-        BinancePriceError, FLOAT_PRECISION,
+        parse_ticker_response_body, BinancePriceError, FLOAT_PRECISION,
     };
 
     #[test]
