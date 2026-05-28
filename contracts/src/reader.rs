@@ -3,14 +3,22 @@ use soroban_sdk::{contract, contractimpl, contracttype, Address, BytesN, Env, Ve
 use crate::{
     data_store::DataStoreClient,
     keys::{
-        funding_factor_key, impact_pool_amount_key, open_interest_long_key,
-        open_interest_short_key, price_impact_exponent_factor_key, price_impact_factor_key,
+        borrowing_factor_key, funding_factor_key, impact_pool_amount_key,
+        market_maintenance_margin_factor_key, open_interest_long_key,
+        open_interest_short_key, position_fee_factor_key,
+        price_impact_exponent_factor_key, price_impact_factor_key,
     },
     liquidity_handler::LiquidityHandlerClient,
-    order_handler::OrderHandlerClient,
-    position_utils::calculate_pnl,
+    market_utils,
+    position_utils::{
+        calculate_pnl, get_position_fees, get_position_liquidation_price,
+        get_position_pnl_usd,
+    },
     pricing_utils::{get_execution_price as compute_execution_price, FACTOR_DENOMINATOR},
-    types::{ExecutionPriceResult, FundingInfo, Order, PositionProps, Withdrawal},
+    types::{
+        ExecutionPriceResult, FundingInfo, PositionFees, PositionInfo, PositionProps,
+        PoolValueInfo,
+    },
 };
 
 #[contract]
@@ -144,6 +152,110 @@ impl Reader {
             price_without_impact: result.price_without_impact,
             price_with_impact: result.price_with_impact,
         }
+    }
+
+    pub fn get_position_info(
+        env: Env,
+        position_key: BytesN<32>,
+        maximize: bool,
+    ) -> PositionInfo {
+        let ds = Self::data_store(&env);
+        let lh = Self::liquidity_handler(&env);
+
+        let mut pos: PositionProps = ds
+            .get_position_props(&position_key)
+            .expect("position not found");
+
+        let prices = lh.oracle_prices(&pos.market_id);
+        let current_price = if pos.is_long {
+            if maximize {
+                prices.long_price.min(prices.short_price)
+            } else {
+                prices.long_price.max(prices.short_price)
+            }
+        } else if maximize {
+            prices.long_price.max(prices.short_price)
+        } else {
+            prices.long_price.min(prices.short_price)
+        };
+
+        let pnl_usd = get_position_pnl_usd(&pos, current_price);
+
+        let funding_factor = ds
+            .get_u128(&funding_factor_key(&env, pos.market_id))
+            .unwrap_or(0);
+        let borrowing_factor = ds
+            .get_u128(&borrowing_factor_key(&env, pos.market_id))
+            .unwrap_or(0);
+        let position_fee_factor = ds
+            .get_u128(&position_fee_factor_key(&env, pos.market_id))
+            .unwrap_or(0);
+        let maintenance_margin_factor = ds
+            .get_u128(&market_maintenance_margin_factor_key(&env, pos.market_id))
+            .unwrap_or(0);
+
+        let (funding_fee, borrowing_fee, position_fee, total_fee) = get_position_fees(
+            pos.quantity,
+            funding_factor,
+            borrowing_factor,
+            position_fee_factor,
+        );
+
+        let pending_fees = PositionFees {
+            borrowing_fee,
+            funding_fee,
+            position_fee,
+            total_fee,
+        };
+
+        let liquidation_price = get_position_liquidation_price(
+            &pos,
+            maintenance_margin_factor,
+            funding_factor,
+            borrowing_factor,
+            position_fee_factor,
+        );
+
+        let funding_info = FundingInfo {
+            borrowing_factor,
+            funding_factor,
+            position_fee_factor,
+        };
+
+        PositionInfo {
+            position: pos,
+            pnl_usd,
+            pending_fees,
+            liquidation_price,
+            funding_info,
+        }
+    }
+
+    pub fn get_market_pool_value_info(
+        env: Env,
+        market_id: u32,
+        long_price: u128,
+        short_price: u128,
+        maximize: bool,
+    ) -> PoolValueInfo {
+        let ds = Self::data_store(&env);
+        let lh = Self::liquidity_handler(&env);
+
+        let (pool_long, pool_short) = lh.pool_amounts(&market_id);
+        let impact_pool_amount = ds
+            .get_u128(&impact_pool_amount_key(&env, market_id))
+            .unwrap_or(0);
+        let lp_supply = lh.lp_supply(&market_id);
+
+        market_utils::get_pool_value(
+            pool_long,
+            pool_short,
+            long_price,
+            short_price,
+            impact_pool_amount,
+            lp_supply,
+            maximize,
+        )
     }
 
     // -----------------------------------------------------------------------
