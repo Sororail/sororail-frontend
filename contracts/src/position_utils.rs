@@ -133,7 +133,7 @@ mod tests {
         let pos = borderline_long(&env);
         let margin_factor = 100_000; // 10 %
         // maximize = true: worst-case price for a long is the lower price.
-        assert!(is_liquidatable(&pos, 90, margin_factor));
+        assert!(is_liquidatable(&pos, 90, margin_factor, 0, 0));
     }
 
     #[test]
@@ -143,7 +143,7 @@ mod tests {
         let margin_factor = 100_000;
         // maximize = false: optimistic price for a long is the higher price.
         // The same position that is liquidatable at 90 is healthy at 110.
-        assert!(!is_liquidatable(&pos, 110, margin_factor));
+        assert!(!is_liquidatable(&pos, 110, margin_factor, 0, 0));
     }
 }
 
