@@ -1,5 +1,5 @@
 use oracle::stellar_rpc::parse_latest_ledger_response;
-use oracle::submit::{parse_send_response, parse_get_transaction_response};
+use oracle::submit::{parse_get_transaction_response, parse_send_response};
 
 #[test]
 fn mock_rpc_integration_full_pipeline() {
@@ -28,8 +28,7 @@ fn mock_rpc_integration_full_pipeline() {
         }
     }"#;
 
-    let send_result = parse_send_response(send_response)
-        .expect("Failed to parse send response");
+    let send_result = parse_send_response(send_response).expect("Failed to parse send response");
     assert_eq!(send_result.status, "PENDING");
     assert_eq!(
         send_result.hash,
@@ -56,13 +55,7 @@ fn mock_rpc_integration_full_pipeline() {
 #[test]
 fn mock_rpc_integration_with_mocked_source_prices() {
     // Simulate fetching prices from multiple sources and computing confidence interval
-    let raw_prices = vec![
-        ("binance".to_string(), 45000i128),
-        ("kraken".to_string(), 45100i128),
-        ("coinbase".to_string(), 44900i128),
-    ];
-
-    let prices: Vec<i128> = raw_prices.iter().map(|(_, p)| *p).collect();
+    let prices = [45000i128, 45100, 44900];
 
     // Verify we have at least 3 sources for percentile calculation
     assert!(prices.len() >= 3);
@@ -94,9 +87,12 @@ fn mock_rpc_integration_transaction_validation() {
 #[test]
 fn mock_rpc_integration_ledger_sequence_tracking() {
     // Test tracking ledger sequences across multiple RPC calls
-    let ledger_1 = r#"{"jsonrpc":"2.0","id":1,"result":{"id":"a","sequence":49999,"protocolVersion":"22"}}"#;
-    let ledger_2 = r#"{"jsonrpc":"2.0","id":1,"result":{"id":"b","sequence":50000,"protocolVersion":"22"}}"#;
-    let ledger_3 = r#"{"jsonrpc":"2.0","id":1,"result":{"id":"c","sequence":50001,"protocolVersion":"22"}}"#;
+    let ledger_1 =
+        r#"{"jsonrpc":"2.0","id":1,"result":{"id":"a","sequence":49999,"protocolVersion":"22"}}"#;
+    let ledger_2 =
+        r#"{"jsonrpc":"2.0","id":1,"result":{"id":"b","sequence":50000,"protocolVersion":"22"}}"#;
+    let ledger_3 =
+        r#"{"jsonrpc":"2.0","id":1,"result":{"id":"c","sequence":50001,"protocolVersion":"22"}}"#;
 
     let seq1 = parse_latest_ledger_response(ledger_1).unwrap();
     let seq2 = parse_latest_ledger_response(ledger_2).unwrap();
@@ -193,7 +189,8 @@ fn mock_rpc_integration_test_runs_without_network() {
     // All data is mocked and parsed locally
 
     // 1. Parse ledger sequence
-    let ledger_data = r#"{"jsonrpc":"2.0","id":1,"result":{"id":"x","sequence":12345,"protocolVersion":"22"}}"#;
+    let ledger_data =
+        r#"{"jsonrpc":"2.0","id":1,"result":{"id":"x","sequence":12345,"protocolVersion":"22"}}"#;
     let seq = parse_latest_ledger_response(ledger_data).unwrap();
     assert_eq!(seq, 12345);
 

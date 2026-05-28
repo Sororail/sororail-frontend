@@ -1,6 +1,6 @@
 use soroban_sdk::{
-    contract, contractimpl, contracttype, panic_with_error, symbol_short,
-    Address, BytesN, Env, String, Vec,
+    contract, contractimpl, contracttype, panic_with_error, symbol_short, Address, BytesN, Env,
+    String, Vec,
 };
 
 // ---------------------------------------------------------------------------
@@ -128,11 +128,7 @@ impl RoleStore {
         let key = RoleMembersKey {
             role: admin_role.clone(),
         };
-        if env
-            .storage()
-            .persistent()
-            .has(&key)
-        {
+        if env.storage().persistent().has(&key) {
             panic!("already initialised");
         }
         let members: Vec<Address> = Vec::from_array(&env, [initial_admin]);
@@ -179,10 +175,8 @@ impl RoleStore {
             .update_current_contract_wasm(new_wasm_hash.clone());
 
         // Emit the event so off-chain indexers can track upgrade history.
-        env.events().publish(
-            (symbol_short!("upgraded"),),
-            (old_hash, new_wasm_hash),
-        );
+        env.events()
+            .publish((symbol_short!("upgraded"),), (old_hash, new_wasm_hash));
     }
 
     // -----------------------------------------------------------------------
@@ -354,12 +348,7 @@ impl RoleStore {
     ///
     /// `page_size` must be > 0. Returns an empty vec when `page` is beyond
     /// the last page rather than panicking, so callers can detect end-of-list.
-    pub fn get_role_members(
-        env: Env,
-        role: BytesN<32>,
-        page: u32,
-        page_size: u32,
-    ) -> Vec<Address> {
+    pub fn get_role_members(env: Env, role: BytesN<32>, page: u32, page_size: u32) -> Vec<Address> {
         let key = RoleMembersKey { role };
         let members: Vec<Address> = env
             .storage()

@@ -23,11 +23,11 @@ use contracts::{
         max_pnl_factor_key, pool_long_amount_key, pool_short_amount_key,
     },
     liquidity_handler::{LiquidityHandler, LiquidityHandlerClient},
-    position_handler::{PositionHandler, PositionHandlerClient},
     market_factory::{market_keeper_role, MarketFactory, MarketFactoryClient},
+    order_handler::{OrderHandler, OrderHandlerClient},
+    position_handler::{PositionHandler, PositionHandlerClient},
     role_store::{RoleMetadata, RoleStore, RoleStoreClient},
     types::{MarketConfig, PositionProps},
-    order_handler::{OrderHandler, OrderHandlerClient},
 };
 use soroban_sdk::{
     testutils::{Address as _, Events as _, Ledger as _},
@@ -131,10 +131,13 @@ fn test_position_handler_is_liquidatable_uses_worst_case_pricing() {
         average_price: 10u128,
         is_long: true,
         is_open: true,
-    referral_code: soroban_sdk::BytesN::from_array(&env, &[0u8; 32]),
+        referral_code: soroban_sdk::BytesN::from_array(&env, &[0u8; 32]),
     };
     ds.set_position_props(&admin, &long_key, &long_position);
-    assert!(!phc.is_liquidatable(&long_key), "position above threshold should not be liquidatable");
+    assert!(
+        !phc.is_liquidatable(&long_key),
+        "position above threshold should not be liquidatable"
+    );
 
     let short_key = make_key(&env, 2);
     let short_position = PositionProps {
@@ -146,10 +149,13 @@ fn test_position_handler_is_liquidatable_uses_worst_case_pricing() {
         average_price: 10u128,
         is_long: false,
         is_open: true,
-    referral_code: soroban_sdk::BytesN::from_array(&env, &[0u8; 32]),
+        referral_code: soroban_sdk::BytesN::from_array(&env, &[0u8; 32]),
     };
     ds.set_position_props(&admin, &short_key, &short_position);
-    assert!(phc.is_liquidatable(&short_key), "position below threshold should be liquidatable");
+    assert!(
+        phc.is_liquidatable(&short_key),
+        "position below threshold should be liquidatable"
+    );
 }
 
 #[test]
@@ -393,11 +399,8 @@ fn test_set_i128_batch_and_get_i128_batch() {
     let k1 = make_key(&env, 10);
     let k2 = make_key(&env, 11);
 
-    let entries: Vec<(BytesN<32>, i128)> = vec![
-        &env,
-        (k1.clone(), -500i128),
-        (k2.clone(), 999i128),
-    ];
+    let entries: Vec<(BytesN<32>, i128)> =
+        vec![&env, (k1.clone(), -500i128), (k2.clone(), 999i128)];
     client.set_i128_batch(&caller, &entries);
 
     let keys: Vec<BytesN<32>> = vec![&env, k1, k2];
@@ -468,11 +471,7 @@ fn test_get_account_positions_paginates_and_filters_closed_positions() {
     let caller = Address::generate(&env);
     let account = Address::generate(&env);
 
-    let open_positions: [BytesN<32>; 3] = [
-        make_key(&env, 1),
-        make_key(&env, 2),
-        make_key(&env, 3),
-    ];
+    let open_positions: [BytesN<32>; 3] = [make_key(&env, 1), make_key(&env, 2), make_key(&env, 3)];
     let closed_position = make_key(&env, 4);
 
     for (idx, pos_key) in open_positions.iter().enumerate() {
@@ -489,7 +488,7 @@ fn test_get_account_positions_paginates_and_filters_closed_positions() {
                 average_price: 0,
                 is_long: true,
                 is_open: true,
-            referral_code: soroban_sdk::BytesN::from_array(&env, &[0u8; 32]),
+                referral_code: soroban_sdk::BytesN::from_array(&env, &[0u8; 32]),
             },
         );
     }
@@ -507,15 +506,24 @@ fn test_get_account_positions_paginates_and_filters_closed_positions() {
             average_price: 0,
             is_long: true,
             is_open: false,
-        referral_code: soroban_sdk::BytesN::from_array(&env, &[0u8; 32]),
+            referral_code: soroban_sdk::BytesN::from_array(&env, &[0u8; 32]),
         },
     );
 
     let all_positions = client.get_account_positions(&account, &0u32, &10u32);
     assert_eq!(all_positions.len(), 3);
-    assert_eq!(all_positions.get(0).unwrap().position_key, open_positions[0]);
-    assert_eq!(all_positions.get(1).unwrap().position_key, open_positions[1]);
-    assert_eq!(all_positions.get(2).unwrap().position_key, open_positions[2]);
+    assert_eq!(
+        all_positions.get(0).unwrap().position_key,
+        open_positions[0]
+    );
+    assert_eq!(
+        all_positions.get(1).unwrap().position_key,
+        open_positions[1]
+    );
+    assert_eq!(
+        all_positions.get(2).unwrap().position_key,
+        open_positions[2]
+    );
 
     let page = client.get_account_positions(&account, &0u32, &2u32);
     assert_eq!(page.len(), 2);
@@ -637,11 +645,7 @@ fn test_grant_multiple_roles_same_account() {
     let (client, admin) = setup_role_store(&env);
 
     let account = Address::generate(&env);
-    let roles: [BytesN<32>; 3] = [
-        make_key(&env, 1),
-        make_key(&env, 2),
-        make_key(&env, 3),
-    ];
+    let roles: [BytesN<32>; 3] = [make_key(&env, 1), make_key(&env, 2), make_key(&env, 3)];
 
     for role in &roles {
         client.grant_role(&admin, role, &account);
@@ -678,7 +682,10 @@ fn test_role_store_upgrade_by_admin_emits_event() {
     client.upgrade(&admin, &new_hash);
 
     // Verify at least one event was emitted by counting all contract events.
-    assert!(!env.events().all().is_empty(), "expected at least one event");
+    assert!(
+        !env.events().all().is_empty(),
+        "expected at least one event"
+    );
 
     // A second upgrade should record the previous hash as "old" without panicking.
     let newer_hash = dummy_wasm_hash(&env, 0xCD);
@@ -707,7 +714,10 @@ fn test_data_store_upgrade_by_admin_succeeds() {
 
     // Admin can upgrade; auth + event emitted (no host WASM swap in tests).
     client.upgrade(&admin, &dummy_wasm_hash(&env, 0x11));
-    assert!(!env.events().all().is_empty(), "expected at least one event");
+    assert!(
+        !env.events().all().is_empty(),
+        "expected at least one event"
+    );
 
     // Second upgrade also records the previous hash as old.
     client.upgrade(&admin, &dummy_wasm_hash(&env, 0x22));
@@ -729,7 +739,7 @@ fn test_data_store_upgrade_by_non_admin_panics() {
 fn test_data_store_upgrade_without_initialize_panics() {
     let env = Env::default();
     env.mock_all_auths();
-    let client = setup_data_store(&env);   // no initialize call
+    let client = setup_data_store(&env); // no initialize call
 
     let caller = Address::generate(&env);
     client.upgrade(&caller, &dummy_wasm_hash(&env, 0x01));
@@ -1100,8 +1110,16 @@ fn test_apply_delta_sequential_composition_in_bounds() {
 /// Underflow: any negative delta applied to 0 must saturate at 0.
 #[test]
 fn test_apply_delta_underflow_saturates_at_zero() {
-    assert_eq!(apply_delta_to_u128(0, -1), 0, "0 + (-1) should saturate to 0");
-    assert_eq!(apply_delta_to_u128(0, -100), 0, "0 + (-100) should saturate to 0");
+    assert_eq!(
+        apply_delta_to_u128(0, -1),
+        0,
+        "0 + (-1) should saturate to 0"
+    );
+    assert_eq!(
+        apply_delta_to_u128(0, -100),
+        0,
+        "0 + (-100) should saturate to 0"
+    );
     assert_eq!(
         apply_delta_to_u128(0, i128::MIN),
         0,
@@ -1156,7 +1174,10 @@ fn test_apply_delta_round_trip_no_saturation() {
 
     let up = apply_delta_to_u128(base, delta);
     let back = apply_delta_to_u128(up, -delta);
-    assert_eq!(back, base, "round-trip add/subtract should recover original");
+    assert_eq!(
+        back, base,
+        "round-trip add/subtract should recover original"
+    );
 }
 
 /// Exact positive arithmetic (no saturation).
@@ -1231,12 +1252,12 @@ fn test_create_market_stores_config_in_data_store() {
     let (mf, _rs, ds, admin) = setup_market_factory(&env);
 
     let index_token = Address::generate(&env);
-    let long_token  = Address::generate(&env);
+    let long_token = Address::generate(&env);
     let short_token = Address::generate(&env);
-    let mkt_token   = Address::generate(&env);
+    let mkt_token = Address::generate(&env);
 
     let cfg = MarketConfig {
-        max_long_open_interest:  1_000_000u128,
+        max_long_open_interest: 1_000_000u128,
         max_short_open_interest: 2_000_000u128,
         maintenance_margin_factor: 50_000u128,
     };
@@ -1341,7 +1362,10 @@ fn test_pause_and_unpause_market() {
     assert!(mf.is_paused(&id), "should be paused after pause_market");
 
     mf.unpause_market(&admin, &id);
-    assert!(!mf.is_paused(&id), "should be unpaused after unpause_market");
+    assert!(
+        !mf.is_paused(&id),
+        "should be unpaused after unpause_market"
+    );
 }
 
 #[test]
@@ -1406,12 +1430,12 @@ fn test_e2e_full_market_lifecycle() {
 
     // 2. Create a market.
     let index_token = Address::generate(&env);
-    let long_token  = Address::generate(&env);
+    let long_token = Address::generate(&env);
     let short_token = Address::generate(&env);
-    let mkt_token   = Address::generate(&env);
+    let mkt_token = Address::generate(&env);
 
     let cfg = MarketConfig {
-        max_long_open_interest:  500_000u128,
+        max_long_open_interest: 500_000u128,
         max_short_open_interest: 750_000u128,
         maintenance_margin_factor: 50_000u128,
     };
@@ -1468,9 +1492,9 @@ fn test_get_market_by_tokens_returns_some_for_existing_market() {
     let (mf, _rs, _ds, admin) = setup_market_factory(&env);
 
     let index_token = Address::generate(&env);
-    let long_token  = Address::generate(&env);
+    let long_token = Address::generate(&env);
     let short_token = Address::generate(&env);
-    let mkt_token   = Address::generate(&env);
+    let mkt_token = Address::generate(&env);
 
     mf.create_market(
         &admin,
@@ -1482,7 +1506,10 @@ fn test_get_market_by_tokens_returns_some_for_existing_market() {
     );
 
     let result = mf.get_market_by_tokens(&index_token, &long_token, &short_token);
-    assert!(result.is_some(), "expected Some for registered token combination");
+    assert!(
+        result.is_some(),
+        "expected Some for registered token combination"
+    );
     assert_eq!(result.unwrap(), mkt_token);
 }
 
@@ -1494,11 +1521,14 @@ fn test_get_market_by_tokens_returns_none_for_unregistered_combination() {
     let (mf, _rs, _ds, _admin) = setup_market_factory(&env);
 
     let index_token = Address::generate(&env);
-    let long_token  = Address::generate(&env);
+    let long_token = Address::generate(&env);
     let short_token = Address::generate(&env);
 
     let result = mf.get_market_by_tokens(&index_token, &long_token, &short_token);
-    assert!(result.is_none(), "expected None for unregistered token combination");
+    assert!(
+        result.is_none(),
+        "expected None for unregistered token combination"
+    );
 }
 
 fn setup_order_handler<'a>(env: &'a Env, data_store: &'a Address) -> OrderHandlerClient<'a> {
@@ -1528,25 +1558,11 @@ fn test_order_handler_position_and_oi_lists() {
 
     // 1. Open two long positions in the same market
     oh.increase_position(
-        &user,
-        &pos_key1,
-        &user,
-        &market_id,
-        &1000u128,
-        &100u128,
-        &10u128,
-        &is_long,
+        &user, &pos_key1, &user, &market_id, &1000u128, &100u128, &10u128, &is_long,
     );
 
     oh.increase_position(
-        &user,
-        &pos_key2,
-        &user,
-        &market_id,
-        &2000u128,
-        &200u128,
-        &10u128,
-        &is_long,
+        &user, &pos_key2, &user, &market_id, &2000u128, &200u128, &10u128, &is_long,
     );
 
     // Verify global counts and lists
@@ -1631,7 +1647,7 @@ fn test_adl_rejected_when_position_not_profitable() {
             average_price: 10u128,
             is_long: true,
             is_open: true,
-        referral_code: soroban_sdk::BytesN::from_array(&env, &[0u8; 32]),
+            referral_code: soroban_sdk::BytesN::from_array(&env, &[0u8; 32]),
         },
     );
 
@@ -1665,8 +1681,16 @@ fn test_adl_rejected_when_pnl_factor_below_threshold() {
     lhc.set_oracle_prices(&admin, &market_id, &12u128, &12u128);
 
     // Large pool so PnL factor stays low.
-    ds.set_u128(&admin, &pool_long_amount_key(&env, market_id), &1_000_000u128);
-    ds.set_u128(&admin, &pool_short_amount_key(&env, market_id), &1_000_000u128);
+    ds.set_u128(
+        &admin,
+        &pool_long_amount_key(&env, market_id),
+        &1_000_000u128,
+    );
+    ds.set_u128(
+        &admin,
+        &pool_short_amount_key(&env, market_id),
+        &1_000_000u128,
+    );
 
     // Max PnL factor set very high so ADL is not required.
     ds.set_u128(
@@ -1689,7 +1713,7 @@ fn test_adl_rejected_when_pnl_factor_below_threshold() {
             average_price: 10u128,
             is_long: true,
             is_open: true,
-        referral_code: soroban_sdk::BytesN::from_array(&env, &[0u8; 32]),
+            referral_code: soroban_sdk::BytesN::from_array(&env, &[0u8; 32]),
         },
     );
     ds.add_position(&admin, &pos_key);
@@ -1733,11 +1757,7 @@ fn test_adl_full_close_reduces_pnl_factor() {
     // PnL factor = 19_000 * 1_000_000 / 200_000 = 95_000 (9.5%)
 
     // Max PnL factor = 50_000 (5%) → ADL required.
-    ds.set_u128(
-        &admin,
-        &max_pnl_factor_key(&env, market_id),
-        &50_000u128,
-    );
+    ds.set_u128(&admin, &max_pnl_factor_key(&env, market_id), &50_000u128);
 
     let user = Address::generate(&env);
     let pos_key = make_key(&env, 0xB1);
@@ -1750,7 +1770,7 @@ fn test_adl_full_close_reduces_pnl_factor() {
         average_price: 10u128,
         is_long: true,
         is_open: true,
-    referral_code: soroban_sdk::BytesN::from_array(&env, &[0u8; 32]),
+        referral_code: soroban_sdk::BytesN::from_array(&env, &[0u8; 32]),
     };
     ds.set_position_props(&admin, &pos_key, &pos);
     ds.add_position(&admin, &pos_key);
@@ -1794,11 +1814,7 @@ fn test_adl_partial_close_reduces_pnl_factor() {
     ds.set_u128(&admin, &pool_short_amount_key(&env, market_id), &500u128);
 
     // Max PnL factor = 50_000 (5%) → ADL required.
-    ds.set_u128(
-        &admin,
-        &max_pnl_factor_key(&env, market_id),
-        &50_000u128,
-    );
+    ds.set_u128(&admin, &max_pnl_factor_key(&env, market_id), &50_000u128);
 
     let user = Address::generate(&env);
     let pos_key = make_key(&env, 0xB2);
@@ -1811,7 +1827,7 @@ fn test_adl_partial_close_reduces_pnl_factor() {
         average_price: 10u128,
         is_long: true,
         is_open: true,
-    referral_code: soroban_sdk::BytesN::from_array(&env, &[0u8; 32]),
+        referral_code: soroban_sdk::BytesN::from_array(&env, &[0u8; 32]),
     };
     ds.set_position_props(&admin, &pos_key, &pos);
     ds.add_position(&admin, &pos_key);
@@ -1822,9 +1838,15 @@ fn test_adl_partial_close_reduces_pnl_factor() {
     adl.execute_adl(&user, &pos_key, &500u128);
 
     let updated = ds.get_position_props(&pos_key).unwrap();
-    assert!(updated.is_open, "position should remain open after partial ADL");
+    assert!(
+        updated.is_open,
+        "position should remain open after partial ADL"
+    );
     assert_eq!(updated.quantity, 500u128, "quantity should be halved");
-    assert_eq!(updated.collateral_amount, 100u128, "collateral should be halved");
+    assert_eq!(
+        updated.collateral_amount, 100u128,
+        "collateral should be halved"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -1864,11 +1886,7 @@ fn test_adl_oi_imbalance_high_pnl_factor_adl_reduces_it() {
     ds.set_u128(&admin, &pool_short_amount_key(&env, market_id), &1_000u128);
 
     // Max PnL factor = 30_000 (3%).
-    ds.set_u128(
-        &admin,
-        &max_pnl_factor_key(&env, market_id),
-        &30_000u128,
-    );
+    ds.set_u128(&admin, &max_pnl_factor_key(&env, market_id), &30_000u128);
 
     // Open three long positions entered at price 10, now worth 100.
     // PnL per position = quantity * (100 - 10) / 10 = quantity * 9.
@@ -1880,7 +1898,11 @@ fn test_adl_oi_imbalance_high_pnl_factor_adl_reduces_it() {
     let pk2 = make_key(&env, 0xC2);
     let pk3 = make_key(&env, 0xC3);
 
-    for (pk, user, qty) in [(pk1.clone(), user1.clone(), 5_000u128), (pk2.clone(), user2.clone(), 5_000u128), (pk3.clone(), user3.clone(), 5_000u128)] {
+    for (pk, user, qty) in [
+        (pk1.clone(), user1.clone(), 5_000u128),
+        (pk2.clone(), user2.clone(), 5_000u128),
+        (pk3.clone(), user3.clone(), 5_000u128),
+    ] {
         let pos = PositionProps {
             position_key: pk.clone(),
             account: user.clone(),
@@ -1890,7 +1912,7 @@ fn test_adl_oi_imbalance_high_pnl_factor_adl_reduces_it() {
             average_price: 10u128,
             is_long: true,
             is_open: true,
-        referral_code: soroban_sdk::BytesN::from_array(&env, &[0u8; 32]),
+            referral_code: soroban_sdk::BytesN::from_array(&env, &[0u8; 32]),
         };
         ds.set_position_props(&admin, &pk, &pos);
         ds.add_position(&admin, &pk);

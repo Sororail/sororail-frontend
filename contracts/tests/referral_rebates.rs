@@ -121,11 +121,7 @@ fn test_trade_with_referral_applies_discount_and_rebate() {
         },
     );
 
-    ds(&s).set_u128(
-        &s.admin,
-        &position_fee_factor_key(&s.env, MARKET),
-        &10_000,
-    );
+    ds(&s).set_u128(&s.admin, &position_fee_factor_key(&s.env, MARKET), &10_000);
 
     mint(&s.env, &s.long, &s.oh_addr, 2_000);
     oh(&s).set_position(

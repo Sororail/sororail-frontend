@@ -55,7 +55,7 @@ fn make_long_position(env: &Env, market_id: u32) -> Position {
         size_in_usd: 0,
         size_in_tokens: 0,
         collateral_amount: 0,
-    referral_code: soroban_sdk::BytesN::from_array(&env, &[0u8; 32]),
+        referral_code: soroban_sdk::BytesN::from_array(&env, &[0u8; 32]),
     }
 }
 
@@ -461,7 +461,7 @@ fn test_limit_increase_long_at_trigger_executes() {
         size_in_usd: 0,
         size_in_tokens: 0,
         collateral_amount: 0,
-    referral_code: soroban_sdk::BytesN::from_array(&env, &[0u8; 32]),
+        referral_code: soroban_sdk::BytesN::from_array(&env, &[0u8; 32]),
     };
     increase_position(
         &env,
@@ -899,8 +899,16 @@ fn test_limit_swap_sell_at_trigger_executes() {
     // Execute swap: sell 1_000 units.
     let out = swap(&env, &ds, &admin, market_id, 1_000u128, true, current);
     assert_eq!(out, 1_000);
-    assert_eq!(ds.get_u128(&pool_long_amount_key(&env, market_id)).unwrap_or(0), 9_000);
-    assert_eq!(ds.get_u128(&pool_short_amount_key(&env, market_id)).unwrap_or(0), 6_000);
+    assert_eq!(
+        ds.get_u128(&pool_long_amount_key(&env, market_id))
+            .unwrap_or(0),
+        9_000
+    );
+    assert_eq!(
+        ds.get_u128(&pool_short_amount_key(&env, market_id))
+            .unwrap_or(0),
+        6_000
+    );
 }
 
 /// (3) Buy LimitSwap does NOT execute when price is BELOW trigger.
@@ -929,8 +937,16 @@ fn test_limit_swap_buy_at_trigger_executes() {
 
     let out = swap(&env, &ds, &admin, market_id, 2_000u128, false, current);
     assert_eq!(out, 2_000);
-    assert_eq!(ds.get_u128(&pool_short_amount_key(&env, market_id)).unwrap_or(0), 8_000);
-    assert_eq!(ds.get_u128(&pool_long_amount_key(&env, market_id)).unwrap_or(0), 7_000);
+    assert_eq!(
+        ds.get_u128(&pool_short_amount_key(&env, market_id))
+            .unwrap_or(0),
+        8_000
+    );
+    assert_eq!(
+        ds.get_u128(&pool_long_amount_key(&env, market_id))
+            .unwrap_or(0),
+        7_000
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -954,8 +970,16 @@ fn test_market_swap_executes_and_updates_pools() {
 
     assert!(result.is_ok());
     assert_eq!(result.unwrap(), 3_000);
-    assert_eq!(ds.get_u128(&pool_long_amount_key(&env, market_id)).unwrap_or(0), 17_000);
-    assert_eq!(ds.get_u128(&pool_short_amount_key(&env, market_id)).unwrap_or(0), 8_000);
+    assert_eq!(
+        ds.get_u128(&pool_long_amount_key(&env, market_id))
+            .unwrap_or(0),
+        17_000
+    );
+    assert_eq!(
+        ds.get_u128(&pool_short_amount_key(&env, market_id))
+            .unwrap_or(0),
+        8_000
+    );
 }
 
 /// MarketSwap reverts with InsufficientOutput when output < min_output_amount.

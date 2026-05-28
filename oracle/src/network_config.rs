@@ -29,7 +29,10 @@ impl std::fmt::Display for NetworkConfigError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             NetworkConfigError::UnknownNetwork(n) => {
-                write!(f, "unknown STELLAR_NETWORK value '{n}'; expected 'testnet' or 'mainnet'")
+                write!(
+                    f,
+                    "unknown STELLAR_NETWORK value '{n}'; expected 'testnet' or 'mainnet'"
+                )
             }
             NetworkConfigError::MissingMainnetVar(v) => {
                 write!(f, "env var '{v}' must be set explicitly for mainnet")
@@ -93,11 +96,7 @@ pub fn load_network_config(env: &worker::Env) -> Result<NetworkConfig, NetworkCo
 mod tests {
     use super::*;
 
-    fn make_cfg(
-        network: StellarNetwork,
-        rpc_url: &str,
-        oracle_contract_id: &str,
-    ) -> NetworkConfig {
+    fn make_cfg(network: StellarNetwork, rpc_url: &str, oracle_contract_id: &str) -> NetworkConfig {
         let passphrase = match network {
             StellarNetwork::Testnet => TESTNET_PASSPHRASE,
             StellarNetwork::Mainnet => MAINNET_PASSPHRASE,

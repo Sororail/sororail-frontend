@@ -218,13 +218,7 @@ mod tests {
     #[test]
     fn full_aggregation_pipeline_even_sources() {
         // Simulate a full price aggregation with even number of sources
-        let raw_prices = vec![
-            ("BTC".to_string(), 45000i128),
-            ("BTC".to_string(), 45100i128),
-            ("BTC".to_string(), 44900i128),
-            ("BTC".to_string(), 45050i128),
-        ];
-        let prices: Vec<i128> = raw_prices.iter().map(|(_, p)| *p).collect();
+        let prices = [45000i128, 45100, 44900, 45050];
         let p = compute_confidence_interval(&prices).unwrap();
         assert!(p.min <= p.max);
         assert!(p.min >= 44900);
@@ -234,14 +228,7 @@ mod tests {
     #[test]
     fn full_aggregation_pipeline_odd_sources() {
         // Simulate a full price aggregation with odd number of sources
-        let raw_prices = vec![
-            ("ETH".to_string(), 2500i128),
-            ("ETH".to_string(), 2510i128),
-            ("ETH".to_string(), 2490i128),
-            ("ETH".to_string(), 2505i128),
-            ("ETH".to_string(), 2495i128),
-        ];
-        let prices: Vec<i128> = raw_prices.iter().map(|(_, p)| *p).collect();
+        let prices = [2500i128, 2510, 2490, 2505, 2495];
         let p = compute_confidence_interval(&prices).unwrap();
         assert!(p.min <= p.max);
         assert!(p.min >= 2490);

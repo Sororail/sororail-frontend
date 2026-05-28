@@ -51,19 +51,15 @@ impl InsuranceFund {
             .persistent()
             .set(&key, &current.saturating_add(amount));
 
-        env.events()
-            .publish(("bad_debt_recorded",), (market_id, amount, current.saturating_add(amount)));
+        env.events().publish(
+            ("bad_debt_recorded",),
+            (market_id, amount, current.saturating_add(amount)),
+        );
     }
 
     /// Deposit `amount` of `token` from `caller` (admin/governance) and
     /// decrement the bad debt balance for `market_id` by the same amount.
-    pub fn replenish(
-        env: Env,
-        caller: Address,
-        market_id: u32,
-        token: Address,
-        amount: u128,
-    ) {
+    pub fn replenish(env: Env, caller: Address, market_id: u32, token: Address, amount: u128) {
         caller.require_auth();
         let admin: Address = env
             .storage()

@@ -8,7 +8,11 @@
 
 use contracts::{
     data_store::{DataStore, DataStoreClient},
-    keys::{borrowing_factor_key, funding_factor_key, impact_pool_amount_key, market_maintenance_margin_factor_key, position_fee_factor_key, pool_long_amount_key, pool_short_amount_key},
+    keys::{
+        borrowing_factor_key, funding_factor_key, impact_pool_amount_key,
+        market_maintenance_margin_factor_key, pool_long_amount_key, pool_short_amount_key,
+        position_fee_factor_key,
+    },
     liquidity_handler::{LiquidityHandler, LiquidityHandlerClient},
     market_utils,
     reader::{Reader, ReaderClient},
@@ -74,7 +78,7 @@ fn test_get_adl_targets_sorted_by_pnl_desc() {
     // entry=160 → PnL = 10000 * (-10)/160 = -625
     // entry=200 → PnL = 10000 * (-50)/200 = -2500
     let entries: &[(u8, u128)] = &[
-        (1, 100u128),  // key seed, entry_price
+        (1, 100u128), // key seed, entry_price
         (2, 200u128),
         (3, 160u128),
         (4, 120u128),
@@ -93,7 +97,7 @@ fn test_get_adl_targets_sorted_by_pnl_desc() {
             average_price: entry_price,
             is_long: true,
             is_open: true,
-        referral_code: soroban_sdk::BytesN::from_array(&env, &[0u8; 32]),
+            referral_code: soroban_sdk::BytesN::from_array(&env, &[0u8; 32]),
         };
         ds.set_position_props(&admin, &key, &pos);
         ds.add_position_to_oi_list(&admin, &market_id, &true, &key);
@@ -117,11 +121,19 @@ fn test_get_adl_targets_sorted_by_pnl_desc() {
 
     // Most profitable (entry=100) should be first.
     let top_key = &targets.get(0).unwrap().1;
-    assert_eq!(*top_key, make_key(&env, 1), "entry=100 should be most profitable");
+    assert_eq!(
+        *top_key,
+        make_key(&env, 1),
+        "entry=100 should be most profitable"
+    );
 
     // Least profitable (entry=200) should be last.
     let bottom_key = &targets.get(4).unwrap().1;
-    assert_eq!(*bottom_key, make_key(&env, 2), "entry=200 should be least profitable");
+    assert_eq!(
+        *bottom_key,
+        make_key(&env, 2),
+        "entry=200 should be least profitable"
+    );
 }
 
 /// The `count` parameter must limit the number of results returned.
@@ -147,7 +159,7 @@ fn test_get_adl_targets_count_limits_results() {
             average_price: 90 + (seed as u128) * 5, // entry=95, 100, 105
             is_long: true,
             is_open: true,
-        referral_code: soroban_sdk::BytesN::from_array(&env, &[0u8; 32]),
+            referral_code: soroban_sdk::BytesN::from_array(&env, &[0u8; 32]),
         };
         ds.set_position_props(&admin, &key, &pos);
         ds.add_position_to_oi_list(&admin, &market_id, &true, &key);
@@ -183,7 +195,7 @@ fn test_get_adl_targets_count_exceeds_positions() {
         average_price: 90,
         is_long: true,
         is_open: true,
-    referral_code: soroban_sdk::BytesN::from_array(&env, &[0u8; 32]),
+        referral_code: soroban_sdk::BytesN::from_array(&env, &[0u8; 32]),
     };
     ds.set_position_props(&admin, &key, &pos);
     ds.add_position_to_oi_list(&admin, &market_id, &true, &key);
@@ -230,8 +242,16 @@ fn test_get_position_info_computes_pnl_and_liquidation_price() {
     ds.add_position_to_oi_list(&admin, &market_id, &true, &position_key);
     ds.set_u128(&admin, &funding_factor_key(&env, market_id), &10_000u128);
     ds.set_u128(&admin, &borrowing_factor_key(&env, market_id), &20_000u128);
-    ds.set_u128(&admin, &position_fee_factor_key(&env, market_id), &5_000u128);
-    ds.set_u128(&admin, &market_maintenance_margin_factor_key(&env, market_id), &100_000u128);
+    ds.set_u128(
+        &admin,
+        &position_fee_factor_key(&env, market_id),
+        &5_000u128,
+    );
+    ds.set_u128(
+        &admin,
+        &market_maintenance_margin_factor_key(&env, market_id),
+        &100_000u128,
+    );
 
     lh.set_oracle_prices(&admin, &market_id, &90u128, &110u128);
 
@@ -259,16 +279,36 @@ fn test_get_market_pool_value_info_matches_direct_helper() {
     let long_amount = 500u128;
     let short_amount = 300u128;
     ds.set_u128(&admin, &pool_long_amount_key(&env, market_id), &long_amount);
-    ds.set_u128(&admin, &pool_short_amount_key(&env, market_id), &short_amount);
+    ds.set_u128(
+        &admin,
+        &pool_short_amount_key(&env, market_id),
+        &short_amount,
+    );
     ds.set_u128(&admin, &impact_pool_amount_key(&env, market_id), &123u128);
     ds.set_u128(&admin, &funding_factor_key(&env, market_id), &0u128);
     ds.set_u128(&admin, &borrowing_factor_key(&env, market_id), &0u128);
 
     let info_false = reader.get_market_pool_value_info(&market_id, &2u128, &1u128, &false);
-    let expected_false = market_utils::get_pool_value(long_amount, short_amount, 2u128, 1u128, 123u128, lh.lp_supply(&market_id), false);
+    let expected_false = market_utils::get_pool_value(
+        long_amount,
+        short_amount,
+        2u128,
+        1u128,
+        123u128,
+        lh.lp_supply(&market_id),
+        false,
+    );
     assert_eq!(info_false, expected_false);
 
     let info_true = reader.get_market_pool_value_info(&market_id, &2u128, &1u128, &true);
-    let expected_true = market_utils::get_pool_value(long_amount, short_amount, 2u128, 1u128, 123u128, lh.lp_supply(&market_id), true);
+    let expected_true = market_utils::get_pool_value(
+        long_amount,
+        short_amount,
+        2u128,
+        1u128,
+        123u128,
+        lh.lp_supply(&market_id),
+        true,
+    );
     assert_eq!(info_true, expected_true);
 }

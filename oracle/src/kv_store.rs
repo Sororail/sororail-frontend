@@ -93,8 +93,8 @@ pub async fn store_oracle_status(env: &Env, status: &OracleStatus) -> Result<(),
         .kv("ORACLE_KV")
         .map_err(|e| format!("failed to get KV namespace: {}", e))?;
 
-    let value = serde_json::to_string(status)
-        .map_err(|e| format!("failed to serialize status: {}", e))?;
+    let value =
+        serde_json::to_string(status).map_err(|e| format!("failed to serialize status: {}", e))?;
 
     kv.put(ORACLE_STATUS_KV_KEY, &value)
         .map_err(|e| format!("failed to put in KV: {}", e))?
@@ -111,11 +111,7 @@ pub async fn get_oracle_status(env: &Env) -> Result<OracleStatus, String> {
         .kv("ORACLE_KV")
         .map_err(|e| format!("failed to get KV namespace: {}", e))?;
 
-    match kv
-        .get(ORACLE_STATUS_KV_KEY)
-        .text()
-        .await
-    {
+    match kv.get(ORACLE_STATUS_KV_KEY).text().await {
         Ok(Some(value)) => serde_json::from_str::<OracleStatus>(&value)
             .map_err(|e| format!("failed to parse status: {}", e)),
         Ok(None) => Ok(OracleStatus {
