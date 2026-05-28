@@ -4,22 +4,20 @@ use crate::{
     data_store::DataStoreClient,
     keys::{
         borrowing_factor_key, funding_factor_key, impact_pool_amount_key,
-        market_maintenance_margin_factor_key, open_interest_long_key,
-        open_interest_short_key, position_fee_factor_key,
-        price_impact_exponent_factor_key, price_impact_factor_key,
+        market_maintenance_margin_factor_key, open_interest_long_key, open_interest_short_key,
+        position_fee_factor_key, price_impact_exponent_factor_key, price_impact_factor_key,
     },
     liquidity_handler::LiquidityHandlerClient,
     market_utils,
     order_handler::OrderHandlerClient,
     position_utils::{
-        calculate_pnl, get_position_fees, get_position_liquidation_price,
-        get_position_pnl_usd,
+        calculate_pnl, get_position_fees, get_position_liquidation_price, get_position_pnl_usd,
     },
     pricing_utils::{get_execution_price as compute_execution_price, FACTOR_DENOMINATOR},
     referral_storage::ReferralStorageClient,
     types::{
-        ExecutionPriceResult, FundingInfo, Order, PoolValueInfo, PositionFees, PositionInfo,
-        PositionFundingFactors, PositionProps, ReferrerStats, Withdrawal,
+        ExecutionPriceResult, FundingInfo, Order, PoolValueInfo, PositionFees,
+        PositionFundingFactors, PositionInfo, PositionProps, ReferrerStats, Withdrawal,
     },
 };
 
@@ -41,20 +39,19 @@ impl Reader {
         if env.storage().instance().has(&ReaderKey::DataStore) {
             panic!("already initialised");
         }
-        env.storage().instance().set(&ReaderKey::DataStore, &data_store);
-        env.storage().instance().set(&ReaderKey::LiquidityHandler, &liquidity_handler);
+        env.storage()
+            .instance()
+            .set(&ReaderKey::DataStore, &data_store);
+        env.storage()
+            .instance()
+            .set(&ReaderKey::LiquidityHandler, &liquidity_handler);
     }
 
     /// Returns the top-`count` most profitable open positions for `market_id`
     /// on the given side (`is_long`), sorted by `unrealised_pnl_usd` descending.
     ///
     /// Each entry is `(account, position_key, unrealised_pnl_usd)`.
-    pub fn get_adl_targets(
-        env: Env,
-        market_id: u32,
-        is_long: bool,
-        count: u32,
-    ) -> Vec<AdlTarget> {
+    pub fn get_adl_targets(env: Env, market_id: u32, is_long: bool, count: u32) -> Vec<AdlTarget> {
         let ds = Self::data_store(&env);
         let lh = Self::liquidity_handler(&env);
 
@@ -91,7 +88,11 @@ impl Reader {
         }
 
         // Truncate to `count` entries.
-        let limit = if count < entries.len() { count } else { entries.len() };
+        let limit = if count < entries.len() {
+            count
+        } else {
+            entries.len()
+        };
         let mut result: Vec<AdlTarget> = Vec::new(&env);
         for i in 0..limit {
             result.push_back(entries.get(i).unwrap());
@@ -156,11 +157,7 @@ impl Reader {
         }
     }
 
-    pub fn get_position_info(
-        env: Env,
-        position_key: BytesN<32>,
-        maximize: bool,
-    ) -> PositionInfo {
+    pub fn get_position_info(env: Env, position_key: BytesN<32>, maximize: bool) -> PositionInfo {
         let ds = Self::data_store(&env);
         let lh = Self::liquidity_handler(&env);
 
@@ -315,7 +312,9 @@ impl Reader {
         let count = oh.get_order_count();
         let mut skipped: u32 = 0;
         for id in 0..count {
-            let Some(order) = oh.get_order(&id) else { continue };
+            let Some(order) = oh.get_order(&id) else {
+                continue;
+            };
             if order.account != account {
                 continue;
             }
@@ -359,7 +358,9 @@ impl Reader {
         let count = lh.get_withdrawal_count();
         let mut skipped: u32 = 0;
         for id in 0..count {
-            let Some(w) = lh.get_withdrawal(&id) else { continue };
+            let Some(w) = lh.get_withdrawal(&id) else {
+                continue;
+            };
             if w.account != account {
                 continue;
             }

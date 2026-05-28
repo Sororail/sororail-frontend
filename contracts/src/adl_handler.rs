@@ -3,8 +3,8 @@ use soroban_sdk::{contract, contractimpl, contracttype, panic_with_error, Addres
 use crate::{
     data_store::DataStoreClient,
     keys::{
-        max_pnl_factor_key, open_interest_long_key, open_interest_short_key,
-        pool_long_amount_key, pool_short_amount_key,
+        max_pnl_factor_key, open_interest_long_key, open_interest_short_key, pool_long_amount_key,
+        pool_short_amount_key,
     },
     libs::math::checked_sub_u128,
     liquidity_handler::LiquidityHandlerClient,
@@ -49,12 +49,7 @@ impl AdlHandler {
     ///
     /// When `size_delta_usd >= position.quantity` the position is fully closed;
     /// otherwise the position is decreased proportionally.
-    pub fn execute_adl(
-        env: Env,
-        caller: Address,
-        position_key: BytesN<32>,
-        size_delta_usd: u128,
-    ) {
+    pub fn execute_adl(env: Env, caller: Address, position_key: BytesN<32>, size_delta_usd: u128) {
         caller.require_auth();
 
         let ds = Self::data_store(&env);
@@ -102,12 +97,18 @@ impl AdlHandler {
         if is_full_close {
             Self::fully_close(&env, &ds, &contract_addr, &position_key, &pos);
         } else {
-            Self::decrease_position(&env, &ds, &contract_addr, &position_key, &pos, size_delta_usd);
+            Self::decrease_position(
+                &env,
+                &ds,
+                &contract_addr,
+                &position_key,
+                &pos,
+                size_delta_usd,
+            );
         }
 
         // Compute PnL factor *after* ADL.
-        let pnl_factor_after =
-            Self::compute_pnl_factor(&env, &ds, &lh, pos.market_id, pos.is_long);
+        let pnl_factor_after = Self::compute_pnl_factor(&env, &ds, &lh, pos.market_id, pos.is_long);
 
         env.events().publish(
             ("adl",),
@@ -138,12 +139,7 @@ impl AdlHandler {
         ds.set_position_props(contract_addr, position_key, &updated);
         ds.remove_position(contract_addr, position_key);
         ds.remove_account_position(contract_addr, &pos.account, position_key);
-        ds.remove_position_from_oi_list(
-            contract_addr,
-            &pos.market_id,
-            &pos.is_long,
-            position_key,
-        );
+        ds.remove_position_from_oi_list(contract_addr, &pos.market_id, &pos.is_long, position_key);
     }
 
     fn decrease_position(
@@ -197,8 +193,7 @@ impl AdlHandler {
             prices.short_price
         };
 
-        let positions =
-            ds.get_all_positions_for_market(&market_id, &is_long, &0u32, &u32::MAX);
+        let positions = ds.get_all_positions_for_market(&market_id, &is_long, &0u32, &u32::MAX);
 
         let mut total_pnl: i128 = 0;
         for p in positions.iter() {
@@ -215,8 +210,7 @@ impl AdlHandler {
         let pool_short = ds
             .get_u128(&pool_short_amount_key(env, market_id))
             .unwrap_or(0);
-        let pool_value =
-            pool_long * prices.long_price + pool_short * prices.short_price;
+        let pool_value = pool_long * prices.long_price + pool_short * prices.short_price;
 
         if pool_value == 0 {
             return u128::MAX;

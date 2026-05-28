@@ -1,7 +1,5 @@
-
 use soroban_sdk::{
-    contract, contractimpl, contracttype, panic_with_error, symbol_short,
-    Address, BytesN, Env, Vec,
+    contract, contractimpl, contracttype, panic_with_error, symbol_short, Address, BytesN, Env, Vec,
 };
 
 use crate::types::PositionProps;
@@ -175,10 +173,8 @@ impl DataStore {
             .update_current_contract_wasm(new_wasm_hash.clone());
 
         // Emit the event so off-chain indexers can track upgrade history.
-        env.events().publish(
-            (symbol_short!("upgraded"),),
-            (old_hash, new_wasm_hash),
-        );
+        env.events()
+            .publish((symbol_short!("upgraded"),), (old_hash, new_wasm_hash));
     }
 
     // -----------------------------------------------------------------------
@@ -252,7 +248,9 @@ impl DataStore {
 
         for key in keys.iter() {
             // --- u128 slot ---
-            let u128_sk = U128Key { u128_key: key.clone() };
+            let u128_sk = U128Key {
+                u128_key: key.clone(),
+            };
             if env.storage().persistent().has(&u128_sk) {
                 let v: u128 = env.storage().persistent().get(&u128_sk).unwrap_or(1);
                 if v == 0u128 {
@@ -261,7 +259,9 @@ impl DataStore {
             }
 
             // --- i128 slot ---
-            let i128_sk = I128Key { i128_key: key.clone() };
+            let i128_sk = I128Key {
+                i128_key: key.clone(),
+            };
             if env.storage().persistent().has(&i128_sk) {
                 let v: i128 = env.storage().persistent().get(&i128_sk).unwrap_or(1);
                 if v == 0i128 {
@@ -426,11 +426,7 @@ impl DataStore {
         }
     }
 
-    pub fn add_position(
-        env: Env,
-        caller: Address,
-        position_key: BytesN<32>,
-    ) {
+    pub fn add_position(env: Env, caller: Address, position_key: BytesN<32>) {
         caller.require_auth();
         let mut list: Vec<BytesN<32>> = env
             .storage()
@@ -445,11 +441,7 @@ impl DataStore {
         }
     }
 
-    pub fn remove_position(
-        env: Env,
-        caller: Address,
-        position_key: BytesN<32>,
-    ) {
+    pub fn remove_position(env: Env, caller: Address, position_key: BytesN<32>) {
         caller.require_auth();
         let mut list: Vec<BytesN<32>> = env
             .storage()
@@ -526,11 +518,7 @@ impl DataStore {
         }
     }
 
-    pub fn get_position_oi_list_count(
-        env: Env,
-        market_id: u32,
-        is_long: bool,
-    ) -> u32 {
+    pub fn get_position_oi_list_count(env: Env, market_id: u32, is_long: bool) -> u32 {
         let key = crate::keys::position_oi_list_key(&env, market_id, is_long);
         let list: Vec<BytesN<32>> = env
             .storage()
@@ -628,7 +616,9 @@ impl DataStore {
         let mut results: Vec<TtlEstimate> = Vec::new(&env);
 
         for key in keys.iter() {
-            let storage_key = U128Key { u128_key: key.clone() };
+            let storage_key = U128Key {
+                u128_key: key.clone(),
+            };
             let remaining = Self::remaining_ledgers_for(&env, &storage_key);
             results.push_back(TtlEstimate {
                 key,

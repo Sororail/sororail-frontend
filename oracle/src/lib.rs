@@ -1,3 +1,5 @@
+#![allow(unused_must_use)]
+
 use axum::{routing::get, Router};
 use tower_service::Service;
 use worker::*;
@@ -5,6 +7,7 @@ use worker::*;
 pub mod binance;
 pub mod config;
 pub mod keeper;
+pub mod kv_store;
 pub mod network_config;
 pub mod prices;
 pub mod retry;
@@ -30,16 +33,16 @@ async fn fetch(
     _ctx: Context,
 ) -> Result<axum::http::Response<axum::body::Body>> {
     let path = req.uri().path().to_string();
-    if path == "/keeper/balance" {
-        return handle_keeper_balance(&env).await;
+    match path.as_str() {
+        "/keeper/balance" => handle_keeper_balance(&env).await,
+        "/oracle/status" => handle_oracle_status(&env).await,
+        "/oracle/failed-submissions" => handle_failed_submissions(&env).await,
+        _ => Ok(router().call(req).await?),
     }
-    Ok(router().call(req).await?)
 }
 
 /// `GET /keeper/balance` — current XLM balance of the keeper account.
-async fn handle_keeper_balance(
-    env: &Env,
-) -> Result<axum::http::Response<axum::body::Body>> {
+async fn handle_keeper_balance(env: &Env) -> Result<axum::http::Response<axum::body::Body>> {
     let net_cfg = match network_config::load_network_config(env) {
         Ok(c) => c,
         Err(e) => return json_error(503, &e.to_string()),
@@ -181,10 +184,7 @@ async fn scheduled(_event: ScheduledEvent, env: Env, _ctx: ScheduleContext) -> R
     // 6. Compute confidence interval (10th/90th percentile spread).
     let price_values: Vec<i128> = raw_prices.iter().map(|(_, p)| *p).collect();
     let spread = prices::compute_confidence_interval(&price_values);
-    console_log!(
-        "[oracle] price spread: {:?} at ledger {ledger_seq}",
-        spread
-    );
+    console_log!("[oracle] price spread: {:?} at ledger {ledger_seq}", spread);
 
     // 7. TODO: sign PriceProps {min, max} with KEEPER_SECRET_KEY, build and
     //    submit the Soroban set_prices transaction XDR:
@@ -201,6 +201,36 @@ async fn scheduled(_event: ScheduledEvent, env: Env, _ctx: ScheduleContext) -> R
         spread,
     );
     Ok(())
+}
+
+async fn handle_oracle_status(env: &Env) -> Result<axum::http::Response<axum::body::Body>> {
+    match kv_store::get_oracle_status(env).await {
+        Ok(status) => {
+            let body = serde_json::to_string(&status)
+                .unwrap_or_else(|_| r#"{"error":"serialization failed"}"#.to_string());
+            Ok(axum::http::Response::builder()
+                .status(200)
+                .header("Content-Type", "application/json")
+                .body(axum::body::Body::from(body))
+                .unwrap())
+        }
+        Err(e) => json_error(503, &e),
+    }
+}
+
+async fn handle_failed_submissions(env: &Env) -> Result<axum::http::Response<axum::body::Body>> {
+    match kv_store::get_failed_submissions(env).await {
+        Ok(submissions) => {
+            let body = serde_json::to_string(&submissions)
+                .unwrap_or_else(|_| r#"{"error":"serialization failed"}"#.to_string());
+            Ok(axum::http::Response::builder()
+                .status(200)
+                .header("Content-Type", "application/json")
+                .body(axum::body::Body::from(body))
+                .unwrap())
+        }
+        Err(e) => json_error(503, &e),
+    }
 }
 
 pub async fn root() -> &'static str {

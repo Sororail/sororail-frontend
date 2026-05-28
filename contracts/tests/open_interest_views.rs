@@ -41,7 +41,12 @@ fn setup<'a>(env: &'a Env) -> Fx<'a> {
     let reader = ReaderClient::new(env, &reader_id);
     reader.initialize(&ds_id, &lh_id);
 
-    Fx { reader, ds, lh, admin }
+    Fx {
+        reader,
+        ds,
+        lh,
+        admin,
+    }
 }
 
 #[test]
@@ -61,8 +66,10 @@ fn test_get_open_interest_reads_both_sides() {
 
     // Simulate "3 long + 2 short positions" — what matters here is the
     // aggregate USD OI that the position pipeline accumulates.
-    fx.ds.set_u128(&fx.admin, &open_interest_long_key(&env, m), &3_000u128);
-    fx.ds.set_u128(&fx.admin, &open_interest_short_key(&env, m), &2_000u128);
+    fx.ds
+        .set_u128(&fx.admin, &open_interest_long_key(&env, m), &3_000u128);
+    fx.ds
+        .set_u128(&fx.admin, &open_interest_short_key(&env, m), &2_000u128);
 
     let (long, short) = fx.reader.get_open_interest(&m);
     assert_eq!(long, 3_000u128);
@@ -75,12 +82,14 @@ fn test_get_open_interest_in_tokens_divides_by_oracle_price() {
     let fx = setup(&env);
     let m = 5u32;
 
-    fx.ds.set_u128(&fx.admin, &open_interest_long_key(&env, m), &10_000u128);
-    fx.ds.set_u128(&fx.admin, &open_interest_short_key(&env, m), &6_000u128);
+    fx.ds
+        .set_u128(&fx.admin, &open_interest_long_key(&env, m), &10_000u128);
+    fx.ds
+        .set_u128(&fx.admin, &open_interest_short_key(&env, m), &6_000u128);
     fx.lh.set_oracle_prices(&fx.admin, &m, &100u128, &50u128);
 
     let (long_in_tokens, short_in_tokens) = fx.reader.get_open_interest_in_tokens(&m);
-    assert_eq!(long_in_tokens, 100u128);  // 10_000 / 100
+    assert_eq!(long_in_tokens, 100u128); // 10_000 / 100
     assert_eq!(short_in_tokens, 120u128); // 6_000 / 50
 }
 
@@ -90,7 +99,8 @@ fn test_get_open_interest_in_tokens_zero_price_does_not_panic() {
     let fx = setup(&env);
     let m = 11u32;
 
-    fx.ds.set_u128(&fx.admin, &open_interest_long_key(&env, m), &10u128);
+    fx.ds
+        .set_u128(&fx.admin, &open_interest_long_key(&env, m), &10u128);
     // No oracle prices set — get_open_interest_in_tokens should return (0, 0)
     // instead of panicking from a div-by-zero.
     let (long_in_tokens, short_in_tokens) = fx.reader.get_open_interest_in_tokens(&m);
@@ -104,7 +114,8 @@ fn test_get_open_interest_in_tokens_zero_side() {
     let fx = setup(&env);
     let m = 7u32;
 
-    fx.ds.set_u128(&fx.admin, &open_interest_long_key(&env, m), &10_000u128);
+    fx.ds
+        .set_u128(&fx.admin, &open_interest_long_key(&env, m), &10_000u128);
     // Short OI not set — defaults to 0.
     fx.lh.set_oracle_prices(&fx.admin, &m, &100u128, &50u128);
 

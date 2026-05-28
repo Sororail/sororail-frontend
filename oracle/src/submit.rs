@@ -21,7 +21,10 @@ impl std::fmt::Display for SubmitError {
             SubmitError::JsonError(msg) => write!(f, "JSON parse error: {msg}"),
             SubmitError::Rejected { status } => write!(f, "transaction rejected: {status}"),
             SubmitError::TransactionFailed { events } => {
-                write!(f, "transaction failed on-chain; diagnostic events: {events:?}")
+                write!(
+                    f,
+                    "transaction failed on-chain; diagnostic events: {events:?}"
+                )
             }
             SubmitError::PollTimeout => write!(
                 f,
@@ -118,9 +121,7 @@ async fn send_transaction_xdr(rpc_url: &str, signed_xdr: &str) -> Result<String,
     })
     .map_err(|e| SubmitError::JsonError(e.to_string()))?;
 
-    let body = rpc_post(rpc_url, payload)
-        .await
-        .map_err(SubmitError::Rpc)?;
+    let body = rpc_post(rpc_url, payload).await.map_err(SubmitError::Rpc)?;
 
     let result = parse_send_response(&body)?;
 
@@ -151,25 +152,19 @@ async fn poll_until_confirmed(rpc_url: &str, hash: &str) -> Result<u32, SubmitEr
         })
         .map_err(|e| SubmitError::JsonError(e.to_string()))?;
 
-        let body = rpc_post(rpc_url, payload)
-            .await
-            .map_err(SubmitError::Rpc)?;
+        let body = rpc_post(rpc_url, payload).await.map_err(SubmitError::Rpc)?;
 
         let result = parse_get_transaction_response(&body)?;
 
         match result.status.as_str() {
             "SUCCESS" => {
                 let ledger = result.ledger.unwrap_or(0);
-                worker::console_log!(
-                    "[oracle] tx {hash} confirmed at ledger {ledger}"
-                );
+                worker::console_log!("[oracle] tx {hash} confirmed at ledger {ledger}");
                 return Ok(ledger);
             }
             "FAILED" => {
                 let events = result.diagnostic_events_xdr.unwrap_or_default();
-                worker::console_log!(
-                    "[oracle] tx {hash} FAILED; diagnostic events: {events:?}"
-                );
+                worker::console_log!("[oracle] tx {hash} FAILED; diagnostic events: {events:?}");
                 return Err(SubmitError::TransactionFailed { events });
             }
             // "NOT_FOUND" or "PENDING" — keep waiting

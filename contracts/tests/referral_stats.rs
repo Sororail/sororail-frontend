@@ -44,7 +44,12 @@ fn setup<'a>(env: &'a Env) -> Fx<'a> {
     let reader = ReaderClient::new(env, &reader_id);
     reader.initialize(&ds_id, &lh_id);
 
-    Fx { rs, rs_id, reader, admin }
+    Fx {
+        rs,
+        rs_id,
+        reader,
+        admin,
+    }
 }
 
 #[test]
@@ -84,10 +89,14 @@ fn test_record_referred_trade_counts_distinct_traders() {
     let t2 = Address::generate(&env);
     let t3 = Address::generate(&env);
 
-    fx.rs.record_referred_trade(&fx.admin, &referrer, &t1, &100u128, &1u128);
-    fx.rs.record_referred_trade(&fx.admin, &referrer, &t2, &200u128, &2u128);
-    fx.rs.record_referred_trade(&fx.admin, &referrer, &t1, &50u128, &1u128); // repeat
-    fx.rs.record_referred_trade(&fx.admin, &referrer, &t3, &300u128, &3u128);
+    fx.rs
+        .record_referred_trade(&fx.admin, &referrer, &t1, &100u128, &1u128);
+    fx.rs
+        .record_referred_trade(&fx.admin, &referrer, &t2, &200u128, &2u128);
+    fx.rs
+        .record_referred_trade(&fx.admin, &referrer, &t1, &50u128, &1u128); // repeat
+    fx.rs
+        .record_referred_trade(&fx.admin, &referrer, &t3, &300u128, &3u128);
 
     let s = fx.rs.get_referrer_stats(&referrer);
     assert_eq!(s.total_referred_volume_usd, 650u128);
@@ -103,8 +112,10 @@ fn test_record_referred_trade_is_per_referrer() {
     let r2 = Address::generate(&env);
     let trader = Address::generate(&env);
 
-    fx.rs.record_referred_trade(&fx.admin, &r1, &trader, &100u128, &1u128);
-    fx.rs.record_referred_trade(&fx.admin, &r2, &trader, &200u128, &2u128);
+    fx.rs
+        .record_referred_trade(&fx.admin, &r1, &trader, &100u128, &1u128);
+    fx.rs
+        .record_referred_trade(&fx.admin, &r2, &trader, &200u128, &2u128);
 
     let s1 = fx.rs.get_referrer_stats(&r1);
     let s2 = fx.rs.get_referrer_stats(&r2);
@@ -122,8 +133,10 @@ fn test_reader_get_referrer_stats_passthrough() {
     let t1 = Address::generate(&env);
     let t2 = Address::generate(&env);
 
-    fx.rs.record_referred_trade(&fx.admin, &referrer, &t1, &10u128, &1u128);
-    fx.rs.record_referred_trade(&fx.admin, &referrer, &t2, &90u128, &9u128);
+    fx.rs
+        .record_referred_trade(&fx.admin, &referrer, &t1, &10u128, &1u128);
+    fx.rs
+        .record_referred_trade(&fx.admin, &referrer, &t2, &90u128, &9u128);
 
     let s = fx.reader.get_referrer_stats(&fx.rs_id, &referrer);
     assert_eq!(s.total_referred_volume_usd, 100u128);

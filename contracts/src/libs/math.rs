@@ -97,4 +97,3 @@ mod tests {
         assert_eq!(mul_div_wide(&env, a, b, denom), val);
     }
 }
-

@@ -2,10 +2,10 @@ use soroban_sdk::{contract, contractimpl, contracttype, panic_with_error, Addres
 
 use crate::{
     data_store::DataStoreClient,
-    liquidity_handler::LiquidityHandlerClient,
     keys::{borrowing_factor_key, funding_factor_key, market_maintenance_margin_factor_key},
-    types::{PositionError, PositionProps},
+    liquidity_handler::LiquidityHandlerClient,
     position_utils,
+    types::{PositionError, PositionProps},
 };
 
 #[contract]
@@ -24,8 +24,12 @@ impl PositionHandler {
         if env.storage().instance().has(&PositionHandlerKey::DataStore) {
             panic!("already initialised");
         }
-        env.storage().instance().set(&PositionHandlerKey::DataStore, &data_store);
-        env.storage().instance().set(&PositionHandlerKey::LiquidityHandler, &liquidity_handler);
+        env.storage()
+            .instance()
+            .set(&PositionHandlerKey::DataStore, &data_store);
+        env.storage()
+            .instance()
+            .set(&PositionHandlerKey::LiquidityHandler, &liquidity_handler);
     }
 
     /// Returns whether the position at `position_key` is liquidatable.
@@ -75,7 +79,13 @@ impl PositionHandler {
             prices.short_price
         };
 
-        position_utils::is_liquidatable(&pos, price, margin_factor, funding_factor, borrowing_factor)
+        position_utils::is_liquidatable(
+            &pos,
+            price,
+            margin_factor,
+            funding_factor,
+            borrowing_factor,
+        )
     }
 
     // -----------------------------------------------------------------------
