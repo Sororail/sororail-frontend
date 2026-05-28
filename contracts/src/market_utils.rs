@@ -10,7 +10,9 @@ pub fn get_pool_value(
     lp_supply: u128,
     maximize: bool,
 ) -> PoolValueInfo {
-    let pool_value = pool_long.saturating_mul(long_price).saturating_add(pool_short.saturating_mul(short_price));
+    let pool_value = pool_long
+        .saturating_mul(long_price)
+        .saturating_add(pool_short.saturating_mul(short_price));
 
     let long_pnl: i128 = 0;
     let short_pnl: i128 = 0;

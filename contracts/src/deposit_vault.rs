@@ -45,8 +45,12 @@ impl DepositVault {
         if env.storage().instance().has(&VaultKey::RoleStore) {
             panic!("already initialised");
         }
-        env.storage().instance().set(&VaultKey::RoleStore, &role_store);
-        env.storage().instance().set(&VaultKey::Controller, &controller);
+        env.storage()
+            .instance()
+            .set(&VaultKey::RoleStore, &role_store);
+        env.storage()
+            .instance()
+            .set(&VaultKey::Controller, &controller);
     }
 
     pub fn create_deposit(env: Env, caller: Address, token: Address, amount: u128) -> u32 {
@@ -67,7 +71,9 @@ impl DepositVault {
             token: token.clone(),
             amount,
         };
-        env.storage().persistent().set(&VaultKey::Deposit(deposit_id), &record);
+        env.storage()
+            .persistent()
+            .set(&VaultKey::Deposit(deposit_id), &record);
         env.storage()
             .persistent()
             .set(&VaultKey::DepositCount, &(deposit_id + 1));
@@ -89,12 +95,18 @@ impl DepositVault {
             panic_with_error!(&env, VaultError::MissingOraclePrice);
         }
 
-        let record: DepositRecord = match env.storage().persistent().get(&VaultKey::Deposit(deposit_id)) {
+        let record: DepositRecord = match env
+            .storage()
+            .persistent()
+            .get(&VaultKey::Deposit(deposit_id))
+        {
             Some(r) => r,
             None => panic_with_error!(&env, VaultError::DepositNotFound),
         };
 
-        env.storage().persistent().remove(&VaultKey::Deposit(deposit_id));
+        env.storage()
+            .persistent()
+            .remove(&VaultKey::Deposit(deposit_id));
 
         let token = record.token;
         let current_balance = Self::recorded_balance(env.clone(), token.clone());
@@ -107,7 +119,11 @@ impl DepositVault {
     pub fn cancel_deposit(env: Env, caller: Address, deposit_id: u32) {
         caller.require_auth();
 
-        let record: DepositRecord = match env.storage().persistent().get(&VaultKey::Deposit(deposit_id)) {
+        let record: DepositRecord = match env
+            .storage()
+            .persistent()
+            .get(&VaultKey::Deposit(deposit_id))
+        {
             Some(r) => r,
             None => panic_with_error!(&env, VaultError::DepositNotFound),
         };
@@ -119,7 +135,9 @@ impl DepositVault {
         let token = record.token.clone();
         let amount = record.amount;
 
-        env.storage().persistent().remove(&VaultKey::Deposit(deposit_id));
+        env.storage()
+            .persistent()
+            .remove(&VaultKey::Deposit(deposit_id));
 
         let current_balance = Self::recorded_balance(env.clone(), token.clone());
         env.storage().persistent().set(
@@ -140,8 +158,11 @@ impl DepositVault {
         }
 
         Self::transfer_out(&env, &token, &receiver, amount);
-        env.storage().persistent().set(&VaultKey::RecordedBalance(token.clone()), &0u128);
-        env.events().publish(("emergency_drain",), (token, receiver, amount));
+        env.storage()
+            .persistent()
+            .set(&VaultKey::RecordedBalance(token.clone()), &0u128);
+        env.events()
+            .publish(("emergency_drain",), (token, receiver, amount));
     }
 
     pub fn recorded_balance(env: Env, token: Address) -> u128 {
@@ -152,7 +173,9 @@ impl DepositVault {
     }
 
     pub fn get_deposit(env: Env, deposit_id: u32) -> Option<DepositRecord> {
-        env.storage().persistent().get(&VaultKey::Deposit(deposit_id))
+        env.storage()
+            .persistent()
+            .get(&VaultKey::Deposit(deposit_id))
     }
 
     fn next_deposit_id(env: &Env) -> u32 {

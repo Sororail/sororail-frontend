@@ -215,7 +215,12 @@ impl LiquidityHandler {
         }
         // Escrow: debit the caller's LP now; supply is reduced when burned at
         // execution time.
-        Self::set_lp_balance(&env, market_id, &caller, checked_sub_u128(balance, lp_amount));
+        Self::set_lp_balance(
+            &env,
+            market_id,
+            &caller,
+            checked_sub_u128(balance, lp_amount),
+        );
 
         let id = Self::next_withdrawal_id(&env);
         let record = Withdrawal {
@@ -382,7 +387,10 @@ impl LiquidityHandler {
     /// Upper bound used by off-chain consumers / `Reader::get_account_withdrawals`
     /// to know how many withdrawal ids to scan (#72).
     pub fn get_withdrawal_count(env: Env) -> u32 {
-        env.storage().instance().get(&LhKey::WithdrawalCount).unwrap_or(0)
+        env.storage()
+            .instance()
+            .get(&LhKey::WithdrawalCount)
+            .unwrap_or(0)
     }
 
     pub fn market_tokens(env: Env, market_id: u32) -> MarketTokens {

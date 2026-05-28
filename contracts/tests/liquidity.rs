@@ -65,12 +65,21 @@ fn setup(env: &Env) -> Setup {
     let lhc = LiquidityHandlerClient::new(env, &lh);
     lhc.initialize(&rs, &ds);
 
-    let long = env.register_stellar_asset_contract_v2(admin.clone()).address();
-    let short = env.register_stellar_asset_contract_v2(admin.clone()).address();
+    let long = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+    let short = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
 
     lhc.register_market(&admin, &MARKET, &long, &short);
 
-    Setup { lh, admin, long, short }
+    Setup {
+        lh,
+        admin,
+        long,
+        short,
+    }
 }
 
 fn mint(env: &Env, token: &Address, to: &Address, amount: i128) {
@@ -106,7 +115,11 @@ fn test_execute_withdrawal_full_pro_rata() {
     // Redeem all LP.
     let wid = lhc.create_withdrawal(&user, &MARKET, &2000u128, &user, &0u128, &0u128);
     assert!(lhc.get_withdrawal(&wid).is_some());
-    assert_eq!(lhc.lp_balance_of(&MARKET, &user), 0u128, "LP escrowed on create");
+    assert_eq!(
+        lhc.lp_balance_of(&MARKET, &user),
+        0u128,
+        "LP escrowed on create"
+    );
 
     lhc.execute_withdrawal(&user, &wid);
 
@@ -114,7 +127,11 @@ fn test_execute_withdrawal_full_pro_rata() {
     assert_eq!(long_tok.balance(&user), 1000);
     assert_eq!(short_tok.balance(&user), 1000);
     assert_eq!(long_tok.balance(&s.lh), 0, "pool drained");
-    assert_eq!(lhc.pool_amounts(&MARKET), (0u128, 0u128), "pool decremented in data_store");
+    assert_eq!(
+        lhc.pool_amounts(&MARKET),
+        (0u128, 0u128),
+        "pool decremented in data_store"
+    );
     assert_eq!(lhc.lp_supply(&MARKET), 0u128, "LP burned");
     assert!(lhc.get_withdrawal(&wid).is_none(), "record deleted");
 }
@@ -205,7 +222,10 @@ fn test_concurrent_deposits_consistent_lp_and_price() {
     // lp_b = 1000 * 2000 / 3000 = 666  -> fewer LP for the same token amount.
     let lp_b = lhc.execute_deposit(&b, &MARKET, &0u128, &1000u128, &b);
     assert_eq!(lp_b, 666u128);
-    assert!(lp_b < 1000u128, "second depositor gets fewer LP after appreciation");
+    assert!(
+        lp_b < 1000u128,
+        "second depositor gets fewer LP after appreciation"
+    );
 
     assert_eq!(lhc.lp_supply(&MARKET), 2666u128);
     assert_eq!(lhc.pool_amounts(&MARKET), (1000u128, 2000u128));
@@ -249,11 +269,18 @@ fn test_multicall_rolls_back_on_invalid_deposit() {
         &Symbol::new(&env, "send_tokens_then_invalid_deposit"),
         args,
     );
-    assert!(result.is_err(), "invalid deposit should abort the transaction");
+    assert!(
+        result.is_err(),
+        "invalid deposit should abort the transaction"
+    );
 
     assert_eq!(long_tok.balance(&user), 1000, "token transfer rolled back");
     assert_eq!(long_tok.balance(&s.lh), 0, "pool received no tokens");
-    assert_eq!(lhc.pool_amounts(&MARKET), (0u128, 0u128), "pool amounts unchanged");
+    assert_eq!(
+        lhc.pool_amounts(&MARKET),
+        (0u128, 0u128),
+        "pool amounts unchanged"
+    );
     assert_eq!(lhc.lp_supply(&MARKET), 0u128, "LP supply unchanged");
 }
 

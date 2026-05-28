@@ -2,18 +2,18 @@
 
 pub mod adl_handler;
 pub mod config_handler;
-pub mod insurance_fund;
 pub mod data_store;
-pub mod fee_handler;
 pub mod decrease_position_utils;
+pub mod deposit_vault;
+pub mod fee_handler;
 pub mod increase_position_utils;
+pub mod insurance_fund;
 pub mod keys;
 pub mod libs;
 pub mod liquidity_handler;
 pub mod market_factory;
 pub mod market_token;
 pub mod market_utils;
-pub mod deposit_vault;
 pub mod order_handler;
 pub mod position_handler;
 pub mod position_utils;

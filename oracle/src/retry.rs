@@ -20,9 +20,7 @@ where
         match f().await {
             Ok(val) => return Ok(val),
             Err(e) => {
-                worker::console_log!(
-                    "[retry] attempt {attempt}/{max_attempts} failed: {e:?}"
-                );
+                worker::console_log!("[retry] attempt {attempt}/{max_attempts} failed: {e:?}");
                 last_err = Some(e);
                 if attempt < max_attempts {
                     sleep_ms(delay_ms).await;
@@ -74,7 +72,11 @@ mod tests {
                     async move {
                         let n = count.get() + 1;
                         count.set(n);
-                        if n < 3 { Err("transient") } else { Ok(42u32) }
+                        if n < 3 {
+                            Err("transient")
+                        } else {
+                            Ok(42u32)
+                        }
                     }
                 },
                 3,

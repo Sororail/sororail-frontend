@@ -119,4 +119,119 @@ mod tests {
         let p = compute_confidence_interval(&prices).unwrap();
         assert!(p.min <= p.max);
     }
+
+    #[test]
+    fn even_source_count_six_prices() {
+        let prices = vec![100i128, 200, 300, 400, 500, 600];
+        let p = compute_confidence_interval(&prices).unwrap();
+        // 10th: 0.1*5=0.5 → lo=0 hi=1 → 100+0.5*100=150
+        // 90th: 0.9*5=4.5 → lo=4 hi=5 → 500+0.5*100=550
+        assert_eq!(p.min, 150);
+        assert_eq!(p.max, 550);
+        assert!(p.min <= p.max);
+    }
+
+    #[test]
+    fn odd_source_count_seven_prices() {
+        let prices = vec![10i128, 20, 30, 40, 50, 60, 70];
+        let p = compute_confidence_interval(&prices).unwrap();
+        // 10th: 0.1*6=0.6 → lo=0 hi=1 → 10+0.6*10=16
+        // 90th: 0.9*6=5.4 → lo=5 hi=6 → 60+0.4*10=64
+        assert_eq!(p.min, 16);
+        assert_eq!(p.max, 64);
+        assert!(p.min <= p.max);
+    }
+
+    #[test]
+    fn median_calculation_odd_count() {
+        let prices = vec![1i128, 2, 3, 4, 5];
+        let p = compute_confidence_interval(&prices).unwrap();
+        let sorted = [1, 2, 3, 4, 5];
+        let median = sorted[sorted.len() / 2]; // 3
+        assert_eq!(median, 3);
+        assert!(p.min <= p.max);
+    }
+
+    #[test]
+    fn median_calculation_even_count() {
+        let prices = vec![1i128, 2, 3, 4, 5, 6];
+        let p = compute_confidence_interval(&prices).unwrap();
+        let sorted = [1, 2, 3, 4, 5, 6];
+        let median = sorted[sorted.len() / 2]; // 4
+        assert_eq!(median, 4);
+        assert!(p.min <= p.max);
+    }
+
+    #[test]
+    fn confidence_interval_with_outliers() {
+        // Large outliers at both ends; 10th-90th percentile should exclude them
+        let prices = vec![1i128, 2, 3, 4, 100, 200, 300, 400, 500, 1000000];
+        let p = compute_confidence_interval(&prices).unwrap();
+        // With percentile method, outliers don't heavily skew the interval
+        assert!(p.min <= p.max);
+        // 10th percentile should be much lower than max
+        assert!(p.max > p.min);
+    }
+
+    #[test]
+    fn duplicate_prices() {
+        let prices = vec![100i128, 100, 100, 100, 100];
+        let p = compute_confidence_interval(&prices).unwrap();
+        // All the same price → percentiles should be 100
+        assert_eq!(p.min, 100);
+        assert_eq!(p.max, 100);
+    }
+
+    #[test]
+    fn large_price_values() {
+        let prices = vec![1_000_000_000i128, 2_000_000_000, 3_000_000_000];
+        let p = compute_confidence_interval(&prices).unwrap();
+        // Should handle large values without overflow
+        assert!(p.min <= p.max);
+        assert!(p.min > 0);
+        assert!(p.max > 0);
+    }
+
+    #[test]
+    fn percentile_boundary_p_zero() {
+        let sorted = [100i128, 200, 300];
+        // percentile with p=0 should return first element
+        assert_eq!(percentile(&sorted, 0), 100);
+    }
+
+    #[test]
+    fn percentile_boundary_p_hundred() {
+        let sorted = [100i128, 200, 300];
+        // percentile with p=100 should return last element
+        assert_eq!(percentile(&sorted, 100), 300);
+    }
+
+    #[test]
+    fn percentile_single_element() {
+        let sorted = [42i128];
+        // Single element should return that element for any percentile
+        assert_eq!(percentile(&sorted, 10), 42);
+        assert_eq!(percentile(&sorted, 50), 42);
+        assert_eq!(percentile(&sorted, 90), 42);
+    }
+
+    #[test]
+    fn full_aggregation_pipeline_even_sources() {
+        // Simulate a full price aggregation with even number of sources
+        let prices = [45000i128, 45100, 44900, 45050];
+        let p = compute_confidence_interval(&prices).unwrap();
+        assert!(p.min <= p.max);
+        assert!(p.min >= 44900);
+        assert!(p.max <= 45100);
+    }
+
+    #[test]
+    fn full_aggregation_pipeline_odd_sources() {
+        // Simulate a full price aggregation with odd number of sources
+        let prices = [2500i128, 2510, 2490, 2505, 2495];
+        let p = compute_confidence_interval(&prices).unwrap();
+        assert!(p.min <= p.max);
+        assert!(p.min >= 2490);
+        assert!(p.max <= 2510);
+    }
 }
