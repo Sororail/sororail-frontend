@@ -12,7 +12,8 @@ use crate::{
     referral_utils::{apply_referral_rebates, compute_position_fee},
     liquidity_handler::LiquidityHandlerClient,
     role_store::{role_admin_id, RoleStoreClient},
-    types::{Order, OrderError, OrderType, Position, PositionError, PositionProps},
+    pricing_utils::validate_execution_price,
+    types::{Order, OrderError, OrderType, Position, PositionError, PositionProps, PriceError},
 };
 
 const FACTOR_DENOMINATOR: u128 = 1_000_000;
@@ -462,6 +463,10 @@ impl OrderHandler {
 
         if !Self::is_decrease_trigger_satisfied(order, index_price) {
             panic_with_error!(env, OrderError::UnsatisfiedTrigger);
+        }
+
+        if let Err(e) = validate_execution_price(index_price, order.acceptable_price, order.is_long, false) {
+            panic_with_error!(env, e);
         }
 
         let mut position = Self::get_position_internal(env, &order.account, order.market_id, order.is_long);

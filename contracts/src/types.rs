@@ -132,6 +132,20 @@ impl From<ReferralError> for soroban_sdk::Error {
 #[contracttype]
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 #[repr(u32)]
+pub enum PriceError {
+    PriceTooHigh = 70,
+    PriceTooLow = 71,
+}
+
+impl From<PriceError> for soroban_sdk::Error {
+    fn from(e: PriceError) -> Self {
+        soroban_sdk::Error::from_contract_error(e as u32)
+    }
+}
+
+#[contracttype]
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[repr(u32)]
 pub enum PositionError {
     PositionNotFound = 30,
     MaxOpenInterestExceeded = 20,
