@@ -264,3 +264,16 @@ impl From<AdlError> for soroban_sdk::Error {
         soroban_sdk::Error::from_contract_error(e as u32)
     }
 }
+
+#[contracttype]
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[repr(u32)]
+pub enum InsuranceFundError {
+    Unauthorized = 80,
+}
+
+impl From<InsuranceFundError> for soroban_sdk::Error {
+    fn from(e: InsuranceFundError) -> Self {
+        soroban_sdk::Error::from_contract_error(e as u32)
+    }
+}
