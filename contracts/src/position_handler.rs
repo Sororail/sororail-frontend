@@ -3,7 +3,7 @@ use soroban_sdk::{contract, contractimpl, contracttype, panic_with_error, Addres
 use crate::{
     data_store::DataStoreClient,
     liquidity_handler::LiquidityHandlerClient,
-    keys::market_maintenance_margin_factor_key,
+    keys::{borrowing_factor_key, funding_factor_key, market_maintenance_margin_factor_key},
     types::{PositionError, PositionProps},
     position_utils,
 };
@@ -50,6 +50,12 @@ impl PositionHandler {
         // Fetch maintenance margin factor from data_store.
         let margin_factor = ds.get_u128(&market_maintenance_margin_factor_key(&env, pos.market_id))
             .unwrap_or(0);
+        let funding_factor = ds
+            .get_u128(&funding_factor_key(&env, pos.market_id))
+            .unwrap_or(0);
+        let borrowing_factor = ds
+            .get_u128(&borrowing_factor_key(&env, pos.market_id))
+            .unwrap_or(0);
 
         // Use maximize = true pricing: choose the worst-case price for this position.
         // For long positions, the worst price is the long token price.
@@ -60,7 +66,7 @@ impl PositionHandler {
             prices.short_price
         };
 
-        position_utils::is_liquidatable(&pos, price, margin_factor)
+        position_utils::is_liquidatable(&pos, price, margin_factor, funding_factor, borrowing_factor)
     }
 
     // -----------------------------------------------------------------------
