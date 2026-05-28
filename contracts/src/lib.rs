@@ -12,6 +12,8 @@ pub mod libs;
 pub mod liquidity_handler;
 pub mod market_factory;
 pub mod market_token;
+pub mod market_utils;
+pub mod deposit_vault;
 pub mod order_handler;
 pub mod position_handler;
 pub mod position_utils;
