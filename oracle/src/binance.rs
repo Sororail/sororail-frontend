@@ -47,6 +47,15 @@ pub fn parse_ticker_http_response(
     parse_ticker_response_body(body, symbols)
 }
 
+pub fn parse_ticker_http_result(
+    response: Result<(u16, String), String>,
+    symbols: &[String],
+) -> Result<Vec<(String, i128)>, BinancePriceError> {
+    let (status_code, body) =
+        response.map_err(BinancePriceError::NetworkError)?;
+    parse_ticker_http_response(status_code, &body, symbols)
+}
+
 pub async fn fetch_spot_prices(symbols: &[String]) -> Result<Vec<(String, i128)>, BinancePriceError> {
     let response = Fetch::Url(BINANCE_TICKER_PRICE_URL)
         .send()
@@ -57,7 +66,7 @@ pub async fn fetch_spot_prices(symbols: &[String]) -> Result<Vec<(String, i128)>
         .text()
         .await
         .map_err(|err| BinancePriceError::NetworkError(err.to_string()))?;
-    parse_ticker_http_response(status, &body, symbols)
+    parse_ticker_http_result(Ok((status, body)), symbols)
 }
 
 pub fn parse_price_to_precision(raw: &str) -> Result<i128, BinancePriceError> {
@@ -116,7 +125,8 @@ pub fn parse_price_to_precision(raw: &str) -> Result<i128, BinancePriceError> {
 #[cfg(test)]
 mod tests {
     use super::{
-        parse_price_to_precision, parse_ticker_http_response, parse_ticker_response_body,
+        parse_price_to_precision, parse_ticker_http_response, parse_ticker_http_result,
+        parse_ticker_response_body,
         BinancePriceError, FLOAT_PRECISION,
     };
 
@@ -153,5 +163,12 @@ mod tests {
         let symbols = vec!["BTCUSDT".to_string()];
         let err = parse_ticker_http_response(503, "[]", &symbols).unwrap_err();
         assert_eq!(err, BinancePriceError::HttpError(503));
+    }
+
+    #[test]
+    fn parse_ticker_http_result_network_failure_returns_error() {
+        let symbols = vec!["BTCUSDT".to_string()];
+        let err = parse_ticker_http_result(Err("timeout".to_string()), &symbols).unwrap_err();
+        assert_eq!(err, BinancePriceError::NetworkError("timeout".to_string()));
     }
 }
