@@ -2,10 +2,13 @@ use soroban_sdk::{contract, contractimpl, contracttype, Address, BytesN, Env, Ve
 
 use crate::{
     data_store::DataStoreClient,
-    keys::{open_interest_long_key, open_interest_short_key, price_impact_factor_key},
+    keys::{
+        impact_pool_amount_key, open_interest_long_key, open_interest_short_key,
+        price_impact_exponent_factor_key, price_impact_factor_key,
+    },
     liquidity_handler::LiquidityHandlerClient,
     position_utils::calculate_pnl,
-    pricing_utils::get_execution_price as compute_execution_price,
+    pricing_utils::{get_execution_price as compute_execution_price, FACTOR_DENOMINATOR},
     types::{ExecutionPriceResult, PositionProps},
 };
 
@@ -116,6 +119,13 @@ impl Reader {
         let impact_factor = ds
             .get_u128(&price_impact_factor_key(&env, pos.market_id))
             .unwrap_or(0);
+        // Unset exponent defaults to `^1` (a linear curve).
+        let impact_exponent_factor = ds
+            .get_u128(&price_impact_exponent_factor_key(&env, pos.market_id))
+            .unwrap_or(FACTOR_DENOMINATOR);
+        let impact_pool_amount = ds
+            .get_u128(&impact_pool_amount_key(&env, pos.market_id))
+            .unwrap_or(0);
 
         let result = compute_execution_price(
             index_price,
@@ -125,6 +135,8 @@ impl Reader {
             pos.is_long,
             is_increase,
             impact_factor,
+            impact_exponent_factor,
+            impact_pool_amount,
         );
 
         ExecutionPriceResult {

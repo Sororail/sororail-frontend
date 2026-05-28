@@ -409,7 +409,7 @@ fn test_short_limit_decrease_executes_below_trigger() {
         &1_000u128,
         &0u128,
         &70u128,
-        &0u128,
+        &1_000_000u128, // short decrease: acceptable_price is the max buy-back price
         &0u128,
     );
 
