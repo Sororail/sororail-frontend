@@ -1,5 +1,7 @@
 //! Execution price helpers including open-interest price impact.
 
+use crate::types::PriceError;
+
 pub const FACTOR_DENOMINATOR: u128 = 1_000_000;
 
 /// Result of an execution price query for UI preview.
@@ -123,6 +125,38 @@ pub fn apply_price_impact(
     }
 }
 
+/// Validate that `execution_price` is within the trader's `acceptable_price` bound.
+///
+/// | direction          | condition                          | error          |
+/// |--------------------|------------------------------------|----------------|
+/// | long increase      | `execution_price > acceptable`     | `PriceTooHigh` |
+/// | long decrease      | `execution_price < acceptable`     | `PriceTooLow`  |
+/// | short increase     | `execution_price < acceptable`     | `PriceTooLow`  |
+/// | short decrease     | `execution_price > acceptable`     | `PriceTooHigh` |
+pub fn validate_execution_price(
+    execution_price: u128,
+    acceptable_price: u128,
+    is_long: bool,
+    is_increase: bool,
+) -> Result<(), PriceError> {
+    match (is_long, is_increase) {
+        (true, true) | (false, false) => {
+            if execution_price > acceptable_price {
+                Err(PriceError::PriceTooHigh)
+            } else {
+                Ok(())
+            }
+        }
+        (true, false) | (false, true) => {
+            if execution_price < acceptable_price {
+                Err(PriceError::PriceTooLow)
+            } else {
+                Ok(())
+            }
+        }
+    }
+}
+
 /// Compute execution prices for a position trade preview.
 #[allow(clippy::too_many_arguments)]
 pub fn get_execution_price(
@@ -230,5 +264,63 @@ mod tests {
         // Pool only holds 4, so the 6-unit favorable impact is clamped to 4.
         let result = get_execution_price(100, 1_000, 8_000, 2_000, true, false, 100_000, LINEAR, 4);
         assert_eq!(result.price_with_impact, 104);
+    }
+
+    // --- validate_execution_price ---
+
+    #[test]
+    fn test_long_increase_above_acceptable_is_price_too_high() {
+        assert_eq!(
+            validate_execution_price(110, 100, true, true),
+            Err(PriceError::PriceTooHigh)
+        );
+    }
+
+    #[test]
+    fn test_long_increase_at_or_below_acceptable_is_ok() {
+        assert_eq!(validate_execution_price(100, 100, true, true), Ok(()));
+        assert_eq!(validate_execution_price(90, 100, true, true), Ok(()));
+    }
+
+    #[test]
+    fn test_long_decrease_below_acceptable_is_price_too_low() {
+        assert_eq!(
+            validate_execution_price(90, 100, true, false),
+            Err(PriceError::PriceTooLow)
+        );
+    }
+
+    #[test]
+    fn test_long_decrease_at_or_above_acceptable_is_ok() {
+        assert_eq!(validate_execution_price(100, 100, true, false), Ok(()));
+        assert_eq!(validate_execution_price(110, 100, true, false), Ok(()));
+    }
+
+    #[test]
+    fn test_short_increase_below_acceptable_is_price_too_low() {
+        assert_eq!(
+            validate_execution_price(90, 100, false, true),
+            Err(PriceError::PriceTooLow)
+        );
+    }
+
+    #[test]
+    fn test_short_increase_at_or_above_acceptable_is_ok() {
+        assert_eq!(validate_execution_price(100, 100, false, true), Ok(()));
+        assert_eq!(validate_execution_price(110, 100, false, true), Ok(()));
+    }
+
+    #[test]
+    fn test_short_decrease_above_acceptable_is_price_too_high() {
+        assert_eq!(
+            validate_execution_price(110, 100, false, false),
+            Err(PriceError::PriceTooHigh)
+        );
+    }
+
+    #[test]
+    fn test_short_decrease_at_or_below_acceptable_is_ok() {
+        assert_eq!(validate_execution_price(100, 100, false, false), Ok(()));
+        assert_eq!(validate_execution_price(90, 100, false, false), Ok(()));
     }
 }
