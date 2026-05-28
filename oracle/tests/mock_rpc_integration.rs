@@ -1,4 +1,4 @@
-use oracle::stellar_rpc::{parse_latest_ledger_response, RpcError};
+use oracle::stellar_rpc::parse_latest_ledger_response;
 use oracle::submit::{parse_send_response, parse_get_transaction_response};
 
 #[test]
