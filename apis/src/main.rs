@@ -1,3 +1,4 @@
+mod server;
 use axum::{
     extract::State,
     http::{header, Request, StatusCode},
@@ -167,6 +168,7 @@ pub fn app(state: AppState) -> Router {
 
 #[tokio::main]
 async fn main() {
+    server::run().await.unwrap();
     let state = AppState {
         oracle_status: Arc::new(RwLock::new(OracleStatus::default())),
     };
