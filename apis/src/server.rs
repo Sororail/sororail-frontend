@@ -74,7 +74,7 @@ pub fn build_app(state: AppState) -> Router {
 
 pub async fn run() -> Result<(), anyhow::Error> {
     let cache = Cache::new();
-    let reader = Arc::new(crate::client::RpcClient) as Arc<dyn Reader + Send + Sync>;
+    let reader = Arc::new(crate::client::RpcClient::from_env()) as Arc<dyn Reader + Send + Sync>;
     let history = HistoryStore::new();
 
     // Background task: record a price tick every 60 seconds for all known tokens.
