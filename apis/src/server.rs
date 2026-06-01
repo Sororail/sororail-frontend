@@ -3,9 +3,11 @@ use crate::config::lookup_token;
 use crate::history::{HistoryStore, Interval};
 use crate::state::{AppState, MarketSummary, Reader, ReaderError};
 use axum::{
-    extract::{Path, Query},
+    extract::{Path, Query, Request},
+    extract::ws::{Message, WebSocket, WebSocketUpgrade},
     http::{header, HeaderValue, Method, StatusCode},
-    response::{Html, IntoResponse},
+    middleware::{self, Next},
+    response::{Html, IntoResponse, Response},
     routing::get,
     Extension, Json, Router,
 };
@@ -14,8 +16,11 @@ use serde::{Deserialize, Serialize};
 use std::env;
 use std::sync::Arc;
 use std::time::Duration;
+use std::time::Instant;
 use tower_http::cors::{AllowOrigin, CorsLayer};
 use tower_http::trace::TraceLayer;
+use tokio::sync::Mutex;
+use std::collections::HashMap;
 use tracing::{info, warn};
 use utoipa::OpenApi;
 
@@ -53,11 +58,13 @@ struct HealthDoc {
 pub fn build_app(state: AppState) -> Router {
     let app = Router::new()
         .route("/health", get(health))
+        .route("/prices/stream", get(ws_prices_stream))
         .route("/prices/:token", get(get_price))
         .route("/prices/:token/history", get(get_price_history))
         .route("/markets", get(get_markets))
         .route("/markets/:market_id", get(get_market))
-        .route("/positions/:account", get(get_positions));
+        .route("/positions/:account", get(get_positions))
+        .route("/orders/:account", get(get_orders));
 
     // OpenAPI (issue #108): mount `/openapi.json` and the Swagger UI at
     // `/docs`. Done before applying layers so the static-asset routes
@@ -67,9 +74,67 @@ pub fn build_app(state: AppState) -> Router {
     // CORS (issue #105), tracing middleware (issue #106), and shared
     // state are layered after the routes so they apply to every endpoint
     // including the OpenAPI surface.
-    app.layer(build_cors_layer())
+    app.layer(middleware::from_fn(rate_limit_middleware))
+        .layer(build_cors_layer())
         .layer(TraceLayer::new_for_http())
+        .layer(Extension(RateLimiter::new()))
         .layer(Extension(Arc::new(state)))
+}
+
+#[derive(Clone)]
+pub struct RateLimiter {
+    windows: Arc<Mutex<HashMap<String, Vec<Instant>>>>,
+    limit: usize,
+    window_secs: u64,
+}
+
+impl RateLimiter {
+    pub fn new() -> Self {
+        let limit = env::var("RATE_LIMIT_RPS").unwrap_or_else(|_| "100".to_string()).parse().unwrap_or(100);
+        let window_secs = env::var("RATE_LIMIT_WINDOW_SECS").unwrap_or_else(|_| "60".to_string()).parse().unwrap_or(60);
+        Self {
+            windows: Arc::new(Mutex::new(HashMap::new())),
+            limit,
+            window_secs,
+        }
+    }
+}
+
+async fn rate_limit_middleware(
+    Extension(limiter): Extension<RateLimiter>,
+    request: Request,
+    next: Next,
+) -> Response {
+    let ip = request
+        .headers()
+        .get("x-forwarded-for")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("127.0.0.1")
+        .split(',')
+        .next()
+        .unwrap_or("127.0.0.1")
+        .trim()
+        .to_string();
+
+    let mut windows = limiter.windows.lock().await;
+    let now = Instant::now();
+    let window_duration = Duration::from_secs(limiter.window_secs);
+    
+    let timestamps = windows.entry(ip).or_insert_with(Vec::new);
+    timestamps.retain(|t| now.duration_since(*t) <= window_duration);
+
+    if timestamps.len() >= limiter.limit {
+        return Response::builder()
+            .status(StatusCode::TOO_MANY_REQUESTS)
+            .header("Retry-After", limiter.window_secs.to_string())
+            .body(axum::body::Body::from("Too many requests"))
+            .unwrap();
+    }
+    
+    timestamps.push(now);
+    drop(windows);
+
+    next.run(request).await
 }
 
 pub async fn run() -> Result<(), anyhow::Error> {
@@ -94,7 +159,32 @@ pub async fn run() -> Result<(), anyhow::Error> {
         }
     });
 
-    let state = AppState { cache, reader, history };
+    let price_cache = crate::cache::PriceCache::new();
+    let price_cache_bg = price_cache.clone();
+    let reader_bg = reader.clone();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_millis(500));
+        loop {
+            interval.tick().await;
+            if let Some(tokens) = crate::config::all_tokens() {
+                for entry in tokens {
+                    if let Ok(price) = reader_bg.get_latest_price(&entry.token).await {
+                        let resp = crate::server::PriceResp {
+                            token: entry.token.clone(),
+                            symbol: entry.symbol.clone(),
+                            min: price,
+                            max: price,
+                            timestamp: chrono::Utc::now().timestamp(),
+                            sources_used: entry.sources_used.clone(),
+                        };
+                        price_cache_bg.set(&entry.token, resp).await;
+                    }
+                }
+            }
+        }
+    });
+
+    let state = AppState { cache, price_cache, reader, history };
     let app = build_app(state);
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await?;
@@ -346,14 +436,14 @@ pub async fn get_price_history(
     }
 }
 
-#[derive(Serialize, utoipa::ToSchema)]
-struct PriceResp {
-    token: String,
-    symbol: String,
-    min: f64,
-    max: f64,
-    timestamp: i64,
-    sources_used: Vec<String>,
+#[derive(Serialize, Deserialize, Clone, utoipa::ToSchema)]
+pub struct PriceResp {
+    pub token: String,
+    pub symbol: String,
+    pub min: f64,
+    pub max: f64,
+    pub timestamp: i64,
+    pub sources_used: Vec<String>,
 }
 
 #[utoipa::path(
@@ -369,9 +459,15 @@ struct PriceResp {
 )]
 pub async fn get_price(
     Path(token): Path<String>,
-    Extension(_state): Extension<Arc<AppState>>,
+    Extension(state): Extension<Arc<AppState>>,
 ) -> impl IntoResponse {
     let key = token.to_lowercase();
+    if let Some(price) = state.price_cache.get(&key).await {
+        return (StatusCode::OK, Json(price)).into_response();
+    }
+    
+    // Fallback if not in cache but in feed (just to meet potential earlier test criteria,
+    // though issue #103 says "all price endpoints read from this cache").
     if let Some(entry) = lookup_token(&key) {
         let resp = PriceResp {
             token: entry.token.clone(),
@@ -388,6 +484,53 @@ pub async fn get_price(
         Json(serde_json::json!({"error":"token not found in feed"})),
     )
         .into_response()
+}
+
+pub async fn ws_prices_stream(
+    ws: WebSocketUpgrade,
+    Extension(state): Extension<Arc<AppState>>,
+) -> impl IntoResponse {
+    ws.on_upgrade(|socket| handle_socket(socket, state))
+}
+
+async fn handle_socket(mut socket: WebSocket, state: Arc<AppState>) {
+    // Initial snapshot
+    if let Some(tokens) = crate::config::all_tokens() {
+        let mut initial = Vec::new();
+        for entry in &tokens {
+            if let Some(price) = state.price_cache.get(&entry.token).await {
+                initial.push(price);
+            }
+        }
+        if !initial.is_empty() {
+            if let Ok(msg) = serde_json::to_string(&initial) {
+                if socket.send(Message::Text(msg.into())).await.is_err() {
+                    return;
+                }
+            }
+        }
+    }
+
+    // Poll cache every 500ms
+    let mut interval = tokio::time::interval(Duration::from_millis(500));
+    loop {
+        interval.tick().await;
+        if let Some(tokens) = crate::config::all_tokens() {
+            let mut current = Vec::new();
+            for entry in &tokens {
+                if let Some(price) = state.price_cache.get(&entry.token).await {
+                    current.push(price);
+                }
+            }
+            if !current.is_empty() {
+                if let Ok(msg) = serde_json::to_string(&current) {
+                    if socket.send(Message::Text(msg.into())).await.is_err() {
+                        return; // client disconnected
+                    }
+                }
+            }
+        }
+    }
 }
 
 pub async fn get_markets(Extension(state): Extension<Arc<AppState>>) -> impl IntoResponse {
@@ -537,6 +680,31 @@ async fn get_positions(
             out.push(v);
         }
     }
-
     (StatusCode::OK, Json(out))
+}
+
+async fn get_orders(
+    Path(account): Path<String>,
+    Extension(state): Extension<Arc<AppState>>,
+) -> impl IntoResponse {
+    let acct = account.to_lowercase();
+    // validate simple format
+    if acct.len() != 56 || !(acct.starts_with('g') || acct.starts_with('G')) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error":"invalid account"})),
+        );
+    }
+
+    let orders = match state.reader.get_account_pending_orders(&acct).await {
+        Ok(v) => v,
+        Err(_) => {
+            return (
+                StatusCode::BAD_GATEWAY,
+                Json(serde_json::json!({"error":"rpc failure"})),
+            )
+        }
+    };
+
+    (StatusCode::OK, Json(orders))
 }

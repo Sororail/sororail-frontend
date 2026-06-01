@@ -8,6 +8,7 @@ use thiserror::Error;
 #[derive(Clone)]
 pub struct AppState {
     pub cache: Cache,
+    pub price_cache: crate::cache::PriceCache,
     pub reader: Arc<dyn Reader + Send + Sync>,
     pub history: HistoryStore,
 }
@@ -38,6 +39,7 @@ pub trait Reader {
     async fn get_market_pool_value_info(&self, market: &str) -> Result<MarketSummary, ReaderError>;
     async fn get_market_detail(&self, market: &str) -> Result<serde_json::Value, ReaderError>;
     async fn get_account_positions(&self, account: &str) -> Result<Vec<String>, ReaderError>;
+    async fn get_account_pending_orders(&self, account: &str) -> Result<Vec<serde_json::Value>, ReaderError>;
     async fn get_position_info(&self, position_id: &str) -> Result<serde_json::Value, ReaderError>;
     async fn get_latest_price(&self, token: &str) -> Result<f64, ReaderError>;
 }
