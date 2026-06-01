@@ -61,6 +61,10 @@ impl Reader for RpcClient {
         retry(|| Box::pin(async { Ok(Vec::<String>::new()) })).await
     }
 
+    async fn get_account_pending_orders(&self, _account: &str) -> Result<Vec<serde_json::Value>, ReaderError> {
+        retry(|| Box::pin(async { Ok(Vec::<serde_json::Value>::new()) })).await
+    }
+
     async fn get_position_info(
         &self,
         _position_id: &str,
