@@ -37,3 +37,33 @@ impl Cache {
         map.remove(key);
     }
 }
+
+pub type PriceResp = crate::server::PriceResp;
+
+#[derive(Clone, Default)]
+pub struct PriceCache {
+    inner: Arc<RwLock<HashMap<String, (PriceResp, Instant)>>>,
+}
+
+impl PriceCache {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub async fn get(&self, key: &str) -> Option<PriceResp> {
+        let map = self.inner.read().await;
+        if let Some((price, ts)) = map.get(key) {
+            // TTL-based expiry (5 minutes = 300 seconds)
+            if ts.elapsed() <= Duration::from_secs(300) {
+                return Some(price.clone());
+            }
+        }
+        None
+    }
+
+    pub async fn set(&self, key: &str, price: PriceResp) {
+        let mut map = self.inner.write().await;
+        map.insert(key.to_lowercase(), (price, Instant::now()));
+    }
+}
+

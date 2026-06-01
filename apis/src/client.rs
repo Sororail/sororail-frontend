@@ -596,6 +596,15 @@ impl Reader for RpcClient {
         .await
     }
 
+    async fn get_account_pending_orders(&self, _account: &str) -> Result<Vec<serde_json::Value>, ReaderError> {
+        retry(|| Box::pin(async { Ok(Vec::<serde_json::Value>::new()) })).await
+    }
+
+    async fn get_position_info(
+        &self,
+        _position_id: &str,
+    ) -> Result<serde_json::Value, ReaderError> {
+        retry(|| Box::pin(async { Ok(json!({})) })).await
     /// Call Reader::get_position_info(position_key, maximize) and return the
     /// result as a JSON Value.
     async fn get_position_info(&self, position_id: &str) -> Result<serde_json::Value, ReaderError> {
