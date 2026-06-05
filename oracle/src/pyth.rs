@@ -48,8 +48,7 @@ pub fn normalize_pyth_price(price_str: &str, exponent: i32) -> Result<i128, Pyth
         ));
     }
 
-    let target_exponent: i32 = -30;
-    let exponent_diff = target_exponent - exponent;
+    let exponent_diff = 30 + exponent;
 
     if exponent_diff >= 0 {
         price_int
@@ -95,9 +94,8 @@ mod tests {
 
     #[test]
     fn normalize_pyth_price_positive_exponent() {
-        let result = normalize_pyth_price("45000000000", 8).unwrap();
-        let expected = 45000000000i128 / 10i128.pow(38);
-        assert_eq!(result, expected);
+        let err = normalize_pyth_price("45000000000", 8).unwrap_err();
+        assert!(matches!(err, PythPriceError::PriceParseError(_)));
     }
 
     #[test]

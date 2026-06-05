@@ -1,3 +1,5 @@
+#![allow(unused_must_use)]
+
 use axum::{routing::get, Router};
 use tower_service::Service;
 use worker::*;
@@ -27,6 +29,7 @@ pub struct CachedPrice {
     pub max: i128,
     pub timestamp: u64,
     pub sources_used: Vec<String>,
+    pub signature: String,
 }
 
 fn router() -> Router {
@@ -93,6 +96,7 @@ fn json_error(status: u16, msg: &str) -> Result<axum::http::Response<axum::body:
 /// Scheduled handler — runs the full price-update pipeline on every cron tick.
 ///
 /// Local testing: `wrangler dev --test-scheduled`
+#[allow(unused_must_use)]
 #[event(scheduled)]
 async fn scheduled(_event: ScheduledEvent, env: Env, _ctx: ScheduleContext) -> Result<()> {
     use serde_json::json;
@@ -119,7 +123,10 @@ async fn scheduled(_event: ScheduledEvent, env: Env, _ctx: ScheduleContext) -> R
 
     log::info(
         "cycle_start",
-        json!({"network": format!("{:?}", net_cfg.network)}),
+        json!({
+            "network": format!("{:?}", net_cfg.network),
+            "oracle_contract_id": net_cfg.oracle_contract_id
+        }),
     );
 
     // 3. Check keeper balance.
@@ -300,6 +307,7 @@ async fn scheduled(_event: ScheduledEvent, env: Env, _ctx: ScheduleContext) -> R
         .unwrap_or(10.0);
 
     let mut cached_prices: Vec<CachedPrice> = Vec::new();
+    let mut recent_errors: Vec<String> = Vec::new();
 
     for token in &feed_cfg.tokens {
         if let Some(token_prices) = all_prices.get(&token.symbol) {
@@ -312,6 +320,11 @@ async fn scheduled(_event: ScheduledEvent, env: Env, _ctx: ScheduleContext) -> R
                     "insufficient_sources",
                     json!({"token": token.symbol.clone(), "sources_count": token_prices.prices.len()}),
                 );
+                recent_errors.push(format!(
+                    "{}: insufficient sources ({})",
+                    token.symbol,
+                    token_prices.prices.len()
+                ));
                 continue;
             }
 
@@ -324,6 +337,10 @@ async fn scheduled(_event: ScheduledEvent, env: Env, _ctx: ScheduleContext) -> R
                     "outlier_rejected",
                     json!({"token": token.symbol.clone(), "source": src, "price": price, "deviation": dev}),
                 );
+                recent_errors.push(format!(
+                    "{}: rejected outlier from {} at {}",
+                    token.symbol, src, price
+                ));
             }
 
             if filter_result.filtered_prices.is_empty() {
@@ -331,6 +348,10 @@ async fn scheduled(_event: ScheduledEvent, env: Env, _ctx: ScheduleContext) -> R
                     "all_sources_rejected_as_outliers",
                     json!({"token": token.symbol.clone()}),
                 );
+                recent_errors.push(format!(
+                    "{}: all sources rejected as outliers",
+                    token.symbol
+                ));
                 continue;
             }
 
@@ -354,6 +375,10 @@ async fn scheduled(_event: ScheduledEvent, env: Env, _ctx: ScheduleContext) -> R
                         "price_movement_exceeded",
                         json!({"token": token.symbol.clone(), "old_price": last, "new_price": median, "percent_change": percent_change}),
                     );
+                    recent_errors.push(format!(
+                        "{}: movement {:.2}% exceeded {:.2}% threshold",
+                        token.symbol, percent_change, threshold_percent
+                    ));
                     true
                 } else {
                     false
@@ -363,13 +388,45 @@ async fn scheduled(_event: ScheduledEvent, env: Env, _ctx: ScheduleContext) -> R
             };
 
             if !blocked {
-                if let Err(e) = kv_store::store_last_submitted_price(&env, &token.symbol, median).await {
+                if let Err(e) =
+                    kv_store::store_last_submitted_price(&env, &token.symbol, median).await
+                {
                     log::warn(
                         "kv_write_failed",
                         serde_json::json!({"key": "last_price", "token": token.symbol, "error": e}),
                     );
                 }
                 let timestamp = current_timestamp_secs();
+                let signature = match signing::get_keeper_private_key(&env) {
+                    Ok(private_key) => match signing::sign_price(
+                        &private_key,
+                        &net_cfg.passphrase,
+                        ledger_seq,
+                        &token.stellar_address,
+                        min,
+                        max,
+                        timestamp,
+                    ) {
+                        Ok(sig) => hex::encode(sig.to_bytes()),
+                        Err(e) => {
+                            recent_errors.push(format!("{}: signing failed: {}", token.symbol, e));
+                            if let Err(store_err) =
+                                kv_store::store_failed_submission(&env, min, max, &e.to_string())
+                                    .await
+                            {
+                                log::warn(
+                                    "kv_write_failed",
+                                    serde_json::json!({"key": "failed_submission", "token": token.symbol, "error": store_err}),
+                                );
+                            }
+                            continue;
+                        }
+                    },
+                    Err(e) => {
+                        recent_errors.push(format!("{}: {}", token.symbol, e));
+                        continue;
+                    }
+                };
                 cached_prices.push(CachedPrice {
                     token: token.stellar_address.clone(),
                     symbol: token.symbol.clone(),
@@ -377,6 +434,7 @@ async fn scheduled(_event: ScheduledEvent, env: Env, _ctx: ScheduleContext) -> R
                     max,
                     timestamp,
                     sources_used: filter_result.filtered_sources.clone(),
+                    signature,
                 });
             }
         }
@@ -393,6 +451,33 @@ async fn scheduled(_event: ScheduledEvent, env: Env, _ctx: ScheduleContext) -> R
         log::info(
             "prices_cached",
             json!({"count": cached_prices.len(), "timestamp": current_timestamp_secs()}),
+        );
+    }
+
+    let status = kv_store::OracleStatus {
+        last_submission_time: if cached_prices.is_empty() {
+            None
+        } else {
+            Some(current_timestamp_secs())
+        },
+        keeper_balance_xlm: Some(balance_xlm),
+        tokens: cached_prices
+            .iter()
+            .map(|p| kv_store::TokenPrice {
+                symbol: p.symbol.clone(),
+                price: prices::compute_median(&[p.min, p.max]).unwrap_or(p.min),
+                min: p.min,
+                max: p.max,
+                timestamp: p.timestamp,
+                sources_used: p.sources_used.clone(),
+            })
+            .collect(),
+        recent_errors,
+    };
+    if let Err(e) = kv_store::store_oracle_status(&env, &status).await {
+        log::warn(
+            "kv_write_failed",
+            serde_json::json!({"key": "oracle_status", "error": e}),
         );
     }
 
@@ -464,7 +549,7 @@ async fn handle_failed_submissions(env: &Env) -> Result<axum::http::Response<axu
 }
 
 pub async fn root() -> &'static str {
-    "Hello Axum!"
+    "so4-oracle"
 }
 
 async fn handle_get_prices(env: &Env) -> Result<axum::http::Response<axum::body::Body>> {

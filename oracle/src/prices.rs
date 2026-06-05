@@ -90,7 +90,17 @@ pub fn filter_outliers(prices: &[i128], sources: &[String]) -> OutlierFilterResu
         sorted[sorted.len() / 2]
     };
 
-    // 2. Compute mean and standard deviation
+    // 2. Prefer median absolute deviation because a single bad source can
+    // inflate standard deviation enough to hide itself.
+    let mut deviations: Vec<i128> = prices.iter().map(|&p| (p - median).abs()).collect();
+    deviations.sort_unstable();
+    let mad = if deviations.len() % 2 == 0 {
+        (deviations[deviations.len() / 2 - 1] + deviations[deviations.len() / 2]) / 2
+    } else {
+        deviations[deviations.len() / 2]
+    };
+
+    // 3. Compute mean and standard deviation as a fallback for flat clusters.
     let sum: i128 = prices.iter().sum();
     let mean = sum as f64 / prices.len() as f64;
     let variance = prices
@@ -109,7 +119,13 @@ pub fn filter_outliers(prices: &[i128], sources: &[String]) -> OutlierFilterResu
 
     for (i, &p) in prices.iter().enumerate() {
         let dev = (p as f64 - median as f64).abs();
-        if stddev > 0.0 && dev > 3.0 * stddev {
+        let is_outlier = if mad > 0 {
+            dev > 6.0 * mad as f64
+        } else {
+            stddev > 0.0 && dev > 3.0 * stddev
+        };
+
+        if is_outlier {
             rejected.push((sources[i].clone(), p, dev));
         } else {
             filtered_prices.push(p);

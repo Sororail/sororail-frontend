@@ -20,7 +20,7 @@ where
         match f().await {
             Ok(val) => return Ok(val),
             Err(e) => {
-                worker::console_log!("[retry] attempt {attempt}/{max_attempts} failed: {e:?}");
+                log_retry_failure(attempt, max_attempts, &e);
                 last_err = Some(e);
                 if attempt < max_attempts {
                     sleep_ms(delay_ms).await;
@@ -33,19 +33,22 @@ where
     Err(last_err.expect("max_attempts must be > 0"))
 }
 
+#[cfg(target_arch = "wasm32")]
+fn log_retry_failure<E: std::fmt::Debug>(attempt: u32, max_attempts: u32, error: &E) {
+    worker::console_log!("[retry] attempt {attempt}/{max_attempts} failed: {error:?}");
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn log_retry_failure<E: std::fmt::Debug>(attempt: u32, max_attempts: u32, error: &E) {
+    eprintln!("[retry] attempt {attempt}/{max_attempts} failed: {error:?}");
+}
+
 /// Async sleep.  On WASM (Cloudflare Workers) this uses JS `setTimeout`;
 /// on native targets (unit tests) it is a no-op so tests run without delay.
 async fn sleep_ms(ms: u64) {
     #[cfg(target_arch = "wasm32")]
     {
-        use wasm_bindgen::prelude::*;
-        let promise = js_sys::Promise::new(&mut |resolve, _| {
-            web_sys::window()
-                .expect("no window")
-                .set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, ms as i32)
-                .unwrap();
-        });
-        let _ = wasm_bindgen_futures::JsFuture::from(promise).await;
+        worker::Delay::from(std::time::Duration::from_millis(ms)).await;
     }
     let _ = ms;
 }
