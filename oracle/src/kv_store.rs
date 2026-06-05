@@ -24,6 +24,7 @@ pub struct TokenPrice {
     pub min: i128,
     pub max: i128,
     pub timestamp: u64,
+    pub sources_used: Vec<String>,
 }
 
 const FAILED_SUBMISSIONS_KV_KEY: &str = "oracle:failed-submissions";
@@ -269,6 +270,7 @@ mod tests {
                 min: 44900,
                 max: 45100,
                 timestamp: 1234567890,
+                sources_used: vec!["binance".to_string(), "coinbase".to_string()],
             }],
             recent_errors: vec!["Network error".to_string()],
         };
@@ -291,6 +293,7 @@ mod tests {
             min: 2400,
             max: 2600,
             timestamp: 1234567890,
+            sources_used: vec!["binance".to_string()],
         };
 
         assert_eq!(token.symbol, "ETH");

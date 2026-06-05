@@ -1,13 +1,7 @@
-//! Shared token configuration for the so4-oracle workspace (Issue #165).
+//! Shared token configuration for the so4-oracle workspace.
 //!
-//! Both the `oracle` (Cloudflare Worker) and `apis` (Axum server) crates
-//! consume the same `TokenConfig` definition, eliminating the duplication
-//! that previously existed between `oracle::config` and `apis::config`.
-//!
-//! Loading precedence:
-//!   - **oracle (worker):** env var `PRICE_FEED_CONFIG` (JSON string) takes
-//!     priority; falls back to the bundled `tokens.json` file.
-//!   - **apis (server):** reads `config/tokens.json` from the filesystem.
+//! The oracle Worker consumes `TokenConfig` through `PRICE_FEED_CONFIG`.
+//! `config/tokens.json` remains as a checked-in example for local setup.
 
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -133,8 +127,7 @@ pub fn load_from_env_var(env_value: Option<&str>) -> Result<Option<Vec<TokenConf
 
 /// Load tokens from a JSON file on disk.
 pub fn load_from_file(path: &Path) -> Result<Vec<TokenConfig>, ConfigError> {
-    let raw = std::fs::read_to_string(path)
-        .map_err(|e| ConfigError::IoError(e.to_string()))?;
+    let raw = std::fs::read_to_string(path).map_err(|e| ConfigError::IoError(e.to_string()))?;
     parse_token_configs(&raw)
 }
 

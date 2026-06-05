@@ -3,7 +3,17 @@ main = "oracle/build/index.js"
 compatibility_date = "2026-05-12"
 
 [build]
-command = "cargo install -q \"worker-build@^0.8\" && cd oracle && worker-build --release --panic-unwind"
+command = "cd oracle && worker-build --release"
+
+[[kv_namespaces]]
+binding = "ORACLE_KV"
+id = "replace-with-production-kv-id"
+preview_id = "replace-with-preview-kv-id"
+
+[vars]
+STELLAR_NETWORK = "testnet"
+STELLAR_RPC_URL = "https://soroban-testnet.stellar.org"
+ORACLE_CONTRACT_ID = "CAH5Z3RD6UMR6RIDXT4ZGOC5SMDCQRA2T3FO4FJSOYZGQPWS77ZGTXUO"
 
 # Scheduled price-update trigger — runs every minute.
 # Adjust the cron expression to match the desired update frequency, e.g.:
