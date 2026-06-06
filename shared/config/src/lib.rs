@@ -15,8 +15,11 @@ use std::path::Path;
 ///   - `min`, `max`, `sources_used` — API price-lookup metadata
 #[derive(Debug, Clone, Deserialize, PartialEq)]
 pub struct TokenConfig {
-    /// Token symbol, e.g. "BTC", "ETH".  Used as the canonical key.
+    /// On-chain token symbol, e.g. "TWBTC", "TETH". Used as the canonical key.
     pub symbol: String,
+    /// External market symbol, e.g. "BTC", "ETH".
+    #[serde(default)]
+    pub display_symbol: Option<String>,
     /// Stellar contract address for the token.
     #[serde(default)]
     pub stellar_address: String,
@@ -26,9 +29,27 @@ pub struct TokenConfig {
     /// Optional Binance-specific symbol override (e.g. "BTCUSDT").
     #[serde(default)]
     pub binance_symbol: Option<String>,
+    /// Optional Coinbase-specific base currency override (e.g. "BTC").
+    #[serde(default)]
+    pub coinbase_symbol: Option<String>,
     /// Optional Pyth feed ID.
     #[serde(default)]
     pub pyth_feed_id: Option<String>,
+    /// Fixed price in 1e30 precision, encoded as a decimal integer string.
+    #[serde(default)]
+    pub fixed_price: Option<String>,
+    /// Minimum source count required after source fetches and outlier filtering.
+    #[serde(default)]
+    pub min_sources: Option<usize>,
+    /// Maximum allowed source deviation from the median in basis points.
+    #[serde(default)]
+    pub max_deviation_bps: Option<u32>,
+    /// Source freshness limit.
+    #[serde(default)]
+    pub stale_after_seconds: Option<u64>,
+    /// Minimum movement before on-chain submission, in basis points.
+    #[serde(default)]
+    pub submit_threshold_bps: Option<u32>,
     /// Minimum price bound (used by the API server for display).
     #[serde(default)]
     pub min: f64,
@@ -49,6 +70,26 @@ impl TokenConfig {
         } else {
             self.stellar_address.to_lowercase()
         }
+    }
+
+    pub fn display_symbol(&self) -> &str {
+        self.display_symbol.as_deref().unwrap_or(&self.symbol)
+    }
+
+    pub fn min_sources(&self) -> usize {
+        self.min_sources.unwrap_or(2)
+    }
+
+    pub fn max_deviation_bps(&self) -> u32 {
+        self.max_deviation_bps.unwrap_or(100)
+    }
+
+    pub fn stale_after_seconds(&self) -> u64 {
+        self.stale_after_seconds.unwrap_or(60)
+    }
+
+    pub fn submit_threshold_bps(&self) -> u32 {
+        self.submit_threshold_bps.unwrap_or(10)
     }
 }
 

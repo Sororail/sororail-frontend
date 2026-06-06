@@ -1,5 +1,6 @@
 #![allow(unused_must_use)]
 
+use axum::http::header::AUTHORIZATION;
 use axum::{routing::get, Router};
 use tower_service::Service;
 use worker::*;
@@ -8,7 +9,6 @@ pub mod binance;
 pub mod coinbase;
 pub mod config;
 pub mod keeper;
-pub mod kv_store;
 pub mod log;
 pub mod network_config;
 pub mod prices;
@@ -32,6 +32,43 @@ pub struct CachedPrice {
     pub signature: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TokenPrice {
+    pub token: String,
+    pub symbol: String,
+    pub price: i128,
+    pub min: i128,
+    pub max: i128,
+    pub timestamp: u64,
+    pub sources_used: Vec<String>,
+    pub onchain_status: String,
+    pub confirmed_ledger: Option<u32>,
+    pub tx_hash: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OracleStatus {
+    pub last_submission_time: Option<u64>,
+    pub last_onchain_submission_time: Option<u64>,
+    pub last_cache_update_time: Option<u64>,
+    pub network: String,
+    pub keeper_balance_xlm: Option<f64>,
+    pub tokens: Vec<TokenPrice>,
+    pub recent_errors: Vec<String>,
+    pub onchain_submission_supported: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LiveOracleSnapshot {
+    pub network: String,
+    pub keeper_balance_xlm: Option<f64>,
+    pub ledger_seq: Option<u32>,
+    pub timestamp: u64,
+    pub prices: Vec<CachedPrice>,
+    pub recent_errors: Vec<String>,
+    pub onchain_submission_supported: bool,
+}
+
 fn router() -> Router {
     Router::new().route("/", get(root))
 }
@@ -50,11 +87,52 @@ async fn fetch(
 ) -> Result<axum::http::Response<axum::body::Body>> {
     let path = req.uri().path().to_string();
     match path.as_str() {
-        "/keeper/balance" => handle_keeper_balance(&env).await,
-        "/oracle/status" => handle_oracle_status(&env).await,
-        "/oracle/failed-submissions" => handle_failed_submissions(&env).await,
+        "/health" => json_response(200, r#"{"status":"ok"}"#),
+        "/keeper/balance" => {
+            if let Err(resp) = require_admin(&req, &env) {
+                return Ok(resp);
+            }
+            handle_keeper_balance(&env).await
+        }
+        "/oracle/status" => {
+            if let Err(resp) = require_admin(&req, &env) {
+                return Ok(resp);
+            }
+            handle_oracle_status(&env).await
+        }
+        "/oracle/failed-submissions" => {
+            if let Err(resp) = require_admin(&req, &env) {
+                return Ok(resp);
+            }
+            handle_failed_submissions(&env).await
+        }
         "/prices" => handle_get_prices(&env).await,
         _ => Ok(router().call(req).await?),
+    }
+}
+
+fn require_admin(
+    req: &HttpRequest,
+    env: &Env,
+) -> std::result::Result<(), axum::http::Response<axum::body::Body>> {
+    let expected = match env.var("ADMIN_API_TOKEN") {
+        Ok(v) => v.to_string(),
+        Err(_) => {
+            return Err(json_error_response(
+                503,
+                "ADMIN_API_TOKEN is not configured",
+            ))
+        }
+    };
+    let actual = req
+        .headers()
+        .get(AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "));
+    if actual == Some(expected.as_str()) {
+        Ok(())
+    } else {
+        Err(json_error_response(401, "unauthorized"))
     }
 }
 
@@ -85,11 +163,23 @@ async fn handle_keeper_balance(env: &Env) -> Result<axum::http::Response<axum::b
 }
 
 fn json_error(status: u16, msg: &str) -> Result<axum::http::Response<axum::body::Body>> {
+    Ok(json_error_response(status, msg))
+}
+
+fn json_error_response(status: u16, msg: &str) -> axum::http::Response<axum::body::Body> {
     let body = format!(r#"{{"error":{msg:?}}}"#);
-    Ok(axum::http::Response::builder()
+    axum::http::Response::builder()
         .status(status)
         .header("Content-Type", "application/json")
         .body(axum::body::Body::from(body))
+        .unwrap()
+}
+
+fn json_response(status: u16, body: &str) -> Result<axum::http::Response<axum::body::Body>> {
+    Ok(axum::http::Response::builder()
+        .status(status)
+        .header("Content-Type", "application/json")
+        .body(axum::body::Body::from(body.to_string()))
         .unwrap())
 }
 
@@ -102,22 +192,49 @@ async fn scheduled(_event: ScheduledEvent, env: Env, _ctx: ScheduleContext) -> R
     use serde_json::json;
 
     let start_time = current_timestamp();
+    match collect_live_prices(&env, true).await {
+        Ok(snapshot) => {
+            let latency = current_timestamp() - start_time;
+            log::info(
+                "cycle_complete",
+                json!({
+                    "ledger_seq": snapshot.ledger_seq,
+                    "prices": snapshot.prices.len(),
+                    "errors": snapshot.recent_errors.len(),
+                    "latency_ms": latency,
+                    "storage": "stateless"
+                }),
+            );
+            Ok(())
+        }
+        Err(e) => {
+            log::error("cycle_failed", json!({"error": e}));
+            Err(Error::from(e))
+        }
+    }
+}
+
+async fn collect_live_prices(
+    env: &Env,
+    fund_low_balance: bool,
+) -> std::result::Result<LiveOracleSnapshot, String> {
+    use serde_json::json;
 
     // 1. Parse feed configuration.
-    let feed_cfg = match config::load_from_env(&env) {
+    let feed_cfg = match config::load_from_env(env) {
         Ok(cfg) => cfg,
         Err(e) => {
             log::error("config_error", json!({"error": e.to_string()}));
-            return Err(Error::from(e.to_string()));
+            return Err(e.to_string());
         }
     };
 
     // 2. Load network config.
-    let net_cfg = match network_config::load_network_config(&env) {
+    let net_cfg = match network_config::load_network_config(env) {
         Ok(cfg) => cfg,
         Err(e) => {
             log::error("network_config_error", json!({"error": e.to_string()}));
-            return Err(Error::from(e.to_string()));
+            return Err(e.to_string());
         }
     };
 
@@ -131,11 +248,11 @@ async fn scheduled(_event: ScheduledEvent, env: Env, _ctx: ScheduleContext) -> R
 
     // 3. Check keeper balance.
     let horizon_url = default_horizon_url(&net_cfg.network);
-    let keeper_cfg = match keeper::load_keeper_config(&env, horizon_url) {
+    let keeper_cfg = match keeper::load_keeper_config(env, horizon_url) {
         Ok(cfg) => cfg,
         Err(e) => {
             log::error("keeper_config_error", json!({"error": e.to_string()}));
-            return Err(Error::from(e));
+            return Err(e);
         }
     };
 
@@ -143,7 +260,7 @@ async fn scheduled(_event: ScheduledEvent, env: Env, _ctx: ScheduleContext) -> R
         Ok(b) => b,
         Err(e) => {
             log::error("balance_check_error", json!({"error": e.to_string()}));
-            return Err(Error::from(e.to_string()));
+            return Err(e.to_string());
         }
     };
 
@@ -151,7 +268,7 @@ async fn scheduled(_event: ScheduledEvent, env: Env, _ctx: ScheduleContext) -> R
     if balance_xlm < keeper_cfg.min_balance_xlm {
         // Issue #120 — auto-fund on testnet; alert-only on mainnet.
         match net_cfg.network {
-            StellarNetwork::Testnet => {
+            StellarNetwork::Testnet if fund_low_balance => {
                 log::warn(
                     "low_balance_funding",
                     json!({
@@ -168,7 +285,26 @@ async fn scheduled(_event: ScheduledEvent, env: Env, _ctx: ScheduleContext) -> R
                     Err(e) => log::error("friendbot_failed", json!({"error": e})),
                 }
                 // Skip this cycle — balance will be confirmed on next cron tick.
-                return Ok(());
+                return Ok(LiveOracleSnapshot {
+                    network: format!("{:?}", net_cfg.network).to_lowercase(),
+                    keeper_balance_xlm: Some(balance_xlm),
+                    ledger_seq: None,
+                    timestamp: current_timestamp_secs(),
+                    prices: vec![],
+                    recent_errors: vec![
+                        "keeper balance below minimum; funding requested".to_string()
+                    ],
+                    onchain_submission_supported: false,
+                });
+            }
+            StellarNetwork::Testnet => {
+                log::warn(
+                    "low_balance",
+                    json!({
+                        "balance_xlm": balance_xlm,
+                        "min_balance_xlm": keeper_cfg.min_balance_xlm
+                    }),
+                );
             }
             StellarNetwork::Mainnet => {
                 log::error(
@@ -179,7 +315,10 @@ async fn scheduled(_event: ScheduledEvent, env: Env, _ctx: ScheduleContext) -> R
                         "action": "manual_top_up_required"
                     }),
                 );
-                return Ok(());
+                return Err(format!(
+                    "keeper balance below minimum: {balance_xlm:.7} XLM < {:.7} XLM",
+                    keeper_cfg.min_balance_xlm
+                ));
             }
         }
     }
@@ -189,7 +328,7 @@ async fn scheduled(_event: ScheduledEvent, env: Env, _ctx: ScheduleContext) -> R
         Ok(seq) => seq,
         Err(e) => {
             log::error("ledger_fetch_error", json!({"error": e.to_string()}));
-            return Err(Error::from(e.to_string()));
+            return Err(e.to_string());
         }
     };
 
@@ -240,9 +379,29 @@ async fn scheduled(_event: ScheduledEvent, env: Env, _ctx: ScheduleContext) -> R
                         }
                     }
                 }
+                "fixed" => {
+                    if let Some(raw) = &token.fixed_price {
+                        match raw.parse::<i128>() {
+                            Ok(price) if price > 0 => {
+                                token_prices.push(price);
+                                sources_used.push("fixed".to_string());
+                            }
+                            _ => log::error(
+                                "fixed_price_error",
+                                json!({"token": token.symbol.clone(), "price": raw}),
+                            ),
+                        }
+                    }
+                }
                 "pyth" => {
                     if let Some(feed_id) = &token.pyth_feed_id {
-                        match pyth::fetch_pyth_price(feed_id).await {
+                        match pyth::fetch_pyth_price(
+                            feed_id,
+                            token.stale_after_seconds(),
+                            token.max_deviation_bps(),
+                        )
+                        .await
+                        {
                             Ok(price) => {
                                 token_prices.push(price);
                                 sources_used.push("pyth".to_string());
@@ -257,9 +416,13 @@ async fn scheduled(_event: ScheduledEvent, env: Env, _ctx: ScheduleContext) -> R
                     }
                 }
                 "coinbase" => {
+                    let symbol = token
+                        .coinbase_symbol
+                        .clone()
+                        .unwrap_or_else(|| token.display_symbol().to_string());
                     match retry::retry_with_backoff(
                         || {
-                            let sym = token.symbol.clone();
+                            let sym = symbol.clone();
                             async move { coinbase::fetch_spot_price(&sym).await }
                         },
                         3,
@@ -296,15 +459,16 @@ async fn scheduled(_event: ScheduledEvent, env: Env, _ctx: ScheduleContext) -> R
 
     if all_prices.is_empty() {
         log::error("no_prices_fetched", json!({}));
-        return Ok(());
+        return Ok(LiveOracleSnapshot {
+            network: format!("{:?}", net_cfg.network).to_lowercase(),
+            keeper_balance_xlm: Some(balance_xlm),
+            ledger_seq: Some(ledger_seq),
+            timestamp: current_timestamp_secs(),
+            prices: vec![],
+            recent_errors: vec!["no prices fetched".to_string()],
+            onchain_submission_supported: false,
+        });
     }
-
-    // 6. Apply circuit breaker checks.
-    let threshold_percent: f64 = env
-        .var("PRICE_MOVEMENT_THRESHOLD")
-        .ok()
-        .and_then(|v| v.to_string().parse().ok())
-        .unwrap_or(10.0);
 
     let mut cached_prices: Vec<CachedPrice> = Vec::new();
     let mut recent_errors: Vec<String> = Vec::new();
@@ -315,89 +479,45 @@ async fn scheduled(_event: ScheduledEvent, env: Env, _ctx: ScheduleContext) -> R
                 continue;
             }
 
-            if token_prices.prices.len() < 2 {
-                log::warn(
-                    "insufficient_sources",
-                    json!({"token": token.symbol.clone(), "sources_count": token_prices.prices.len()}),
-                );
-                recent_errors.push(format!(
-                    "{}: insufficient sources ({})",
-                    token.symbol,
-                    token_prices.prices.len()
-                ));
-                continue;
-            }
+            let aggregated = match prices::aggregate_prices(
+                &token_prices.prices,
+                &token_prices.sources,
+                token.min_sources(),
+                token.max_deviation_bps(),
+            ) {
+                Ok(aggregated) => aggregated,
+                Err(e) => {
+                    log::warn(
+                        "aggregation_failed",
+                        json!({"token": token.symbol.clone(), "error": e}),
+                    );
+                    recent_errors.push(format!("{}: {}", token.symbol, e));
+                    continue;
+                }
+            };
 
-            // 6a. Filter outliers > 3σ from median
-            let filter_result =
-                prices::filter_outliers(&token_prices.prices, &token_prices.sources);
-
-            for (src, price, dev) in &filter_result.rejected {
+            for rejected in &aggregated.rejected_sources {
                 log::error(
                     "outlier_rejected",
-                    json!({"token": token.symbol.clone(), "source": src, "price": price, "deviation": dev}),
+                    json!({
+                        "token": token.symbol.clone(),
+                        "source": rejected.source,
+                        "price": rejected.price,
+                        "deviation_bps": rejected.deviation_bps
+                    }),
                 );
                 recent_errors.push(format!(
                     "{}: rejected outlier from {} at {}",
-                    token.symbol, src, price
+                    token.symbol, rejected.source, rejected.price
                 ));
             }
 
-            if filter_result.filtered_prices.is_empty() {
-                log::error(
-                    "all_sources_rejected_as_outliers",
-                    json!({"token": token.symbol.clone()}),
-                );
-                recent_errors.push(format!(
-                    "{}: all sources rejected as outliers",
-                    token.symbol
-                ));
-                continue;
-            }
+            let min = aggregated.min;
+            let max = aggregated.max;
 
-            let aggregated = prices::compute_confidence_interval(&filter_result.filtered_prices);
-            let (min, max) = match aggregated {
-                Some(props) => (props.min, props.max),
-                None => continue,
-            };
-
-            let median = prices::compute_median(&filter_result.filtered_prices).unwrap();
-
-            let last_price = kv_store::get_last_submitted_price(&env, &token.symbol)
-                .await
-                .ok()
-                .flatten();
-
-            let blocked = if let Some(last) = last_price {
-                let percent_change = ((median as f64 - last as f64) / last as f64).abs() * 100.0;
-                if percent_change > threshold_percent {
-                    log::error(
-                        "price_movement_exceeded",
-                        json!({"token": token.symbol.clone(), "old_price": last, "new_price": median, "percent_change": percent_change}),
-                    );
-                    recent_errors.push(format!(
-                        "{}: movement {:.2}% exceeded {:.2}% threshold",
-                        token.symbol, percent_change, threshold_percent
-                    ));
-                    true
-                } else {
-                    false
-                }
-            } else {
-                false
-            };
-
-            if !blocked {
-                if let Err(e) =
-                    kv_store::store_last_submitted_price(&env, &token.symbol, median).await
-                {
-                    log::warn(
-                        "kv_write_failed",
-                        serde_json::json!({"key": "last_price", "token": token.symbol, "error": e}),
-                    );
-                }
+            {
                 let timestamp = current_timestamp_secs();
-                let signature = match signing::get_keeper_private_key(&env) {
+                let signature = match signing::get_keeper_private_key(env) {
                     Ok(private_key) => match signing::sign_price(
                         &private_key,
                         &net_cfg.passphrase,
@@ -410,15 +530,20 @@ async fn scheduled(_event: ScheduledEvent, env: Env, _ctx: ScheduleContext) -> R
                         Ok(sig) => hex::encode(sig.to_bytes()),
                         Err(e) => {
                             recent_errors.push(format!("{}: signing failed: {}", token.symbol, e));
-                            if let Err(store_err) =
-                                kv_store::store_failed_submission(&env, min, max, &e.to_string())
-                                    .await
-                            {
-                                log::warn(
-                                    "kv_write_failed",
-                                    serde_json::json!({"key": "failed_submission", "token": token.symbol, "error": store_err}),
-                                );
-                            }
+                            log::error(
+                                "signing_failed",
+                                json!({
+                                    "network": format!("{:?}", net_cfg.network).to_lowercase(),
+                                    "token": token.stellar_address.clone(),
+                                    "symbol": token.symbol.clone(),
+                                    "min": min,
+                                    "max": max,
+                                    "timestamp": timestamp,
+                                    "error": e.to_string(),
+                                    "sources_used": aggregated.sources_used.clone(),
+                                    "ledger_seq": ledger_seq
+                                }),
+                            );
                             continue;
                         }
                     },
@@ -433,61 +558,27 @@ async fn scheduled(_event: ScheduledEvent, env: Env, _ctx: ScheduleContext) -> R
                     min,
                     max,
                     timestamp,
-                    sources_used: filter_result.filtered_sources.clone(),
+                    sources_used: aggregated.sources_used.clone(),
                     signature,
                 });
             }
         }
     }
 
-    // 7. Cache the prices.
-    if !cached_prices.is_empty() {
-        if let Err(e) = kv_store::store_cached_prices(&env, &cached_prices).await {
-            log::warn(
-                "kv_write_failed",
-                serde_json::json!({"key": "cached_prices", "error": e}),
-            );
-        }
-        log::info(
-            "prices_cached",
-            json!({"count": cached_prices.len(), "timestamp": current_timestamp_secs()}),
-        );
-    }
-
-    let status = kv_store::OracleStatus {
-        last_submission_time: if cached_prices.is_empty() {
-            None
-        } else {
-            Some(current_timestamp_secs())
-        },
-        keeper_balance_xlm: Some(balance_xlm),
-        tokens: cached_prices
-            .iter()
-            .map(|p| kv_store::TokenPrice {
-                symbol: p.symbol.clone(),
-                price: prices::compute_median(&[p.min, p.max]).unwrap_or(p.min),
-                min: p.min,
-                max: p.max,
-                timestamp: p.timestamp,
-                sources_used: p.sources_used.clone(),
-            })
-            .collect(),
-        recent_errors,
-    };
-    if let Err(e) = kv_store::store_oracle_status(&env, &status).await {
-        log::warn(
-            "kv_write_failed",
-            serde_json::json!({"key": "oracle_status", "error": e}),
-        );
-    }
-
-    let latency = current_timestamp() - start_time;
     log::info(
-        "cycle_complete",
-        json!({"ledger_seq": ledger_seq, "prices_cached": cached_prices.len(), "latency_ms": latency}),
+        "prices_collected",
+        json!({"ledger_seq": ledger_seq, "prices": cached_prices.len(), "storage": "stateless"}),
     );
 
-    Ok(())
+    Ok(LiveOracleSnapshot {
+        network: format!("{:?}", net_cfg.network).to_lowercase(),
+        keeper_balance_xlm: Some(balance_xlm),
+        ledger_seq: Some(ledger_seq),
+        timestamp: current_timestamp_secs(),
+        prices: cached_prices,
+        recent_errors,
+        onchain_submission_supported: false,
+    })
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -519,8 +610,9 @@ fn current_timestamp_secs() -> u64 {
 }
 
 async fn handle_oracle_status(env: &Env) -> Result<axum::http::Response<axum::body::Body>> {
-    match kv_store::get_oracle_status(env).await {
-        Ok(status) => {
+    match collect_live_prices(env, false).await {
+        Ok(snapshot) => {
+            let status = snapshot_to_status(snapshot);
             let body = serde_json::to_string(&status)
                 .unwrap_or_else(|_| r#"{"error":"serialization failed"}"#.to_string());
             Ok(axum::http::Response::builder()
@@ -534,9 +626,40 @@ async fn handle_oracle_status(env: &Env) -> Result<axum::http::Response<axum::bo
 }
 
 async fn handle_failed_submissions(env: &Env) -> Result<axum::http::Response<axum::body::Body>> {
-    match kv_store::get_failed_submissions(env).await {
-        Ok(submissions) => {
-            let body = serde_json::to_string(&submissions)
+    let net_cfg = match network_config::load_network_config(env) {
+        Ok(c) => c,
+        Err(e) => return json_error(503, &e.to_string()),
+    };
+    let body = serde_json::json!({
+        "network": format!("{:?}", net_cfg.network).to_lowercase(),
+        "submissions": [],
+        "storage": "stateless",
+        "message": "failed submissions are emitted to Worker logs; KV persistence is disabled"
+    })
+    .to_string();
+    Ok(axum::http::Response::builder()
+        .status(200)
+        .header("Content-Type", "application/json")
+        .body(axum::body::Body::from(body))
+        .unwrap())
+}
+
+pub async fn root() -> &'static str {
+    "so4-oracle"
+}
+
+async fn handle_get_prices(env: &Env) -> Result<axum::http::Response<axum::body::Body>> {
+    match collect_live_prices(env, false).await {
+        Ok(snapshot) => {
+            if snapshot.prices.is_empty() {
+                let body = r#"{"error":"no_prices","reason":"live_fetch_empty"}"#;
+                return Ok(axum::http::Response::builder()
+                    .status(503)
+                    .header("Content-Type", "application/json")
+                    .body(axum::body::Body::from(body))
+                    .unwrap());
+            }
+            let body = serde_json::to_string(&snapshot.prices)
                 .unwrap_or_else(|_| r#"{"error":"serialization failed"}"#.to_string());
             Ok(axum::http::Response::builder()
                 .status(200)
@@ -548,37 +671,36 @@ async fn handle_failed_submissions(env: &Env) -> Result<axum::http::Response<axu
     }
 }
 
-pub async fn root() -> &'static str {
-    "so4-oracle"
-}
-
-async fn handle_get_prices(env: &Env) -> Result<axum::http::Response<axum::body::Body>> {
-    match kv_store::get_cached_prices(env).await {
-        Ok(prices) => {
-            if prices.is_empty() {
-                let body = r#"{"error":"no_prices","reason":"cache_empty"}"#;
-                return Ok(axum::http::Response::builder()
-                    .status(503)
-                    .header("Content-Type", "application/json")
-                    .body(axum::body::Body::from(body))
-                    .unwrap());
-            }
-            let body = serde_json::to_string(&prices)
-                .unwrap_or_else(|_| r#"{"error":"serialization failed"}"#.to_string());
-            Ok(axum::http::Response::builder()
-                .status(200)
-                .header("Content-Type", "application/json")
-                .body(axum::body::Body::from(body))
-                .unwrap())
-        }
-        Err(_) => {
-            let body = r#"{"error":"no_prices","reason":"cache_empty"}"#;
-            Ok(axum::http::Response::builder()
-                .status(503)
-                .header("Content-Type", "application/json")
-                .body(axum::body::Body::from(body))
-                .unwrap())
-        }
+fn snapshot_to_status(snapshot: LiveOracleSnapshot) -> OracleStatus {
+    let last_update_time = if snapshot.prices.is_empty() {
+        None
+    } else {
+        Some(snapshot.timestamp)
+    };
+    OracleStatus {
+        last_submission_time: last_update_time,
+        last_onchain_submission_time: None,
+        last_cache_update_time: None,
+        network: snapshot.network,
+        keeper_balance_xlm: snapshot.keeper_balance_xlm,
+        tokens: snapshot
+            .prices
+            .iter()
+            .map(|p| TokenPrice {
+                token: p.token.clone(),
+                symbol: p.symbol.clone(),
+                price: prices::compute_median_allow_single(&[p.min, p.max]).unwrap_or(p.min),
+                min: p.min,
+                max: p.max,
+                timestamp: p.timestamp,
+                sources_used: p.sources_used.clone(),
+                onchain_status: "live_only_tx_builder_not_configured".to_string(),
+                confirmed_ledger: None,
+                tx_hash: None,
+            })
+            .collect(),
+        recent_errors: snapshot.recent_errors,
+        onchain_submission_supported: snapshot.onchain_submission_supported,
     }
 }
 

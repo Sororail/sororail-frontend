@@ -1,7 +1,7 @@
 use serde::Deserialize;
 use worker::{Fetch, Url};
 
-pub const BINANCE_TICKER_PRICE_URL: &str = "https://api.binance.com/api/v3/ticker/price";
+pub const BINANCE_TICKER_PRICE_URL: &str = "https://data-api.binance.vision/api/v3/ticker/price";
 pub const FLOAT_PRECISION: i128 = 1_000_000_000_000_000_000_000_000_000_000;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -18,12 +18,23 @@ pub struct BinanceTickerEntry {
     pub price: String,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum BinanceTickerResponse {
+    Single(BinanceTickerEntry),
+    Many(Vec<BinanceTickerEntry>),
+}
+
 pub fn parse_ticker_response_body(
     body: &str,
     symbols: &[String],
 ) -> Result<Vec<(String, i128)>, BinancePriceError> {
-    let entries: Vec<BinanceTickerEntry> =
+    let response: BinanceTickerResponse =
         serde_json::from_str(body).map_err(|err| BinancePriceError::JsonError(err.to_string()))?;
+    let entries = match response {
+        BinanceTickerResponse::Single(entry) => vec![entry],
+        BinanceTickerResponse::Many(entries) => entries,
+    };
 
     let mut results = Vec::new();
     for symbol in symbols {
@@ -58,8 +69,13 @@ pub fn parse_ticker_http_result(
 pub async fn fetch_spot_prices(
     symbols: &[String],
 ) -> Result<Vec<(String, i128)>, BinancePriceError> {
-    let binance_url = Url::parse(BINANCE_TICKER_PRICE_URL)
-        .map_err(|err| BinancePriceError::NetworkError(err.to_string()))?;
+    let url = if symbols.len() == 1 {
+        format!("{}?symbol={}", BINANCE_TICKER_PRICE_URL, symbols[0])
+    } else {
+        BINANCE_TICKER_PRICE_URL.to_string()
+    };
+    let binance_url =
+        Url::parse(&url).map_err(|err| BinancePriceError::NetworkError(err.to_string()))?;
     let mut response = Fetch::Url(binance_url)
         .send()
         .await
@@ -158,6 +174,19 @@ mod tests {
         assert_eq!(parsed.len(), 1);
         assert_eq!(parsed[0].0, "ETHUSDT".to_string());
         assert_eq!(parsed[0].1, 10 * FLOAT_PRECISION + (FLOAT_PRECISION / 2));
+    }
+
+    #[test]
+    fn parse_single_ticker_response() {
+        let body = r#"{"symbol":"BTCUSDT","price":"60733.99000000"}"#;
+        let symbols = vec!["BTCUSDT".to_string()];
+        let parsed = parse_ticker_response_body(body, &symbols).unwrap();
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0].0, "BTCUSDT".to_string());
+        assert_eq!(
+            parsed[0].1,
+            60733 * FLOAT_PRECISION + 99 * (FLOAT_PRECISION / 100)
+        );
     }
 
     #[test]
