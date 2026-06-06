@@ -11,9 +11,9 @@ removed so the remaining build surface is the scheduled keeper.
 Testnet oracle:
 
 ```text
-ORACLE=CAH5Z3RD6UMR6RIDXT4ZGOC5SMDCQRA2T3FO4FJSOYZGQPWS77ZGTXUO
-ROLE_STORE=CB3XTQXIZMPDMJYPTZKWD6W2AI6HBXXPGO2DC3XOC7NQU4A2NUA327NA
-DATA_STORE=CCJ3PT3DEQ6CYQND2OU3ORLYYCEYHHSPBWBZNG2NTGGMW3DSOAXVTUT2
+ORACLE=CBABE5O7QJMXT2I42KHUV7ESNER3Z2BGJCF2QRKWMKVTCBEYFQNHV3J6
+ROLE_STORE=CBSUAIAMIFFS4AXQYZ7KR7FNO7IMKAPS5WF4DXANVXDTPKH2F7YUIN6Q
+DATA_STORE=CCZ3VKBEDLNBO2JM3EXL3SNBDJOV5BTN52FVQPER7F6D5GCE53PITQ3J
 ADMIN=GAUHMCMUP5FZO5675W3ISZ6E6CNYJGXBUW5WANE2JR4TGAARYCTSCBKI
 NETWORK=testnet
 ```
@@ -26,16 +26,16 @@ Contract source reference lives outside this repo at:
 
 ## What The Keeper Does
 
-- Loads token feed config from `PRICE_FEED_CONFIG`.
+- Loads token feed config from `PRICE_FEED_CONFIG`, falling back to `config/tokens.json`.
 - Fetches prices from Binance, Coinbase, and Pyth per token config.
 - Filters outliers and computes a min/max price band.
-- Applies a movement circuit breaker against the last submitted price in KV.
-- Caches current prices and status in Cloudflare KV.
+- Signs live price payloads without writing to Cloudflare KV.
 - Exposes small operational endpoints:
-  - `GET /prices`
-  - `GET /oracle/status`
-  - `GET /oracle/failed-submissions`
-  - `GET /keeper/balance`
+  - `GET /prices` (live, on-demand)
+  - `GET /health`
+  - `GET /oracle/status` (live, on-demand; requires admin bearer token)
+  - `GET /oracle/failed-submissions` (log-only notice; requires admin bearer token)
+  - `GET /keeper/balance` (requires admin bearer token)
 
 ## Required Worker Configuration
 
@@ -44,6 +44,7 @@ Secrets:
 ```bash
 wrangler secret put KEEPER_PRIVATE_KEY
 wrangler secret put KEEPER_ACCOUNT_ID
+wrangler secret put ADMIN_API_TOKEN
 wrangler secret put PRICE_FEED_CONFIG
 ```
 
@@ -52,10 +53,10 @@ Variables are defined in `wrangler.toml` for testnet defaults:
 ```text
 STELLAR_NETWORK=testnet
 STELLAR_RPC_URL=https://soroban-testnet.stellar.org
-ORACLE_CONTRACT_ID=CAH5Z3RD6UMR6RIDXT4ZGOC5SMDCQRA2T3FO4FJSOYZGQPWS77ZGTXUO
+ORACLE_CONTRACT_ID=CBABE5O7QJMXT2I42KHUV7ESNER3Z2BGJCF2QRKWMKVTCBEYFQNHV3J6
 ```
 
-`ORACLE_KV` must be bound to a real Cloudflare KV namespace before deployment.
+No KV namespace is required. The Worker is stateless; failures and diagnostics are emitted to Worker logs.
 
 ## Development
 

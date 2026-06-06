@@ -53,7 +53,7 @@ struct GetLatestLedgerResult {
     id: String,
     #[serde(rename = "protocolVersion")]
     #[allow(dead_code)]
-    protocol_version: String,
+    protocol_version: serde_json::Value,
 }
 
 /// Parse the raw JSON body returned by a `getLatestLedger` RPC call.
@@ -87,7 +87,7 @@ pub async fn get_latest_ledger_sequence(rpc_url: &str) -> Result<u32, RpcError> 
         jsonrpc: "2.0",
         id: 1,
         method: "getLatestLedger",
-        params: serde_json::Value::Array(vec![]),
+        params: serde_json::Value::Object(serde_json::Map::new()),
     })
     .map_err(|e| RpcError::JsonError(e.to_string()))?;
 
@@ -200,7 +200,7 @@ mod tests {
     fn parse_valid_latest_ledger_response() {
         let body = r#"{
             "jsonrpc":"2.0","id":1,
-            "result":{"id":"abc123","sequence":12345,"protocolVersion":"22"}
+            "result":{"id":"abc123","sequence":12345,"protocolVersion":22}
         }"#;
         assert_eq!(parse_latest_ledger_response(body).unwrap(), 12345u32);
     }

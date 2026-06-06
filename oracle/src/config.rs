@@ -42,6 +42,45 @@ pub fn parse_price_feed_config(raw: &str) -> Result<PriceFeedConfig, ConfigError
                     reason: "source names must not be empty strings".to_string(),
                 });
             }
+            match source.as_str() {
+                "binance" if token.binance_symbol.is_none() => {
+                    return Err(ConfigError::InvalidToken {
+                        symbol: token.symbol.clone(),
+                        reason: "binance_symbol is required for binance source".to_string(),
+                    });
+                }
+                "coinbase" if token.coinbase_symbol.is_none() => {
+                    return Err(ConfigError::InvalidToken {
+                        symbol: token.symbol.clone(),
+                        reason: "coinbase_symbol is required for coinbase source".to_string(),
+                    });
+                }
+                "pyth" if token.pyth_feed_id.is_none() => {
+                    return Err(ConfigError::InvalidToken {
+                        symbol: token.symbol.clone(),
+                        reason: "pyth_feed_id is required for pyth source".to_string(),
+                    });
+                }
+                "fixed" if token.fixed_price.is_none() => {
+                    return Err(ConfigError::InvalidToken {
+                        symbol: token.symbol.clone(),
+                        reason: "fixed_price is required for fixed source".to_string(),
+                    });
+                }
+                "binance" | "coinbase" | "pyth" | "fixed" => {}
+                other => {
+                    return Err(ConfigError::InvalidToken {
+                        symbol: token.symbol.clone(),
+                        reason: format!("unsupported source '{other}'"),
+                    });
+                }
+            }
+        }
+        if token.min_sources() == 0 {
+            return Err(ConfigError::InvalidToken {
+                symbol: token.symbol.clone(),
+                reason: "min_sources must be greater than zero".to_string(),
+            });
         }
     }
 
@@ -52,8 +91,8 @@ pub fn parse_price_feed_config(raw: &str) -> Result<PriceFeedConfig, ConfigError
 pub fn load_from_env(env: &worker::Env) -> Result<PriceFeedConfig, ConfigError> {
     let raw = env
         .var(ENV_KEY)
-        .map_err(|_| ConfigError::MissingEnvVar)?
-        .to_string();
+        .map(|v| v.to_string())
+        .unwrap_or_else(|_| include_str!("../../config/tokens.json").to_string());
     parse_price_feed_config(&raw)
 }
 
@@ -62,8 +101,8 @@ mod tests {
     use super::*;
 
     const VALID_JSON: &str = r#"[
-        {"symbol":"BTC","stellar_address":"CBTCADDR","sources":["binance","coinbase"]},
-        {"symbol":"ETH","stellar_address":"CETHADDR","sources":["binance"]}
+        {"symbol":"BTC","stellar_address":"CBTCADDR","sources":["binance","coinbase"],"binance_symbol":"BTCUSDT","coinbase_symbol":"BTC"},
+        {"symbol":"ETH","stellar_address":"CETHADDR","sources":["binance"],"binance_symbol":"ETHUSDT"}
     ]"#;
 
     #[test]
@@ -90,14 +129,14 @@ mod tests {
 
     #[test]
     fn reject_token_with_empty_symbol() {
-        let json = r#"[{"symbol":"","stellar_address":"CADDR","sources":["binance"]}]"#;
+        let json = r#"[{"symbol":"","stellar_address":"CADDR","sources":["binance"],"binance_symbol":"BTCUSDT"}]"#;
         let err = parse_price_feed_config(json).unwrap_err();
         assert!(matches!(err, ConfigError::InvalidToken { .. }));
     }
 
     #[test]
     fn reject_token_with_empty_stellar_address() {
-        let json = r#"[{"symbol":"BTC","stellar_address":"","sources":["binance"]}]"#;
+        let json = r#"[{"symbol":"BTC","stellar_address":"","sources":["binance"],"binance_symbol":"BTCUSDT"}]"#;
         let err = parse_price_feed_config(json).unwrap_err();
         assert!(matches!(
             err,
@@ -118,11 +157,29 @@ mod tests {
     #[test]
     fn per_token_source_list_preserved() {
         let json = r#"[
-            {"symbol":"BTC","stellar_address":"CBADDR","sources":["binance"]},
-            {"symbol":"ETH","stellar_address":"CEADDR","sources":["coinbase"]}
+            {"symbol":"BTC","stellar_address":"CBADDR","sources":["binance"],"binance_symbol":"BTCUSDT"},
+            {"symbol":"ETH","stellar_address":"CEADDR","sources":["coinbase"],"coinbase_symbol":"ETH"}
         ]"#;
         let cfg = parse_price_feed_config(json).unwrap();
         assert_eq!(cfg.tokens[0].sources, vec!["binance"]);
         assert_eq!(cfg.tokens[1].sources, vec!["coinbase"]);
+    }
+
+    #[test]
+    fn reject_missing_coinbase_symbol() {
+        let json = r#"[{"symbol":"TWBTC","stellar_address":"CADDR","sources":["coinbase"]}]"#;
+        let err = parse_price_feed_config(json).unwrap_err();
+        assert!(matches!(err, ConfigError::InvalidToken { .. }));
+    }
+
+    #[test]
+    fn parse_current_testnet_shape() {
+        let json = r#"[
+            {"symbol":"TUSDC","display_symbol":"USDC","stellar_address":"CBAN5YU3KRDKPTQ2H76D6S7HQFPRBGUD524F65BUM2RQCITPTRLKWKES","sources":["fixed"],"fixed_price":"1000000000000000000000000000000","min_sources":1},
+            {"symbol":"TWBTC","display_symbol":"BTC","stellar_address":"CCFTOPHUPSUDO2MB4X5D3XYJ2HRJ7NJPAW4UVPAVN7ZLE63EZLSMXDUO","sources":["binance","coinbase","pyth"],"binance_symbol":"BTCUSDT","coinbase_symbol":"BTC","pyth_feed_id":"e62df6c8b4a85fe1a67db44dc12de5db330f7ac66b72dc658afedf0f4a415b43","min_sources":2}
+        ]"#;
+        let cfg = parse_price_feed_config(json).unwrap();
+        assert_eq!(cfg.tokens[0].display_symbol(), "USDC");
+        assert_eq!(cfg.tokens[1].coinbase_symbol.as_deref(), Some("BTC"));
     }
 }

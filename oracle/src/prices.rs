@@ -11,14 +11,89 @@ pub struct PriceProps {
     pub max: i128,
 }
 
-/// Compute the price spread from a slice of raw source prices.
-///
-/// With at least `MIN_SOURCES_FOR_PERCENTILE` (3) sources the spread is the
-/// 10th-to-90th percentile range.  With fewer sources a ±1% equal spread
-/// around the median is used as a fallback.
-///
-/// Returns `None` when `prices` is empty.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RejectedSource {
+    pub source: String,
+    pub price: i128,
+    pub deviation_bps: f64,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct AggregatedPrice {
+    pub min: i128,
+    pub max: i128,
+    pub median: i128,
+    pub sources_used: Vec<String>,
+    pub rejected_sources: Vec<RejectedSource>,
+}
+
+pub fn aggregate_prices(
+    prices: &[i128],
+    sources: &[String],
+    min_sources: usize,
+    max_deviation_bps: u32,
+) -> Result<AggregatedPrice, String> {
+    if prices.len() != sources.len() {
+        return Err("prices and sources length mismatch".to_string());
+    }
+    if prices.len() < min_sources {
+        return Err(format!(
+            "insufficient sources: got {}, need {}",
+            prices.len(),
+            min_sources
+        ));
+    }
+
+    let median = compute_median_allow_single(prices)
+        .ok_or_else(|| "cannot aggregate empty price list".to_string())?;
+    let mut filtered_prices = Vec::new();
+    let mut filtered_sources = Vec::new();
+    let mut rejected_sources = Vec::new();
+
+    for (price, source) in prices.iter().zip(sources.iter()) {
+        let deviation_bps = deviation_bps(*price, median);
+        if deviation_bps > max_deviation_bps as f64 {
+            rejected_sources.push(RejectedSource {
+                source: source.clone(),
+                price: *price,
+                deviation_bps,
+            });
+        } else {
+            filtered_prices.push(*price);
+            filtered_sources.push(source.clone());
+        }
+    }
+
+    if filtered_prices.len() < min_sources {
+        return Err(format!(
+            "insufficient sources after filtering: got {}, need {}",
+            filtered_prices.len(),
+            min_sources
+        ));
+    }
+
+    let props = compute_confidence_interval_with_spread(&filtered_prices, max_deviation_bps)
+        .ok_or_else(|| "cannot compute confidence interval".to_string())?;
+    let median = compute_median_allow_single(&filtered_prices).unwrap_or(props.min);
+
+    Ok(AggregatedPrice {
+        min: props.min,
+        max: props.max,
+        median,
+        sources_used: filtered_sources,
+        rejected_sources,
+    })
+}
+
 pub fn compute_confidence_interval(prices: &[i128]) -> Option<PriceProps> {
+    compute_confidence_interval_with_spread(prices, 100)
+}
+
+/// Compute the price spread from a slice of raw source prices.
+pub fn compute_confidence_interval_with_spread(
+    prices: &[i128],
+    spread_bps: u32,
+) -> Option<PriceProps> {
     if prices.is_empty() {
         return None;
     }
@@ -31,9 +106,8 @@ pub fn compute_confidence_interval(prices: &[i128]) -> Option<PriceProps> {
         let max = percentile(&sorted, 90);
         Some(PriceProps { min, max })
     } else {
-        // Fallback: median ± 1 %
-        let mid = sorted[sorted.len() / 2];
-        let spread = mid / 100;
+        let mid = compute_median_allow_single(&sorted)?;
+        let spread = mid.saturating_mul(spread_bps as i128) / 10_000;
         Some(PriceProps {
             min: mid - spread,
             max: mid + spread,
@@ -145,6 +219,13 @@ pub fn compute_median(prices: &[i128]) -> Option<i128> {
     if prices.len() < 2 {
         return None;
     }
+    compute_median_allow_single(prices)
+}
+
+pub fn compute_median_allow_single(prices: &[i128]) -> Option<i128> {
+    if prices.is_empty() {
+        return None;
+    }
     let mut sorted = prices.to_vec();
     sorted.sort_unstable();
     if sorted.len() % 2 == 0 {
@@ -152,6 +233,13 @@ pub fn compute_median(prices: &[i128]) -> Option<i128> {
     } else {
         Some(sorted[sorted.len() / 2])
     }
+}
+
+fn deviation_bps(price: i128, median: i128) -> f64 {
+    if median == 0 {
+        return f64::INFINITY;
+    }
+    ((price as f64 - median as f64).abs() / (median as f64).abs()) * 10_000.0
 }
 
 #[cfg(test)]
@@ -180,12 +268,10 @@ mod tests {
     }
 
     #[test]
-    fn two_sources_uses_fallback_equal_spread() {
-        // Only 2 sources — fallback: median ± 1 %
+    fn two_sources_uses_average_median_equal_spread() {
         let prices = vec![1000i128, 2000];
         let p = compute_confidence_interval(&prices).unwrap();
-        // median of [1000, 2000] at index 1 = 2000 (integer division len/2=1)
-        let mid = 2000i128;
+        let mid = 1500i128;
         assert_eq!(p.min, mid - mid / 100);
         assert_eq!(p.max, mid + mid / 100);
     }
@@ -246,10 +332,30 @@ mod tests {
     fn median_calculation_even_count() {
         let prices = vec![1i128, 2, 3, 4, 5, 6];
         let p = compute_confidence_interval(&prices).unwrap();
-        let sorted = [1, 2, 3, 4, 5, 6];
-        let median = sorted[sorted.len() / 2]; // 4
-        assert_eq!(median, 4);
+        let median = compute_median(&prices).unwrap();
+        assert_eq!(median, 3);
         assert!(p.min <= p.max);
+    }
+
+    #[test]
+    fn single_source_requires_configured_min_sources() {
+        let sources = vec!["fixed".to_string()];
+        let ok = aggregate_prices(&[1_000], &sources, 1, 50).unwrap();
+        assert_eq!(ok.median, 1_000);
+        let err = aggregate_prices(&[1_000], &sources, 2, 50).unwrap_err();
+        assert!(err.contains("insufficient sources"));
+    }
+
+    #[test]
+    fn max_deviation_bps_rejects_outlier() {
+        let sources = vec![
+            "binance".to_string(),
+            "coinbase".to_string(),
+            "pyth".to_string(),
+        ];
+        let result = aggregate_prices(&[100, 101, 160], &sources, 2, 200).unwrap();
+        assert_eq!(result.sources_used, vec!["binance", "coinbase"]);
+        assert_eq!(result.rejected_sources.len(), 1);
     }
 
     #[test]

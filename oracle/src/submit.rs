@@ -174,6 +174,7 @@ async fn poll_until_confirmed(rpc_url: &str, hash: &str) -> Result<u32, SubmitEr
                      next_backoff_ms={backoff_ms}",
                     result.status
                 );
+                sleep_ms(backoff_ms).await;
                 // Double the backoff for the next iteration (capped at 30 s).
                 backoff_ms = (backoff_ms * 2).min(30_000);
             }
@@ -182,6 +183,14 @@ async fn poll_until_confirmed(rpc_url: &str, hash: &str) -> Result<u32, SubmitEr
 
     Err(SubmitError::PollTimeout)
 }
+
+#[cfg(target_arch = "wasm32")]
+async fn sleep_ms(ms: u64) {
+    worker::Delay::from(std::time::Duration::from_millis(ms)).await;
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+async fn sleep_ms(_ms: u64) {}
 
 /// Submit a signed transaction XDR and poll for the result with exponential backoff.
 ///
