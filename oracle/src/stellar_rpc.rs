@@ -1,5 +1,4 @@
 use serde::{Deserialize, Serialize};
-use worker::{Fetch, Headers, Method, Request, RequestInit};
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum RpcError {
@@ -97,25 +96,15 @@ pub async fn get_latest_ledger_sequence(rpc_url: &str) -> Result<u32, RpcError> 
 
 /// Low-level helper: POST a JSON string to the RPC URL, return the response body.
 pub(crate) async fn rpc_post(rpc_url: &str, payload: String) -> Result<String, RpcError> {
-    let headers = Headers::new();
-    headers
-        .set("Content-Type", "application/json")
-        .map_err(|e| RpcError::NetworkError(e.to_string()))?;
-
-    let mut init = RequestInit::new();
-    init.with_method(Method::Post)
-        .with_headers(headers)
-        .with_body(Some(payload.into()));
-
-    let request = Request::new_with_init(rpc_url, &init)
-        .map_err(|e| RpcError::NetworkError(e.to_string()))?;
-
-    let mut response = Fetch::Request(request)
+    let response = crate::http::client()
+        .post(rpc_url)
+        .header("Content-Type", "application/json")
+        .body(payload)
         .send()
         .await
         .map_err(|e| RpcError::NetworkError(e.to_string()))?;
 
-    let status = response.status_code();
+    let status = response.status().as_u16();
     let body = response
         .text()
         .await
@@ -171,15 +160,13 @@ pub async fn get_account_balance_stroops(
 ) -> Result<i64, RpcError> {
     let url = format!("{horizon_url}/accounts/{account_id}");
 
-    let request = worker::Request::new(&url, worker::Method::Get)
-        .map_err(|e| RpcError::NetworkError(e.to_string()))?;
-
-    let mut response = worker::Fetch::Request(request)
+    let response = crate::http::client()
+        .get(&url)
         .send()
         .await
         .map_err(|e| RpcError::NetworkError(e.to_string()))?;
 
-    let status = response.status_code();
+    let status = response.status().as_u16();
     let body = response
         .text()
         .await

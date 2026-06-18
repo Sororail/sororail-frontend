@@ -1,5 +1,4 @@
 use serde::Deserialize;
-use worker::{Fetch, Url};
 
 pub const PYTH_HERMES_URL: &str = "https://hermes.pyth.network/api/latest_price_feeds";
 pub const FLOAT_PRECISION: i128 = 1_000_000_000_000_000_000_000_000_000_000;
@@ -130,15 +129,14 @@ pub async fn fetch_pyth_price(
     max_confidence_bps: u32,
 ) -> Result<i128, PythPriceError> {
     let url_string = format!("{}?ids[]={}", PYTH_HERMES_URL, feed_id);
-    let url =
-        Url::parse(&url_string).map_err(|err| PythPriceError::NetworkError(err.to_string()))?;
 
-    let mut response = Fetch::Url(url)
+    let response = crate::http::client()
+        .get(&url_string)
         .send()
         .await
         .map_err(|err| PythPriceError::NetworkError(err.to_string()))?;
 
-    let status = response.status_code();
+    let status = response.status().as_u16();
     if status != 200 {
         return Err(PythPriceError::HttpError(status));
     }
@@ -165,12 +163,6 @@ pub async fn fetch_pyth_price(
     )
 }
 
-#[cfg(target_arch = "wasm32")]
-fn current_timestamp_secs() -> u64 {
-    (js_sys::Date::now() / 1000.0) as u64
-}
-
-#[cfg(not(target_arch = "wasm32"))]
 fn current_timestamp_secs() -> u64 {
     use std::time::{SystemTime, UNIX_EPOCH};
     SystemTime::now()
