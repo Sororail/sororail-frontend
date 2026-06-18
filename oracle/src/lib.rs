@@ -19,15 +19,35 @@ pub mod stellar_rpc;
 pub mod submit;
 
 use network_config::StellarNetwork;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+fn ser_i128_str<S: Serializer>(v: &i128, s: S) -> Result<S::Ok, S::Error> {
+    s.serialize_str(&v.to_string())
+}
+
+fn de_i128_str<'de, D: Deserializer<'de>>(d: D) -> Result<i128, D::Error> {
+    let raw = serde_json::Value::deserialize(d)?;
+    match &raw {
+        serde_json::Value::String(s) => s.parse::<i128>().map_err(serde::de::Error::custom),
+        serde_json::Value::Number(n) => n
+            .as_i64()
+            .map(|v| v as i128)
+            .or_else(|| n.as_u64().map(|v| v as i128))
+            .ok_or_else(|| serde::de::Error::custom("i128 out of i64 range")),
+        _ => Err(serde::de::Error::custom("expected string or number for i128")),
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CachedPrice {
     pub token: String,
     pub symbol: String,
+    #[serde(serialize_with = "ser_i128_str", deserialize_with = "de_i128_str")]
     pub min: i128,
+    #[serde(serialize_with = "ser_i128_str", deserialize_with = "de_i128_str")]
     pub max: i128,
     pub timestamp: u64,
+    pub ledger_seq: u32,
     pub sources_used: Vec<String>,
     pub signature: String,
 }
@@ -558,6 +578,7 @@ async fn collect_live_prices(
                     min,
                     max,
                     timestamp,
+                    ledger_seq,
                     sources_used: aggregated.sources_used.clone(),
                     signature,
                 });
