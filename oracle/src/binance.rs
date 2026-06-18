@@ -1,5 +1,4 @@
 use serde::Deserialize;
-use worker::{Fetch, Url};
 
 pub const BINANCE_TICKER_PRICE_URL: &str = "https://data-api.binance.vision/api/v3/ticker/price";
 pub const FLOAT_PRECISION: i128 = 1_000_000_000_000_000_000_000_000_000_000;
@@ -74,13 +73,12 @@ pub async fn fetch_spot_prices(
     } else {
         BINANCE_TICKER_PRICE_URL.to_string()
     };
-    let binance_url =
-        Url::parse(&url).map_err(|err| BinancePriceError::NetworkError(err.to_string()))?;
-    let mut response = Fetch::Url(binance_url)
+    let response = crate::http::client()
+        .get(&url)
         .send()
         .await
         .map_err(|err| BinancePriceError::NetworkError(err.to_string()))?;
-    let status = response.status_code();
+    let status = response.status().as_u16();
     let body = response
         .text()
         .await

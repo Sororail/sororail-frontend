@@ -1,5 +1,4 @@
 use serde::Deserialize;
-use worker::{Fetch, Url};
 
 pub const COINBASE_EXCHANGE_RATES_URL: &str =
     "https://api.coinbase.com/v2/exchange-rates?currency=";
@@ -71,15 +70,14 @@ pub async fn fetch_spot_price(symbol: &str) -> Result<i128, CoinbasePriceError> 
     };
 
     let url_str = format!("{}{}", COINBASE_EXCHANGE_RATES_URL, base_currency);
-    let coinbase_url =
-        Url::parse(&url_str).map_err(|err| CoinbasePriceError::NetworkError(err.to_string()))?;
 
-    let mut response = Fetch::Url(coinbase_url)
+    let response = crate::http::client()
+        .get(&url_str)
         .send()
         .await
         .map_err(|err| CoinbasePriceError::NetworkError(err.to_string()))?;
 
-    let status = response.status_code();
+    let status = response.status().as_u16();
     let body = response
         .text()
         .await
