@@ -84,16 +84,21 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .allow_methods([Method::GET])
         .allow_origin(Any);
 
+    // CORS is only opened for the public, browser-facing price feed; admin and
+    // health routes are not cross-origin reachable.
+    let public = Router::new()
+        .route("/prices", get(prices::prices))
+        .layer(cors);
+
     Router::new()
         .route("/health", get(prices::health))
         .route("/ready", get(prices::ready))
-        .route("/prices", get(prices::prices))
+        .merge(public)
         .route(
             "/oracle/failed-submissions",
             get(prices::failed_submissions),
         )
         .with_state(state)
-        .layer(cors)
         .layer(TraceLayer::new_for_http())
 }
 
