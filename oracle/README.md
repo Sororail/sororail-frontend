@@ -22,9 +22,12 @@ variable name.
 - `KEEPER_PRIVATE_KEY`
 - `KEEPER_SECRET_KEY`
 - `KEEPER_ACCOUNT_ID`
-- `ADMIN_API_TOKEN`
 
 Optional defaults:
+
+- `ADMIN_API_TOKEN` — when unset, admin-only endpoints (e.g.
+  `/oracle/failed-submissions`) respond `503`; when set, they require
+  `Authorization: Bearer <token>`
 
 - `BIND_ADDR=0.0.0.0:8080`
 - `STELLAR_NETWORK=testnet`

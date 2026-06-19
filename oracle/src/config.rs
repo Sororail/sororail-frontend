@@ -168,7 +168,11 @@ impl Config {
             keeper_secret_key: SecretString::new(required(&mut lookup, "KEEPER_SECRET_KEY")?),
             keeper_account_id: required(&mut lookup, "KEEPER_ACCOUNT_ID")?,
             keeper_index: parse_or_default(&mut lookup, "KEEPER_INDEX", "0")?,
-            admin_api_token: Some(SecretString::new(required(&mut lookup, "ADMIN_API_TOKEN")?)),
+            // Optional: when unset, admin-only endpoints reject with 503 rather
+            // than refusing to boot. Keeps the foundation runnable without secrets.
+            admin_api_token: lookup("ADMIN_API_TOKEN")
+                .filter(|value| !value.trim().is_empty())
+                .map(SecretString::new),
             min_keeper_balance_xlm: parse_or_default(
                 &mut lookup,
                 "MIN_KEEPER_BALANCE_XLM",
@@ -479,6 +483,16 @@ mod tests {
         let err = Config::from_lookup(|key| env.get(key).cloned()).unwrap_err();
         assert_eq!(err, EnvError::MissingVar("KEEPER_PRIVATE_KEY"));
         assert!(err.to_string().contains("KEEPER_PRIVATE_KEY"));
+    }
+
+    #[test]
+    fn config_from_lookup_admin_token_is_optional() {
+        let mut env = valid_env();
+        env.remove("ADMIN_API_TOKEN");
+
+        let cfg = Config::from_lookup(|key| env.get(key).cloned()).unwrap();
+
+        assert!(cfg.admin_api_token.is_none());
     }
 
     #[test]
