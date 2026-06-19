@@ -165,8 +165,16 @@ impl Config {
                 required(&mut lookup, "KEEPER_PRIVATE_KEY")?,
                 32,
             )?),
-            keeper_secret_key: SecretString::new(required(&mut lookup, "KEEPER_SECRET_KEY")?),
-            keeper_account_id: required(&mut lookup, "KEEPER_ACCOUNT_ID")?,
+            keeper_secret_key: SecretString::new(validate_strkey(
+                "KEEPER_SECRET_KEY",
+                required(&mut lookup, "KEEPER_SECRET_KEY")?,
+                'S',
+            )?),
+            keeper_account_id: validate_strkey(
+                "KEEPER_ACCOUNT_ID",
+                required(&mut lookup, "KEEPER_ACCOUNT_ID")?,
+                'G',
+            )?,
             keeper_index: parse_or_default(&mut lookup, "KEEPER_INDEX", "0")?,
             // Optional: when unset, admin-only endpoints reject with 503 rather
             // than refusing to boot. Keeps the foundation runnable without secrets.
@@ -243,6 +251,33 @@ fn validate_hex_key(
             var,
             reason: format!("expected {expected_len} bytes, got {}", bytes.len()),
         });
+    }
+    Ok(value)
+}
+
+/// Validate a Stellar strkey (account `G…` / secret seed `S…`) for shape only:
+/// 56-char base32 with the expected version prefix. This catches typos and
+/// swapped vars at boot; it does not verify the CRC16 or that a secret derives
+/// the configured account (those are wired with the keeper in #3).
+fn validate_strkey(
+    var: &'static str,
+    value: String,
+    prefix: char,
+) -> Result<String, EnvError> {
+    let invalid = |reason: String| EnvError::InvalidVar { var, reason };
+    if value.len() != 56 {
+        return Err(invalid(format!(
+            "expected 56 characters, got {}",
+            value.len()
+        )));
+    }
+    if !value.starts_with(prefix) {
+        return Err(invalid(format!("must start with '{prefix}'")));
+    }
+    if let Some(bad) = value.chars().find(|c| !matches!(c, 'A'..='Z' | '2'..='7')) {
+        return Err(invalid(format!(
+            "invalid base32 character '{bad}' (expected A-Z, 2-7)"
+        )));
     }
     Ok(value)
 }
@@ -451,7 +486,10 @@ mod tests {
                 "KEEPER_PRIVATE_KEY",
                 "1111111111111111111111111111111111111111111111111111111111111111".to_string(),
             ),
-            ("KEEPER_SECRET_KEY", "SA_TEST_KEEPER_SECRET".to_string()),
+            (
+                "KEEPER_SECRET_KEY",
+                "SAUHMCMUP5FZO5675W3ISZ6E6CNYJGXBUW5WANE2JR4TGAARYCTSCBKI".to_string(),
+            ),
             (
                 "KEEPER_ACCOUNT_ID",
                 "GAUHMCMUP5FZO5675W3ISZ6E6CNYJGXBUW5WANE2JR4TGAARYCTSCBKI".to_string(),
@@ -483,6 +521,36 @@ mod tests {
         let err = Config::from_lookup(|key| env.get(key).cloned()).unwrap_err();
         assert_eq!(err, EnvError::MissingVar("KEEPER_PRIVATE_KEY"));
         assert!(err.to_string().contains("KEEPER_PRIVATE_KEY"));
+    }
+
+    #[test]
+    fn config_from_lookup_rejects_malformed_keeper_account() {
+        let mut env = valid_env();
+        env.insert("KEEPER_ACCOUNT_ID", "not-a-strkey".to_string());
+
+        let err = Config::from_lookup(|key| env.get(key).cloned()).unwrap_err();
+
+        assert!(matches!(
+            err,
+            EnvError::InvalidVar { var: "KEEPER_ACCOUNT_ID", .. }
+        ));
+    }
+
+    #[test]
+    fn config_from_lookup_rejects_secret_key_with_account_prefix() {
+        let mut env = valid_env();
+        // A G-prefixed value in the secret slot is a classic swapped-var typo.
+        env.insert(
+            "KEEPER_SECRET_KEY",
+            "GAUHMCMUP5FZO5675W3ISZ6E6CNYJGXBUW5WANE2JR4TGAARYCTSCBKI".to_string(),
+        );
+
+        let err = Config::from_lookup(|key| env.get(key).cloned()).unwrap_err();
+
+        assert!(matches!(
+            err,
+            EnvError::InvalidVar { var: "KEEPER_SECRET_KEY", .. }
+        ));
     }
 
     #[test]
