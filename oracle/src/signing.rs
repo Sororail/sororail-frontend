@@ -52,6 +52,29 @@ pub fn sign_price(
     let signing_key = SigningKey::from_bytes(&key_array);
 
     // 2. Construct the byte layout
+    let payload = build_price_message(
+        network_passphrase,
+        ledger_seq,
+        token_strkey,
+        min,
+        max,
+        timestamp,
+    );
+
+    // 3. Sign the payload
+    let signature = signing_key.sign(&payload);
+
+    Ok(signature)
+}
+
+pub fn build_price_message(
+    network_passphrase: &str,
+    ledger_seq: u32,
+    token_strkey: &str,
+    min: i128,
+    max: i128,
+    timestamp: u64,
+) -> Vec<u8> {
     let mut payload = Vec::new();
     payload.extend_from_slice(network_passphrase.as_bytes());
     payload.extend_from_slice(&ledger_seq.to_be_bytes());
@@ -59,11 +82,7 @@ pub fn sign_price(
     payload.extend_from_slice(&min.to_be_bytes());
     payload.extend_from_slice(&max.to_be_bytes());
     payload.extend_from_slice(&timestamp.to_be_bytes());
-
-    // 3. Sign the payload
-    let signature = signing_key.sign(&payload);
-
-    Ok(signature)
+    payload
 }
 
 #[cfg(test)]
@@ -111,6 +130,23 @@ mod tests {
         assert!(
             public_key.verify(&expected_payload, &signature).is_ok(),
             "Signature must be valid"
+        );
+    }
+
+    #[test]
+    fn price_message_layout_regression_vector() {
+        let bytes = build_price_message(
+            "Test SDF Network ; September 2015",
+            123456,
+            "CBAN5YU3KRDKPTQ2H76D6S7HQFPRBGUD524F65BUM2RQCITPTRLKWKES",
+            1_234_567_890_000_000_000_000_000_000_000i128,
+            1_234_667_890_000_000_000_000_000_000_000i128,
+            1_690_000_000,
+        );
+
+        assert_eq!(
+            hex::encode(bytes),
+            "5465737420534446204e6574776f726b203b2053657074656d62657220323031350001e2404342414e355955334b52444b505451324837364436533748514650524247554435323446363542554d3252514349545054524c4b574b45530000000f951a9f9cf13829cddf4000000000000f956d576fce0036a0c34000000000000064bb5a80"
         );
     }
 

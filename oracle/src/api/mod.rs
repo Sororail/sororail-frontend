@@ -13,6 +13,7 @@ use tower_http::trace::TraceLayer;
 
 use crate::state::AppState;
 
+pub mod admin;
 pub mod prices;
 
 #[derive(Debug, Serialize)]
@@ -94,6 +95,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/health", get(prices::health))
         .route("/ready", get(prices::ready))
         .merge(public)
+        .route("/oracle/status", get(admin::oracle_status))
         .route(
             "/oracle/failed-submissions",
             get(prices::failed_submissions),

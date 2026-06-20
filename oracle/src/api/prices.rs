@@ -5,17 +5,12 @@ use axum::http::StatusCode;
 use axum::Json;
 use serde::Serialize;
 
-use super::AdminAuth;
-use crate::state::{AppState, FailedSubmission};
+use super::{AdminAuth, ApiError};
+use crate::state::{AppState, CachedPrice, FailedSubmission};
 
 #[derive(Debug, Serialize)]
 pub struct HealthResponse {
     pub status: &'static str,
-}
-
-#[derive(Debug, Serialize)]
-pub struct PricesResponse {
-    pub prices: Vec<crate::state::CachedPrice>,
 }
 
 #[derive(Debug, Serialize)]
@@ -31,10 +26,14 @@ pub async fn ready() -> Json<HealthResponse> {
     Json(HealthResponse { status: "ok" })
 }
 
-pub async fn prices(State(state): State<Arc<AppState>>) -> (StatusCode, Json<PricesResponse>) {
+pub async fn prices(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<Vec<CachedPrice>>, ApiError> {
     let cache = state.price_cache.read().await;
-    let prices = cache.prices.values().cloned().collect();
-    (StatusCode::OK, Json(PricesResponse { prices }))
+    if cache.prices.is_empty() {
+        return Err(ApiError::new(StatusCode::SERVICE_UNAVAILABLE, "no_prices"));
+    }
+    Ok(Json(cache.prices.values().cloned().collect()))
 }
 
 pub async fn failed_submissions(
