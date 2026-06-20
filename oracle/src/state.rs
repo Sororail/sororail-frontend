@@ -11,11 +11,17 @@ pub const FAILURE_RING_CAPACITY: usize = 256;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct CachedPrice {
-    pub token: String,
+    pub token_address: String,
     pub symbol: String,
-    pub min: String,
-    pub max: String,
+    pub display_symbol: String,
+    #[serde(serialize_with = "ser_i128_str")]
+    pub min: i128,
+    #[serde(serialize_with = "ser_i128_str")]
+    pub max: i128,
+    #[serde(serialize_with = "ser_i128_str")]
+    pub median: i128,
     pub timestamp: u64,
+    #[serde(rename = "ledger")]
     pub ledger_seq: u32,
     pub sources_used: Vec<String>,
     pub signature: String,
@@ -43,6 +49,13 @@ pub struct FailedSubmission {
     pub at: SystemTime,
     pub operation: String,
     pub error: String,
+}
+
+pub fn ser_i128_str<S>(value: &i128, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    serializer.serialize_str(&value.to_string())
 }
 
 #[derive(Debug, Clone)]
