@@ -20,7 +20,8 @@ async fn main() {
 
     let bind_addr = config.bind_addr;
     let state = Arc::new(AppState::new(Arc::clone(&config)));
-    let app = api::build_router(state);
+    let app = api::build_router(Arc::clone(&state));
+    let price_loop = tokio::spawn(oracle::price_loop::run_price_loop(Arc::clone(&state)));
 
     let listener = match TcpListener::bind(bind_addr).await {
         Ok(listener) => listener,
@@ -37,10 +38,12 @@ async fn main() {
         "oracle server listening"
     );
 
-    if let Err(error) = axum::serve(listener, app)
+    let server = axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal())
-        .await
-    {
+        .await;
+    price_loop.abort();
+
+    if let Err(error) = server {
         tracing::error!(%error, "server error");
         eprintln!("server error: {error}");
         std::process::exit(1);

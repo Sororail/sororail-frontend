@@ -110,6 +110,11 @@ pub fn validate_pyth_price(
     }
 
     if let Some(conf) = &data.conf {
+        if price <= 0 {
+            return Err(PythPriceError::PriceParseError(
+                "price must be greater than zero".to_string(),
+            ));
+        }
         let confidence = normalize_pyth_price(conf, data.expo)?;
         let confidence_bps = (confidence as f64 / price as f64) * 10_000.0;
         if confidence_bps > max_confidence_bps as f64 {
@@ -233,5 +238,47 @@ mod tests {
         };
         let err = validate_pyth_price(&data, 1_010, 60, 50).unwrap_err();
         assert!(matches!(err, PythPriceError::ConfidenceTooWide { .. }));
+    }
+
+    #[test]
+    fn validate_pyth_price_rejects_missing_publish_time() {
+        let data = PythPriceData {
+            price: "100000000".to_string(),
+            conf: Some("100000".to_string()),
+            expo: -8,
+            publish_time: None,
+        };
+        let err = validate_pyth_price(&data, 1_010, 60, 50).unwrap_err();
+        assert_eq!(err, PythPriceError::InvalidPublishTime(-1));
+    }
+
+    #[test]
+    fn validate_pyth_price_rejects_negative_publish_time() {
+        let data = PythPriceData {
+            price: "100000000".to_string(),
+            conf: Some("100000".to_string()),
+            expo: -8,
+            publish_time: Some(-1),
+        };
+        let err = validate_pyth_price(&data, 1_010, 60, 50).unwrap_err();
+        assert_eq!(err, PythPriceError::InvalidPublishTime(-1));
+    }
+
+    #[test]
+    fn validate_pyth_price_rejects_zero_price_when_confidence_present() {
+        let data = PythPriceData {
+            price: "0".to_string(),
+            conf: Some("100000".to_string()),
+            expo: -8,
+            publish_time: Some(1_000),
+        };
+        let err = validate_pyth_price(&data, 1_010, 60, 50).unwrap_err();
+        assert!(matches!(err, PythPriceError::PriceParseError(_)));
+    }
+
+    #[test]
+    fn normalize_pyth_price_rejects_overflow() {
+        let err = normalize_pyth_price(&i128::MAX.to_string(), 0).unwrap_err();
+        assert!(matches!(err, PythPriceError::PriceParseError(_)));
     }
 }
