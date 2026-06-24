@@ -68,10 +68,7 @@ pub async fn keeper_status(
     })
 }
 
-pub async fn metrics(
-    _auth: AdminAuth,
-    State(state): State<Arc<AppState>>,
-) -> Response {
+pub async fn metrics(_auth: AdminAuth, State(state): State<Arc<AppState>>) -> Response {
     let prometheus = state.metrics.to_prometheus();
     (
         StatusCode::OK,
