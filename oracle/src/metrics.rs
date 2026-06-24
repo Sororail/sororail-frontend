@@ -74,8 +74,7 @@ impl Metrics {
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_secs())
             .unwrap_or(0);
-        self.last_metrics_update
-            .store(timestamp, Ordering::Relaxed);
+        self.last_metrics_update.store(timestamp, Ordering::Relaxed);
     }
 
     pub fn to_response(&self) -> MetricsResponse {
@@ -95,100 +94,69 @@ impl Metrics {
     pub fn to_prometheus(&self) -> String {
         let mut output = String::new();
 
-        output.push_str(&format!(
-            "# HELP oracle_price_cycle_count Total number of price cycles\n"
-        ));
-        output.push_str(&format!(
-            "# TYPE oracle_price_cycle_count counter\n"
-        ));
+        output.push_str("# HELP oracle_price_cycle_count Total number of price cycles\n");
+        output.push_str("# TYPE oracle_price_cycle_count counter\n");
         output.push_str(&format!(
             "oracle_price_cycle_count {}\n",
             self.price_cycle_count.load(Ordering::Relaxed)
         ));
 
-        output.push_str(&format!(
-            "# HELP oracle_price_cycle_latency_ms Last price cycle latency in milliseconds\n"
-        ));
-        output.push_str(&format!(
-            "# TYPE oracle_price_cycle_latency_ms gauge\n"
-        ));
+        output.push_str(
+            "# HELP oracle_price_cycle_latency_ms Last price cycle latency in milliseconds\n",
+        );
+        output.push_str("# TYPE oracle_price_cycle_latency_ms gauge\n");
         output.push_str(&format!(
             "oracle_price_cycle_latency_ms {}\n",
             self.price_cycle_latency_ms.load(Ordering::Relaxed)
         ));
 
-        output.push_str(&format!(
-            "# HELP oracle_keeper_cycle_count Total number of keeper cycles\n"
-        ));
-        output.push_str(&format!(
-            "# TYPE oracle_keeper_cycle_count counter\n"
-        ));
+        output.push_str("# HELP oracle_keeper_cycle_count Total number of keeper cycles\n");
+        output.push_str("# TYPE oracle_keeper_cycle_count counter\n");
         output.push_str(&format!(
             "oracle_keeper_cycle_count {}\n",
             self.keeper_cycle_count.load(Ordering::Relaxed)
         ));
 
-        output.push_str(&format!(
-            "# HELP oracle_keeper_cycle_latency_ms Last keeper cycle latency in milliseconds\n"
-        ));
-        output.push_str(&format!(
-            "# TYPE oracle_keeper_cycle_latency_ms gauge\n"
-        ));
+        output.push_str(
+            "# HELP oracle_keeper_cycle_latency_ms Last keeper cycle latency in milliseconds\n",
+        );
+        output.push_str("# TYPE oracle_keeper_cycle_latency_ms gauge\n");
         output.push_str(&format!(
             "oracle_keeper_cycle_latency_ms {}\n",
             self.keeper_cycle_latency_ms.load(Ordering::Relaxed)
         ));
 
-        output.push_str(&format!(
-            "# HELP oracle_orders_executed Total number of orders executed\n"
-        ));
-        output.push_str(&format!(
-            "# TYPE oracle_orders_executed counter\n"
-        ));
+        output.push_str("# HELP oracle_orders_executed Total number of orders executed\n");
+        output.push_str("# TYPE oracle_orders_executed counter\n");
         output.push_str(&format!(
             "oracle_orders_executed {}\n",
             self.orders_executed.load(Ordering::Relaxed)
         ));
 
-        output.push_str(&format!(
-            "# HELP oracle_deposits_executed Total number of deposits executed\n"
-        ));
-        output.push_str(&format!(
-            "# TYPE oracle_deposits_executed counter\n"
-        ));
+        output.push_str("# HELP oracle_deposits_executed Total number of deposits executed\n");
+        output.push_str("# TYPE oracle_deposits_executed counter\n");
         output.push_str(&format!(
             "oracle_deposits_executed {}\n",
             self.deposits_executed.load(Ordering::Relaxed)
         ));
 
-        output.push_str(&format!(
-            "# HELP oracle_withdrawals_executed Total number of withdrawals executed\n"
-        ));
-        output.push_str(&format!(
-            "# TYPE oracle_withdrawals_executed counter\n"
-        ));
+        output
+            .push_str("# HELP oracle_withdrawals_executed Total number of withdrawals executed\n");
+        output.push_str("# TYPE oracle_withdrawals_executed counter\n");
         output.push_str(&format!(
             "oracle_withdrawals_executed {}\n",
             self.withdrawals_executed.load(Ordering::Relaxed)
         ));
 
-        output.push_str(&format!(
-            "# HELP oracle_submit_failures Total number of submit failures\n"
-        ));
-        output.push_str(&format!(
-            "# TYPE oracle_submit_failures counter\n"
-        ));
+        output.push_str("# HELP oracle_submit_failures Total number of submit failures\n");
+        output.push_str("# TYPE oracle_submit_failures counter\n");
         output.push_str(&format!(
             "oracle_submit_failures {}\n",
             self.submit_failures.load(Ordering::Relaxed)
         ));
 
-        output.push_str(&format!(
-            "# HELP oracle_last_metrics_update Timestamp of last metrics update\n"
-        ));
-        output.push_str(&format!(
-            "# TYPE oracle_last_metrics_update gauge\n"
-        ));
+        output.push_str("# HELP oracle_last_metrics_update Timestamp of last metrics update\n");
+        output.push_str("# TYPE oracle_last_metrics_update gauge\n");
         output.push_str(&format!(
             "oracle_last_metrics_update {}\n",
             self.last_metrics_update.load(Ordering::Relaxed)

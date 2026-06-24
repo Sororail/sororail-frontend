@@ -149,8 +149,12 @@ async fn execute_keeper_cycle(state: Arc<AppState>) -> Result<CycleSummary, Stri
                     }
                 }
 
-                record_error(&state, format!("execute_order:{}", order_key), error.clone())
-                    .await;
+                record_error(
+                    &state,
+                    format!("execute_order:{}", order_key),
+                    error.clone(),
+                )
+                .await;
                 record_execution(
                     &state,
                     "execute_order",
@@ -181,8 +185,12 @@ async fn execute_keeper_cycle(state: Arc<AppState>) -> Result<CycleSummary, Stri
             Err(error) => {
                 summary.errors += 1;
                 warn!(key = %deposit_key, %error, "deposit_execution_failed");
-                record_error(&state, format!("execute_deposit:{}", deposit_key), error.clone())
-                    .await;
+                record_error(
+                    &state,
+                    format!("execute_deposit:{}", deposit_key),
+                    error.clone(),
+                )
+                .await;
                 record_execution(
                     &state,
                     "execute_deposit",
@@ -286,19 +294,43 @@ async fn set_prices_on_chain(
 }
 
 async fn execute_order(state: &Arc<AppState>, key: &str) -> Result<String, String> {
-    submit_handler_transaction(state, &state.config.order_handler_contract_id, "execute_order", key).await
+    submit_handler_transaction(
+        state,
+        &state.config.order_handler_contract_id,
+        "execute_order",
+        key,
+    )
+    .await
 }
 
 async fn execute_deposit(state: &Arc<AppState>, key: &str) -> Result<String, String> {
-    submit_handler_transaction(state, &state.config.deposit_handler_contract_id, "execute_deposit", key).await
+    submit_handler_transaction(
+        state,
+        &state.config.deposit_handler_contract_id,
+        "execute_deposit",
+        key,
+    )
+    .await
 }
 
 async fn execute_withdrawal(state: &Arc<AppState>, key: &str) -> Result<String, String> {
-    submit_handler_transaction(state, &state.config.withdrawal_handler_contract_id, "execute_withdrawal", key).await
+    submit_handler_transaction(
+        state,
+        &state.config.withdrawal_handler_contract_id,
+        "execute_withdrawal",
+        key,
+    )
+    .await
 }
 
 async fn freeze_order(state: &Arc<AppState>, key: &str) -> Result<String, String> {
-    submit_handler_transaction(state, &state.config.order_handler_contract_id, "freeze_order", key).await
+    submit_handler_transaction(
+        state,
+        &state.config.order_handler_contract_id,
+        "freeze_order",
+        key,
+    )
+    .await
 }
 
 async fn submit_handler_transaction(
@@ -529,7 +561,7 @@ fn parse_bytes_vec_from_result(result: &str) -> Result<Vec<String>, String> {
     let vec = value
         .get("vec")
         .or_else(|| value.get("Vec"))
-        .or_else(|| Some(&value))
+        .or(Some(&value))
         .ok_or_else(|| format!("expected vector, got: {value}"))?;
 
     match vec {
@@ -563,18 +595,20 @@ fn build_prices_scval(prices: &[&CachedPrice]) -> Result<String, String> {
         })
         .collect();
 
-    Ok(serde_json::to_string(&scval_entries).map_err(|e| format!("failed to serialize prices: {e}"))?)
+    serde_json::to_string(&scval_entries).map_err(|e| format!("failed to serialize prices: {e}"))
 }
 
 fn build_signed_price_scval(price: &CachedPrice) -> serde_json::Value {
     let sig_bytes = hex::decode(&price.signature).unwrap_or_default();
+    let min_price_str = price.min.to_string();
+    let max_price_str = price.max.to_string();
 
     serde_json::json!({
         "map": [
             {"key": "keeper_index", "val": {"u32": 0}},
             {"key": "ledger_seq", "val": {"u32": price.ledger_seq}},
-            {"key": "max_price", "val": {"i128": price.max}},
-            {"key": "min_price", "val": {"i128": price.min}},
+            {"key": "max_price", "val": {"i128": max_price_str}},
+            {"key": "min_price", "val": {"i128": min_price_str}},
             {"key": "signature", "val": {"bytes": sig_bytes}},
             {"key": "timestamp", "val": {"u64": price.timestamp}},
             {"key": "token", "val": {"address": price.token_address}}
@@ -582,7 +616,11 @@ fn build_signed_price_scval(price: &CachedPrice) -> serde_json::Value {
     })
 }
 
-async fn record_error(state: &Arc<AppState>, operation: impl Into<String>, error: impl Into<String>) {
+async fn record_error(
+    state: &Arc<AppState>,
+    operation: impl Into<String>,
+    error: impl Into<String>,
+) {
     state.failures.lock().await.push(FailedSubmission {
         at: SystemTime::now(),
         operation: operation.into(),
@@ -616,38 +654,6 @@ async fn record_execution(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{Config, Network, PriceFeedConfig, SecretString};
-    use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-    use std::time::Duration;
-
-    fn test_state() -> Arc<AppState> {
-        let config = Config {
-            bind_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
-            network: Network::Testnet,
-            network_passphrase: "Test SDF Network ; September 2015".to_string(),
-            stellar_rpc_url: "http://localhost:0".to_string(),
-            horizon_url: "http://localhost:0".to_string(),
-            oracle_contract_id: "CORACLE".to_string(),
-            role_store_contract_id: "CROLE".to_string(),
-            data_store_contract_id: "CDATA".to_string(),
-            order_handler_contract_id: "CORDER".to_string(),
-            deposit_handler_contract_id: "CDEPOSIT".to_string(),
-            withdrawal_handler_contract_id: "CWITHDRAW".to_string(),
-            reader_contract_id: "CREADER".to_string(),
-            keeper_private_key: SecretString::new(
-                "1111111111111111111111111111111111111111111111111111111111111111".to_string(),
-            ),
-            keeper_secret_key: SecretString::new("SSECRET".to_string()),
-            keeper_account_id: "GACCOUNT".to_string(),
-            keeper_index: 0,
-            admin_api_token: None,
-            min_keeper_balance_xlm: 0.0,
-            price_loop_interval: Duration::from_millis(1),
-            keeper_loop_interval: Duration::from_millis(1),
-            price_feed: PriceFeedConfig { tokens: vec![] },
-        };
-        Arc::new(AppState::new(Arc::new(config)))
-    }
 
     #[test]
     fn test_parse_u32_from_result() {
