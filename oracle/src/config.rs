@@ -259,11 +259,7 @@ fn validate_hex_key(
 /// 56-char base32 with the expected version prefix. This catches typos and
 /// swapped vars at boot; it does not verify the CRC16 or that a secret derives
 /// the configured account (those are wired with the keeper in #3).
-fn validate_strkey(
-    var: &'static str,
-    value: String,
-    prefix: char,
-) -> Result<String, EnvError> {
+fn validate_strkey(var: &'static str, value: String, prefix: char) -> Result<String, EnvError> {
     let invalid = |reason: String| EnvError::InvalidVar { var, reason };
     if value.len() != 56 {
         return Err(invalid(format!(
@@ -532,7 +528,10 @@ mod tests {
 
         assert!(matches!(
             err,
-            EnvError::InvalidVar { var: "KEEPER_ACCOUNT_ID", .. }
+            EnvError::InvalidVar {
+                var: "KEEPER_ACCOUNT_ID",
+                ..
+            }
         ));
     }
 
@@ -549,7 +548,10 @@ mod tests {
 
         assert!(matches!(
             err,
-            EnvError::InvalidVar { var: "KEEPER_SECRET_KEY", .. }
+            EnvError::InvalidVar {
+                var: "KEEPER_SECRET_KEY",
+                ..
+            }
         ));
     }
 
