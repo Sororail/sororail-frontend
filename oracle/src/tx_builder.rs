@@ -1,6 +1,6 @@
-use crate::scval::{ScVal, SignedPrice, ScValMap};
-use crate::stellar_rpc::RpcError;
+use crate::scval::{ScVal, ScValMap, SignedPrice};
 use crate::signing::{sign_price, SigningError};
+use crate::stellar_rpc::RpcError;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum TxBuilderError {
@@ -65,9 +65,7 @@ pub async fn simulate_transaction(
         serde_json::from_str(&body).map_err(|e| TxBuilderError::SimulationError(e.to_string()))?;
 
     if let Some(error) = resp.get("error") {
-        return Err(TxBuilderError::SimulationError(
-            error.to_string(),
-        ));
+        return Err(TxBuilderError::SimulationError(error.to_string()));
     }
 
     let result = resp
@@ -83,7 +81,12 @@ pub async fn simulate_transaction(
     let auth = result
         .get("auth")
         .and_then(|a| a.as_array())
-        .map(|arr| arr.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(","))
+        .map(|arr| {
+            arr.iter()
+                .map(|v| v.to_string())
+                .collect::<Vec<_>>()
+                .join(",")
+        })
         .unwrap_or_default();
 
     let tx_result = result
@@ -99,10 +102,7 @@ pub async fn simulate_transaction(
     })
 }
 
-pub async fn get_account_sequence(
-    rpc_url: &str,
-    account_id: &str,
-) -> Result<u64, TxBuilderError> {
+pub async fn get_account_sequence(rpc_url: &str, account_id: &str) -> Result<u64, TxBuilderError> {
     let payload = serde_json::json!({
         "jsonrpc": "2.0",
         "id": 1,
@@ -128,15 +128,13 @@ pub async fn get_account_sequence(
         }));
     }
 
-    let result = resp
-        .get("result")
-        .ok_or_else(|| TxBuilderError::MissingSequence)?;
+    let result = resp.get("result").ok_or(TxBuilderError::MissingSequence)?;
 
     let sequence = result
         .get("sequence")
         .and_then(|s| s.as_str())
         .and_then(|s| s.parse::<u64>().ok())
-        .ok_or_else(|| TxBuilderError::MissingSequence)?;
+        .ok_or(TxBuilderError::MissingSequence)?;
 
     Ok(sequence)
 }
@@ -146,9 +144,7 @@ pub fn build_set_prices_invoke(
     _sequence: u64,
     env: &TransactionEnv,
 ) -> Result<String, TxBuilderError> {
-    let _contract_id = env
-        .contract_id
-        .clone();
+    let _contract_id = env.contract_id.clone();
 
     let mut sc_vals = Vec::new();
     for price in prices {
@@ -214,7 +210,7 @@ pub async fn build_and_sign_transaction(
     payload_bytes.extend_from_slice(env.passphrase.as_bytes());
     payload_bytes.extend_from_slice(&ledger_seq.to_be_bytes());
     for price in prices {
-        payload_bytes.extend_from_slice(&price.token.as_bytes());
+        payload_bytes.extend_from_slice(price.token.as_bytes());
         payload_bytes.extend_from_slice(&price.min_price.to_be_bytes());
         payload_bytes.extend_from_slice(&price.max_price.to_be_bytes());
         payload_bytes.extend_from_slice(&price.timestamp.to_be_bytes());
@@ -254,7 +250,11 @@ mod tests {
             ledger_seq: 100,
             max_price: 45000_0000000,
             min_price: 44000_0000000,
-            signature: vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64],
+            signature: vec![
+                1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23,
+                24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
+                45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64,
+            ],
             timestamp: 1690000000,
             token: "CDLZ37BMSZM6IECNIYCZIFZGKQ7YJQ3Q3Q3Q3Q3Q3Q3Q3Q3Q3Q3Q".to_string(),
         }];
@@ -263,7 +263,8 @@ mod tests {
             rpc_url: "https://soroban-testnet.stellar.org".to_string(),
             contract_id: "CCONTRACT".to_string(),
             passphrase: "Test SDF Network ; September 2015".to_string(),
-            keeper_secret_key: "1111111111111111111111111111111111111111111111111111111111111111".to_string(),
+            keeper_secret_key: "1111111111111111111111111111111111111111111111111111111111111111"
+                .to_string(),
         };
 
         let result = build_set_prices_invoke(&prices, 1000, &env);
