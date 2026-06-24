@@ -51,7 +51,7 @@ fn strkey_to_bytes(strkey: &str) -> Result<Vec<u8>, ScValError> {
     let checksum = &decoded[31..35];
     let data = &decoded[..31];
 
-    if checksum != &compute_crc16(data) {
+    if checksum != compute_crc16(data).as_slice() {
         return Err(ScValError::InvalidStrkey("checksum mismatch".to_string()));
     }
 
