@@ -558,6 +558,22 @@ mod tests {
     }
 
     #[test]
+    fn config_from_lookup_rejects_account_with_secret_prefix() {
+        let mut env = valid_env();
+        env.insert(
+            "KEEPER_ACCOUNT_ID",
+            "SAUHMCMUP5FZO5675W3ISZ6E6CNYJGXBUW5WANE2JR4TGAARYCTSCBKI".to_string(),
+        );
+
+        let err = Config::from_lookup(|key| env.get(key).cloned()).unwrap_err();
+
+        assert!(matches!(
+            err,
+            EnvError::InvalidVar { var: "KEEPER_ACCOUNT_ID", .. }
+        ));
+    }
+
+    #[test]
     fn config_from_lookup_rejects_secret_key_with_account_prefix() {
         let mut env = valid_env();
         // A G-prefixed value in the secret slot is a classic swapped-var typo.
