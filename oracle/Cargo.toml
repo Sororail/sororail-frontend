@@ -30,6 +30,9 @@ dotenvy = "0.15"
 shared-config = { path = "../shared/config" }
 base64 = "0.22"
 worker = "0.8.5"
+stellar-xdr = { version = "27", features = ["std", "base64"] }
+stellar-strkey = "0.0.18"
+sha2 = "0.10"
 
 [dev-dependencies]
 futures = "0.3"

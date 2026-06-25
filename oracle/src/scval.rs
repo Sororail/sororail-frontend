@@ -1,7 +1,11 @@
-use base64::{engine::general_purpose::STANDARD, Engine};
-use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+use stellar_strkey::ed25519::PublicKey as StrkeyPublicKey;
+use stellar_strkey::Contract;
+use stellar_xdr::{
+    Int128Parts, ScAddress, ScBytes, ScMap, ScMapEntry, ScSymbol, ScVal, ScVec, WriteXdr,
+};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct SignedPrice {
     pub keeper_index: u32,
     pub ledger_seq: u32,
@@ -15,226 +19,243 @@ pub struct SignedPrice {
 #[derive(Debug, PartialEq, Eq)]
 pub enum ScValError {
     InvalidStrkey(String),
-    InvalidTokenLength,
+    XdrEncoding(String),
+    SignatureLength(usize),
 }
 
 impl std::fmt::Display for ScValError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             ScValError::InvalidStrkey(msg) => write!(f, "invalid strkey: {msg}"),
-            ScValError::InvalidTokenLength => {
-                write!(f, "token address must be 32 bytes (starts with C...)")
+            ScValError::XdrEncoding(msg) => write!(f, "XDR encoding error: {msg}"),
+            ScValError::SignatureLength(len) => {
+                write!(f, "signature must be 64 bytes, got {len}")
             }
         }
     }
 }
 
-fn strkey_to_bytes(strkey: &str) -> Result<Vec<u8>, ScValError> {
-    if strkey.len() < 2 || !strkey.starts_with('C') {
-        return Err(ScValError::InvalidStrkey(format!(
-            "expected C... strkey, got: {strkey}"
-        )));
-    }
+impl std::error::Error for ScValError {}
 
-    let payload = &strkey[1..];
-    let decoded = base64::engine::general_purpose::STANDARD
-        .decode(payload)
-        .map_err(|e| ScValError::InvalidStrkey(e.to_string()))?;
-
-    if decoded.len() != 35 {
-        return Err(ScValError::InvalidStrkey(format!(
-            "decoded payload must be 35 bytes, got {}",
-            decoded.len()
-        )));
-    }
-
-    let checksum = &decoded[31..35];
-    let data = &decoded[..31];
-
-    if checksum != compute_crc16(data).as_slice() {
-        return Err(ScValError::InvalidStrkey("checksum mismatch".to_string()));
-    }
-
-    Ok(decoded[..32].to_vec())
+fn contract_to_sc_address(contract_str: &str) -> Result<ScAddress, ScValError> {
+    let contract: Contract = contract_str
+        .parse()
+        .map_err(|e: stellar_strkey::DecodeError| ScValError::InvalidStrkey(e.to_string()))?;
+    Ok(ScAddress::Contract(stellar_xdr::ContractId(
+        stellar_xdr::Hash(contract.0),
+    )))
 }
 
-fn compute_crc16(data: &[u8]) -> [u8; 2] {
-    let mut crc: u16 = 0;
-    for &byte in data {
-        crc ^= (byte as u16) << 8;
-        for _ in 0..8 {
-            if (crc & 0x8000) != 0 {
-                crc = (crc << 1) ^ 0x1021;
-            } else {
-                crc <<= 1;
-            }
-        }
-    }
-    crc.to_be_bytes()
+pub fn pubkey_to_sc_address(pubkey_str: &str) -> Result<ScAddress, ScValError> {
+    let pk: StrkeyPublicKey = pubkey_str
+        .parse()
+        .map_err(|e: stellar_strkey::DecodeError| ScValError::InvalidStrkey(e.to_string()))?;
+    Ok(ScAddress::Account(stellar_xdr::AccountId(
+        stellar_xdr::PublicKey::PublicKeyTypeEd25519(stellar_xdr::Uint256(pk.0)),
+    )))
 }
 
-fn encode_u32(value: u32) -> ScVal {
-    ScVal::U32(value)
-}
-
-fn encode_u64(value: u64) -> ScVal {
-    ScVal::U64(value)
-}
-
-fn encode_i128(value: i128) -> ScVal {
-    let hi = ((value as u128) >> 64) as i64;
-    let lo = value as u128;
-    ScVal::I128 {
-        hi: hi.to_be_bytes().to_vec(),
-        lo: lo.to_be_bytes().to_vec(),
+fn i128_to_parts(value: i128) -> Int128Parts {
+    let bits = value as u128;
+    Int128Parts {
+        hi: (bits >> 64) as i64,
+        lo: (bits & 0xFFFF_FFFF_FFFF_FFFF) as u64,
     }
 }
 
-fn encode_bytes(bytes: Vec<u8>) -> ScVal {
-    ScVal::Bytes(bytes)
+fn make_sc_symbol(s: &str) -> ScSymbol {
+    ScSymbol(s.as_bytes().to_vec().try_into().unwrap())
 }
 
-fn encode_address(strkey: &str) -> Result<ScVal, ScValError> {
-    let bytes = strkey_to_bytes(strkey)?;
-    Ok(ScVal::Address(ScAddress {
-        kind: 0,
-        account_id: bytes,
-    }))
-}
+pub fn encode_signed_price(price: &SignedPrice) -> Result<ScVal, ScValError> {
+    let sig_bytes = if price.signature.len() == 64 {
+        price.signature.clone()
+    } else {
+        return Err(ScValError::SignatureLength(price.signature.len()));
+    };
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ScAddress {
-    pub kind: u8,
-    pub account_id: Vec<u8>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "type")]
-pub enum ScVal {
-    #[serde(rename = "U32")]
-    U32(u32),
-    #[serde(rename = "U64")]
-    U64(u64),
-    #[serde(rename = "I128")]
-    I128 { hi: Vec<u8>, lo: Vec<u8> },
-    #[serde(rename = "Bytes")]
-    Bytes(Vec<u8>),
-    #[serde(rename = "Address")]
-    Address(ScAddress),
-    #[serde(rename = "Void")]
-    Void,
-    #[serde(rename = "Bool")]
-    Bool(bool),
-    #[serde(rename = "String")]
-    String(String),
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ScValMap {
-    pub key: String,
-    pub value: ScVal,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SignedPriceScVal {
-    pub entries: Vec<ScValMap>,
-}
-
-pub fn build_signed_price_sc_val(price: &SignedPrice) -> Result<String, ScValError> {
-    let mut entries = vec![
-        ScValMap {
-            key: "keeper_index".to_string(),
-            value: encode_u32(price.keeper_index),
+    let entries = vec![
+        ScMapEntry {
+            key: ScVal::Symbol(make_sc_symbol("keeper_index")),
+            val: ScVal::U32(price.keeper_index),
         },
-        ScValMap {
-            key: "ledger_seq".to_string(),
-            value: encode_u32(price.ledger_seq),
+        ScMapEntry {
+            key: ScVal::Symbol(make_sc_symbol("ledger_seq")),
+            val: ScVal::U32(price.ledger_seq),
         },
-        ScValMap {
-            key: "max_price".to_string(),
-            value: encode_i128(price.max_price),
+        ScMapEntry {
+            key: ScVal::Symbol(make_sc_symbol("max_price")),
+            val: ScVal::I128(i128_to_parts(price.max_price)),
         },
-        ScValMap {
-            key: "min_price".to_string(),
-            value: encode_i128(price.min_price),
+        ScMapEntry {
+            key: ScVal::Symbol(make_sc_symbol("min_price")),
+            val: ScVal::I128(i128_to_parts(price.min_price)),
         },
-        ScValMap {
-            key: "signature".to_string(),
-            value: encode_bytes(price.signature.clone()),
+        ScMapEntry {
+            key: ScVal::Symbol(make_sc_symbol("signature")),
+            val: ScVal::Bytes(ScBytes(sig_bytes.try_into().unwrap())),
         },
-        ScValMap {
-            key: "timestamp".to_string(),
-            value: encode_u64(price.timestamp),
+        ScMapEntry {
+            key: ScVal::Symbol(make_sc_symbol("timestamp")),
+            val: ScVal::U64(price.timestamp),
         },
-        ScValMap {
-            key: "token".to_string(),
-            value: encode_address(&price.token)?,
+        ScMapEntry {
+            key: ScVal::Symbol(make_sc_symbol("token")),
+            val: ScVal::Address(contract_to_sc_address(&price.token)?),
         },
     ];
 
-    entries.sort_by(|a, b| a.key.cmp(&b.key));
-
-    let sc_val = SignedPriceScVal { entries };
-    serde_json::to_string(&sc_val).map_err(|e| ScValError::InvalidStrkey(e.to_string()))
+    Ok(ScVal::Map(Some(ScMap(entries.try_into().unwrap()))))
 }
 
-pub fn build_signed_price_sc_val_base64(price: &SignedPrice) -> Result<String, ScValError> {
-    let json = build_signed_price_sc_val(price)?;
-    Ok(STANDARD.encode(json.as_bytes()))
+pub fn encode_signed_price_base64(price: &SignedPrice) -> Result<String, ScValError> {
+    let sc_val = encode_signed_price(price)?;
+    sc_val
+        .to_xdr_base64(stellar_xdr::Limits::none())
+        .map_err(|e| ScValError::XdrEncoding(e.to_string()))
+}
+
+pub fn encode_signed_prices_vec(prices: &[SignedPrice]) -> Result<ScVal, ScValError> {
+    let mut sc_vals = Vec::with_capacity(prices.len());
+    for price in prices {
+        sc_vals.push(encode_signed_price(price)?);
+    }
+    Ok(ScVal::Vec(Some(ScVec(sc_vals.try_into().unwrap()))))
+}
+
+pub fn compute_transaction_hash(
+    network_passphrase: &str,
+    tx_xdr_base64: &str,
+) -> Result<Vec<u8>, ScValError> {
+    let tx_bytes =
+        base64::Engine::decode(&base64::engine::general_purpose::STANDARD, tx_xdr_base64)
+            .map_err(|e| ScValError::XdrEncoding(e.to_string()))?;
+
+    let mut hasher = Sha256::new();
+    hasher.update(network_passphrase.as_bytes());
+    hasher.update(&tx_bytes);
+    Ok(hasher.finalize().to_vec())
+}
+
+pub fn signature_hint(network_passphrase: &str, public_key: &[u8; 32]) -> [u8; 4] {
+    let pk_hash = Sha256::digest(public_key);
+    let pp_hash = Sha256::digest(network_passphrase.as_bytes());
+    let mut hint = [0u8; 4];
+    for i in 0..4 {
+        hint[i] = pk_hash[28 + i] ^ pp_hash[28 + i];
+    }
+    hint
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_strkey_to_bytes_valid() {
-        let strkey = "CDLZ37BMSZM6IECNIYCZIFZGKQ7YJQ3Q3Q3Q3Q3Q3Q3Q3Q3Q3Q3Q";
-        let result = strkey_to_bytes(strkey);
-        assert!(result.is_ok() || result.is_err());
-    }
-
-    #[test]
-    fn test_strkey_to_bytes_invalid_prefix() {
-        let strkey = "XDLZ37BMSZM6IECNIYCZIFZGKQ7YJQ3Q3Q3Q3Q3Q3Q3Q3Q3Q3Q3Q";
-        let result = strkey_to_bytes(strkey);
-        assert!(result.is_err());
-    }
+    use stellar_xdr::ReadXdr;
 
     #[test]
     fn test_encode_u32() {
-        let val = encode_u32(42);
-        match val {
-            ScVal::U32(v) => assert_eq!(v, 42),
-            _ => panic!("expected U32"),
+        let price = SignedPrice {
+            keeper_index: 0,
+            ledger_seq: 100,
+            max_price: 45000_0000000,
+            min_price: 44000_0000000,
+            signature: vec![0u8; 64],
+            timestamp: 1690000000,
+            token: "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4".to_string(),
+        };
+        let sc_val = encode_signed_price(&price).unwrap();
+        let xdr_b64 = sc_val.to_xdr_base64(stellar_xdr::Limits::none()).unwrap();
+        assert!(!xdr_b64.is_empty());
+
+        let decoded = ScVal::from_xdr_base64(&xdr_b64, stellar_xdr::Limits::none()).unwrap();
+        assert_eq!(sc_val, decoded);
+    }
+
+    #[test]
+    fn test_i128_parts_positive() {
+        let parts = i128_to_parts(1_000_000_000);
+        assert_eq!(parts.hi, 0i64);
+        assert_eq!(parts.lo, 1_000_000_000u64);
+    }
+
+    #[test]
+    fn test_i128_parts_large() {
+        let val: i128 = (1i128 << 80) + 42;
+        let parts = i128_to_parts(val);
+        assert_eq!(parts.hi, 1i64 << 16);
+        assert_eq!(parts.lo, 42u64);
+    }
+
+    #[test]
+    fn test_contract_address_encoding() {
+        let addr =
+            contract_to_sc_address("CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4")
+                .unwrap();
+        match addr {
+            ScAddress::Contract(_) => {}
+            _ => panic!("expected Contract variant"),
         }
     }
 
     #[test]
-    fn test_encode_u64() {
-        let val = encode_u64(1234567890);
-        match val {
-            ScVal::U64(v) => assert_eq!(v, 1234567890),
-            _ => panic!("expected U64"),
+    fn test_pubkey_address_encoding() {
+        let addr = pubkey_to_sc_address("GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF")
+            .unwrap();
+        match addr {
+            ScAddress::Account(_) => {}
+            _ => panic!("expected Account variant"),
         }
     }
 
     #[test]
-    fn test_encode_i128() {
-        let val = encode_i128(1000000000);
-        match val {
-            ScVal::I128 { .. } => {}
-            _ => panic!("expected I128"),
-        }
+    fn test_signature_length_validation() {
+        let price = SignedPrice {
+            keeper_index: 0,
+            ledger_seq: 1,
+            max_price: 100,
+            min_price: 90,
+            signature: vec![0u8; 32],
+            timestamp: 1000,
+            token: "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4".to_string(),
+        };
+        let err = encode_signed_price(&price).unwrap_err();
+        assert!(matches!(err, ScValError::SignatureLength(32)));
     }
 
     #[test]
-    fn test_encode_bytes() {
-        let bytes = vec![1, 2, 3, 4, 5];
-        let val = encode_bytes(bytes.clone());
-        match val {
-            ScVal::Bytes(v) => assert_eq!(v, bytes),
-            _ => panic!("expected Bytes"),
+    fn test_signed_prices_vec_encoding() {
+        let price = SignedPrice {
+            keeper_index: 0,
+            ledger_seq: 100,
+            max_price: 45000_0000000,
+            min_price: 44000_0000000,
+            signature: vec![0u8; 64],
+            timestamp: 1690000000,
+            token: "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4".to_string(),
+        };
+        let vec_val = encode_signed_prices_vec(&[price]).unwrap();
+        match vec_val {
+            ScVal::Vec(_) => {}
+            _ => panic!("expected ScVec"),
         }
+        let xdr_b64 = vec_val.to_xdr_base64(stellar_xdr::Limits::none()).unwrap();
+        assert!(!xdr_b64.is_empty());
+    }
+
+    #[test]
+    fn test_sc_val_roundtrip() {
+        let price = SignedPrice {
+            keeper_index: 42,
+            ledger_seq: 999,
+            max_price: 123456789,
+            min_price: -100,
+            signature: vec![0xAA; 64],
+            timestamp: 1700000000,
+            token: "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4".to_string(),
+        };
+        let sc_val = encode_signed_price(&price).unwrap();
+        let xdr_b64 = sc_val.to_xdr_base64(stellar_xdr::Limits::none()).unwrap();
+        let decoded = ScVal::from_xdr_base64(&xdr_b64, stellar_xdr::Limits::none()).unwrap();
+        assert_eq!(sc_val, decoded);
     }
 }
