@@ -441,6 +441,23 @@ mod tests {
     }
 
     #[test]
+    fn reject_min_sources_zero() {
+        let json = r#"[{"symbol":"BTC","stellar_address":"CADDR","sources":["binance"],"binance_symbol":"BTCUSDT","min_sources":0}]"#;
+        let err = parse_price_feed_config(json).unwrap_err();
+        assert!(matches!(
+            err,
+            ConfigError::InvalidToken { ref symbol, .. } if symbol == "BTC"
+        ));
+    }
+
+    #[test]
+    fn accept_min_sources_one() {
+        let json = r#"[{"symbol":"BTC","stellar_address":"CADDR","sources":["binance"],"binance_symbol":"BTCUSDT","min_sources":1}]"#;
+        let cfg = parse_price_feed_config(json).unwrap();
+        assert_eq!(cfg.tokens[0].min_sources(), 1);
+    }
+
+    #[test]
     fn parse_current_testnet_shape() {
         let json = r#"[
             {"symbol":"TUSDC","display_symbol":"USDC","stellar_address":"CBAN5YU3KRDKPTQ2H76D6S7HQFPRBGUD524F65BUM2RQCITPTRLKWKES","sources":["fixed"],"fixed_price":"1000000000000000000000000000000","min_sources":1},
