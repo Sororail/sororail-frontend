@@ -281,4 +281,135 @@ mod tests {
         let err = normalize_pyth_price(&i128::MAX.to_string(), 0).unwrap_err();
         assert!(matches!(err, PythPriceError::PriceParseError(_)));
     }
+
+    // ── Staleness validation (#351) ───────────────────────────────────────────
+
+    #[test]
+    fn staleness_accepts_price_published_exactly_at_stale_boundary() {
+        // age == stale_after_seconds is NOT stale (only strictly greater is rejected)
+        let data = PythPriceData {
+            price: "100000000".to_string(),
+            conf: None,
+            expo: -8,
+            publish_time: Some(1_000),
+        };
+        // now=1060, publish=1000 → age=60 == stale_after_seconds=60 → accepted
+        let result = validate_pyth_price(&data, 1_060, 60, 100);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn staleness_rejects_price_one_second_past_boundary() {
+        let data = PythPriceData {
+            price: "100000000".to_string(),
+            conf: None,
+            expo: -8,
+            publish_time: Some(1_000),
+        };
+        // now=1061, publish=1000 → age=61 > stale_after_seconds=60 → rejected
+        let err = validate_pyth_price(&data, 1_061, 60, 100).unwrap_err();
+        assert!(matches!(
+            err,
+            PythPriceError::StalePrice {
+                age_seconds: 61,
+                max_age_seconds: 60,
+            }
+        ));
+    }
+
+    #[test]
+    fn staleness_accepts_price_published_one_second_ago() {
+        let data = PythPriceData {
+            price: "100000000".to_string(),
+            conf: None,
+            expo: -8,
+            publish_time: Some(999),
+        };
+        // now=1000, publish=999 → age=1 < stale_after_seconds=60 → accepted
+        let result = validate_pyth_price(&data, 1_000, 60, 100);
+        assert!(result.is_ok());
+    }
+
+    // ── Confidence validation (#352) ──────────────────────────────────────────
+
+    #[test]
+    fn confidence_accepts_price_with_no_confidence_field() {
+        // Missing confidence (None) bypasses the bps check entirely
+        let data = PythPriceData {
+            price: "100000000".to_string(),
+            conf: None,
+            expo: -8,
+            publish_time: Some(1_000),
+        };
+        let result = validate_pyth_price(&data, 1_010, 60, 0);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn confidence_accepts_price_at_exact_threshold() {
+        // confidence == max_confidence_bps is within threshold (only strictly greater rejected)
+        // price=100000000, conf=50000 → confidence_bps = (50000/100000000)*10000 = 5.0 bps
+        let data = PythPriceData {
+            price: "100000000".to_string(),
+            conf: Some("50000".to_string()),
+            expo: -8,
+            publish_time: Some(1_000),
+        };
+        // max_bps=5 → 5.0 <= 5 → accepted (5.0 > 5 is false)
+        let result = validate_pyth_price(&data, 1_010, 60, 5);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn confidence_rejects_confidence_one_bps_over_threshold() {
+        // price=100000000, conf=60000 → confidence_bps = 6.0 bps > max_bps=5 → rejected
+        let data = PythPriceData {
+            price: "100000000".to_string(),
+            conf: Some("60000".to_string()),
+            expo: -8,
+            publish_time: Some(1_000),
+        };
+        let err = validate_pyth_price(&data, 1_010, 60, 5).unwrap_err();
+        assert!(matches!(err, PythPriceError::ConfidenceTooWide { .. }));
+    }
+
+    // ── Publish time rejection (#353) ─────────────────────────────────────────
+
+    #[test]
+    fn publish_time_accepts_zero_as_valid_non_negative_timestamp() {
+        // publish_time=0 is valid (>= 0), even though it's the Unix epoch
+        let data = PythPriceData {
+            price: "100000000".to_string(),
+            conf: None,
+            expo: -8,
+            publish_time: Some(0),
+        };
+        // now=60 → age=60 == stale_after=60 → accepted
+        let result = validate_pyth_price(&data, 60, 60, 100);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn publish_time_rejects_large_negative_value() {
+        let data = PythPriceData {
+            price: "100000000".to_string(),
+            conf: None,
+            expo: -8,
+            publish_time: Some(i64::MIN),
+        };
+        let err = validate_pyth_price(&data, 1_010, 60, 100).unwrap_err();
+        assert!(matches!(err, PythPriceError::InvalidPublishTime(t) if t == i64::MIN));
+    }
+
+    #[test]
+    fn publish_time_rejects_minus_one() {
+        let data = PythPriceData {
+            price: "100000000".to_string(),
+            conf: None,
+            expo: -8,
+            publish_time: Some(-1),
+        };
+        let err = validate_pyth_price(&data, 1_010, 60, 100).unwrap_err();
+        assert_eq!(err, PythPriceError::InvalidPublishTime(-1));
+    }
 }
