@@ -468,6 +468,20 @@ mod tests {
         assert_eq!(cfg.tokens[1].coinbase_symbol.as_deref(), Some("BTC"));
     }
 
+    #[test]
+    fn load_price_feed_config_uses_env_when_set() {
+        let json = r#"[{"symbol":"BTC","stellar_address":"CADDR","sources":["binance"],"binance_symbol":"BTCUSDT"}]"#;
+        let cfg = load_price_feed_config(Some(json)).unwrap();
+        assert_eq!(cfg.tokens.len(), 1);
+        assert_eq!(cfg.tokens[0].symbol, "BTC");
+    }
+
+    #[test]
+    fn load_price_feed_config_falls_back_to_file() {
+        let cfg = load_price_feed_config(None).unwrap();
+        assert!(!cfg.tokens.is_empty());
+    }
+
     fn valid_env() -> HashMap<&'static str, String> {
         HashMap::from([
             ("STELLAR_NETWORK", "testnet".to_string()),
