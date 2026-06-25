@@ -524,6 +524,27 @@ mod tests {
     }
 
     #[test]
+    fn validate_hex_key_accepts_64_hex_chars() {
+        let valid = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        let result = validate_hex_key("KEEPER_PRIVATE_KEY", valid.to_string(), 32);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn validate_hex_key_rejects_non_hex() {
+        let bad = "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz";
+        let err = validate_hex_key("KEEPER_PRIVATE_KEY", bad.to_string(), 32).unwrap_err();
+        assert!(matches!(err, EnvError::InvalidVar { var: "KEEPER_PRIVATE_KEY", .. }));
+    }
+
+    #[test]
+    fn validate_hex_key_rejects_wrong_length() {
+        let short = "abcd";
+        let err = validate_hex_key("KEEPER_PRIVATE_KEY", short.to_string(), 32).unwrap_err();
+        assert!(matches!(err, EnvError::InvalidVar { var: "KEEPER_PRIVATE_KEY", .. }));
+    }
+
+    #[test]
     fn config_from_lookup_rejects_malformed_keeper_account() {
         let mut env = valid_env();
         env.insert("KEEPER_ACCOUNT_ID", "not-a-strkey".to_string());
