@@ -145,6 +145,17 @@ pub fn parse_token_configs(raw: &str) -> Result<Vec<TokenConfig>, ConfigError> {
         }
         // stellar_address and sources are optional for the API server path,
         // but required for the oracle path — the oracle validates separately.
+        for source in &token.sources {
+            match source.as_str() {
+                "binance" | "coinbase" | "pyth" | "fixed" => {}
+                other => {
+                    return Err(ConfigError::InvalidToken {
+                        symbol: token.symbol.clone(),
+                        reason: format!("unsupported source '{other}'"),
+                    });
+                }
+            }
+        }
     }
 
     Ok(tokens)
