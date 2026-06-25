@@ -374,6 +374,52 @@ mod tests {
     ]"#;
 
     #[test]
+    fn parse_or_default_uses_value_when_set() {
+        let mut env = HashMap::new();
+        env.insert("TEST_VAR".to_string(), "42".to_string());
+        let result =
+            parse_or_default::<u64>(&mut |key| env.get(key).cloned(), "TEST_VAR", "10").unwrap();
+        assert_eq!(result, 42);
+    }
+
+    #[test]
+    fn parse_or_default_uses_default_when_absent() {
+        let env: HashMap<String, String> = HashMap::new();
+        let result =
+            parse_or_default::<u64>(&mut |key| env.get(key).cloned(), "TEST_VAR", "10").unwrap();
+        assert_eq!(result, 10);
+    }
+
+    #[test]
+    fn parse_or_default_rejects_invalid_value() {
+        let mut env = HashMap::new();
+        env.insert("TEST_VAR".to_string(), "not_a_number".to_string());
+        let err =
+            parse_or_default::<u64>(&mut |key| env.get(key).cloned(), "TEST_VAR", "10")
+                .unwrap_err();
+        assert!(matches!(
+            err,
+            EnvError::InvalidVar { var: "TEST_VAR", .. }
+        ));
+    }
+
+    #[test]
+    fn parse_or_default_parses_socket_addr() {
+        let mut env = HashMap::new();
+        env.insert(
+            "BIND_ADDR".to_string(),
+            "127.0.0.1:3000".to_string(),
+        );
+        let result = parse_or_default::<std::net::SocketAddr>(
+            &mut |key| env.get(key).cloned(),
+            "BIND_ADDR",
+            "0.0.0.0:8080",
+        )
+        .unwrap();
+        assert_eq!(result.port(), 3000);
+    }
+
+    #[test]
     fn parse_valid_config() {
         let cfg = parse_price_feed_config(VALID_JSON).unwrap();
         assert_eq!(cfg.tokens.len(), 2);
