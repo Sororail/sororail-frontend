@@ -374,6 +374,52 @@ mod tests {
     ]"#;
 
     #[test]
+    fn parse_or_default_uses_value_when_set() {
+        let mut env = HashMap::new();
+        env.insert("TEST_VAR".to_string(), "42".to_string());
+        let result =
+            parse_or_default::<u64>(&mut |key| env.get(key).cloned(), "TEST_VAR", "10").unwrap();
+        assert_eq!(result, 42);
+    }
+
+    #[test]
+    fn parse_or_default_uses_default_when_absent() {
+        let env: HashMap<String, String> = HashMap::new();
+        let result =
+            parse_or_default::<u64>(&mut |key| env.get(key).cloned(), "TEST_VAR", "10").unwrap();
+        assert_eq!(result, 10);
+    }
+
+    #[test]
+    fn parse_or_default_rejects_invalid_value() {
+        let mut env = HashMap::new();
+        env.insert("TEST_VAR".to_string(), "not_a_number".to_string());
+        let err =
+            parse_or_default::<u64>(&mut |key| env.get(key).cloned(), "TEST_VAR", "10")
+                .unwrap_err();
+        assert!(matches!(
+            err,
+            EnvError::InvalidVar { var: "TEST_VAR", .. }
+        ));
+    }
+
+    #[test]
+    fn parse_or_default_parses_socket_addr() {
+        let mut env = HashMap::new();
+        env.insert(
+            "BIND_ADDR".to_string(),
+            "127.0.0.1:3000".to_string(),
+        );
+        let result = parse_or_default::<std::net::SocketAddr>(
+            &mut |key| env.get(key).cloned(),
+            "BIND_ADDR",
+            "0.0.0.0:8080",
+        )
+        .unwrap();
+        assert_eq!(result.port(), 3000);
+    }
+
+    #[test]
     fn parse_valid_config() {
         let cfg = parse_price_feed_config(VALID_JSON).unwrap();
         assert_eq!(cfg.tokens.len(), 2);
@@ -441,6 +487,23 @@ mod tests {
     }
 
     #[test]
+    fn reject_min_sources_zero() {
+        let json = r#"[{"symbol":"BTC","stellar_address":"CADDR","sources":["binance"],"binance_symbol":"BTCUSDT","min_sources":0}]"#;
+        let err = parse_price_feed_config(json).unwrap_err();
+        assert!(matches!(
+            err,
+            ConfigError::InvalidToken { ref symbol, .. } if symbol == "BTC"
+        ));
+    }
+
+    #[test]
+    fn accept_min_sources_one() {
+        let json = r#"[{"symbol":"BTC","stellar_address":"CADDR","sources":["binance"],"binance_symbol":"BTCUSDT","min_sources":1}]"#;
+        let cfg = parse_price_feed_config(json).unwrap();
+        assert_eq!(cfg.tokens[0].min_sources(), 1);
+    }
+
+    #[test]
     fn parse_current_testnet_shape() {
         let json = r#"[
             {"symbol":"TUSDC","display_symbol":"USDC","stellar_address":"CBAN5YU3KRDKPTQ2H76D6S7HQFPRBGUD524F65BUM2RQCITPTRLKWKES","sources":["fixed"],"fixed_price":"1000000000000000000000000000000","min_sources":1},
@@ -449,6 +512,20 @@ mod tests {
         let cfg = parse_price_feed_config(json).unwrap();
         assert_eq!(cfg.tokens[0].display_symbol(), "USDC");
         assert_eq!(cfg.tokens[1].coinbase_symbol.as_deref(), Some("BTC"));
+    }
+
+    #[test]
+    fn load_price_feed_config_uses_env_when_set() {
+        let json = r#"[{"symbol":"BTC","stellar_address":"CADDR","sources":["binance"],"binance_symbol":"BTCUSDT"}]"#;
+        let cfg = load_price_feed_config(Some(json)).unwrap();
+        assert_eq!(cfg.tokens.len(), 1);
+        assert_eq!(cfg.tokens[0].symbol, "BTC");
+    }
+
+    #[test]
+    fn load_price_feed_config_falls_back_to_file() {
+        let cfg = load_price_feed_config(None).unwrap();
+        assert!(!cfg.tokens.is_empty());
     }
 
     fn valid_env() -> HashMap<&'static str, String> {
@@ -521,6 +598,35 @@ mod tests {
         let err = Config::from_lookup(|key| env.get(key).cloned()).unwrap_err();
         assert_eq!(err, EnvError::MissingVar("KEEPER_PRIVATE_KEY"));
         assert!(err.to_string().contains("KEEPER_PRIVATE_KEY"));
+    }
+
+    #[test]
+    fn validate_strkey_accepts_s_prefixed() {
+        let value = "SAUHMCMUP5FZO5675W3ISZ6E6CNYJGXBUW5WANE2JR4TGAARYCTSCBKI";
+        let result = validate_strkey("KEEPER_SECRET_KEY", value.to_string(), 'S');
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), value);
+    }
+
+    #[test]
+    fn validate_strkey_rejects_g_prefixed_for_secret() {
+        let value = "GAUHMCMUP5FZO5675W3ISZ6E6CNYJGXBUW5WANE2JR4TGAARYCTSCBKI";
+        let result = validate_strkey("KEEPER_SECRET_KEY", value.to_string(), 'S');
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn validate_strkey_rejects_wrong_length() {
+        let value = "SAUHMC";
+        let result = validate_strkey("KEEPER_SECRET_KEY", value.to_string(), 'S');
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn validate_strkey_rejects_invalid_base32_chars() {
+        let value = "0AUHMCMUP5FZO5675W3ISZ6E6CNYJGXBUW5WANE2JR4TGAARYCTSCB";
+        let result = validate_strkey("KEEPER_SECRET_KEY", value.to_string(), 'S');
+        assert!(result.is_err());
     }
 
     #[test]
