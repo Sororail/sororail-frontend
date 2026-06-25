@@ -495,7 +495,7 @@ mod tests {
     fn accept_min_sources_one() {
         let json = r#"[{"symbol":"BTC","stellar_address":"CADDR","sources":["binance"],"binance_symbol":"BTCUSDT","min_sources":1}]"#;
         let cfg = parse_price_feed_config(json).unwrap();
-        assert_eq!(cfg.tokens[0].min_sources(), 1);
+        assert_eq!(cfg.tokens[0].min_sources, 1);
     }
 
     #[test]
