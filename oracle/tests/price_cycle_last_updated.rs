@@ -112,10 +112,7 @@ async fn last_updated_set_when_one_token_succeeds() {
         .mount(&mock)
         .await;
 
-    let tokens = vec![fixed_token(
-        "USDC",
-        "CBAN5YU3KRDKPTQ2H76D6S7HQFPRBGUD524F65BUM2RQCITPTRLKWKES",
-    )];
+    let tokens = vec![fixed_token("USDC", USDC_ADDR)];
     let state = test_state(&mock.uri(), tokens);
 
     run_price_cycle(Arc::clone(&state)).await;
@@ -135,10 +132,7 @@ async fn last_updated_not_set_when_all_tokens_fail() {
         .mount(&mock)
         .await;
 
-    let tokens = vec![bad_token(
-        "FAILONLY",
-        "CFAILONLY11111111111111111111111111111111111111111111111111",
-    )];
+    let tokens = vec![bad_token("FAILONLY", FAIL1_ADDR)];
     let state = test_state(&mock.uri(), tokens);
 
     run_price_cycle(Arc::clone(&state)).await;
@@ -159,9 +153,9 @@ async fn last_updated_set_when_mixed_results_and_one_succeeds() {
         .await;
 
     let tokens = vec![
-        bad_token("FAIL1", "CFAIL1111111111111111111111111111111111111111111111111111111"),
-        fixed_token("USDC", "CBAN5YU3KRDKPTQ2H76D6S7HQFPRBGUD524F65BUM2RQCITPTRLKWKES"),
-        bad_token("FAIL2", "CFAIL2111111111111111111111111111111111111111111111111111111"),
+        bad_token("FAIL1", FAIL1_ADDR),
+        fixed_token("USDC", USDC_ADDR),
+        bad_token("FAIL2", FAIL2_ADDR),
     ];
     let state = test_state(&mock.uri(), tokens);
 
@@ -185,10 +179,7 @@ async fn last_updated_is_recent_after_successful_cycle() {
         .await;
 
     let before = SystemTime::now();
-    let tokens = vec![fixed_token(
-        "USDC",
-        "CBAN5YU3KRDKPTQ2H76D6S7HQFPRBGUD524F65BUM2RQCITPTRLKWKES",
-    )];
+    let tokens = vec![fixed_token("USDC", USDC_ADDR)];
     let state = test_state(&mock.uri(), tokens);
 
     run_price_cycle(Arc::clone(&state)).await;
@@ -219,11 +210,7 @@ async fn last_updated_unchanged_when_second_cycle_all_fail() {
         .await;
 
     // Cycle 1: USDC succeeds → last_updated set.
-    let tokens_good = vec![fixed_token(
-        "USDC",
-        "CBAN5YU3KRDKPTQ2H76D6S7HQFPRBGUD524F65BUM2RQCITPTRLKWKES",
-    )];
-    let state = test_state(&mock.uri(), tokens_good);
+    let state = test_state(&mock.uri(), vec![fixed_token("USDC", USDC_ADDR)]);
     run_price_cycle(Arc::clone(&state)).await;
 
     let after_first = state.price_cache.read().await.last_updated;
@@ -264,10 +251,7 @@ async fn last_updated_set_only_once_per_cycle_not_per_token() {
         .mount(&mock)
         .await;
 
-    let tokens = vec![
-        fixed_token("USDC", "CBAN5YU3KRDKPTQ2H76D6S7HQFPRBGUD524F65BUM2RQCITPTRLKWKES"),
-        fixed_token("XLM", "CXLM11111111111111111111111111111111111111111111111111111111"),
-    ];
+    let tokens = vec![fixed_token("USDC", USDC_ADDR), fixed_token("XLM", XLM_ADDR)];
     let state = test_state(&mock.uri(), tokens);
 
     run_price_cycle(Arc::clone(&state)).await;
@@ -293,11 +277,7 @@ async fn two_consecutive_good_cycles_both_update_last_updated() {
         .mount(&mock)
         .await;
 
-    let tokens = vec![fixed_token(
-        "USDC",
-        "CBAN5YU3KRDKPTQ2H76D6S7HQFPRBGUD524F65BUM2RQCITPTRLKWKES",
-    )];
-    let state = test_state(&mock.uri(), tokens);
+    let state = test_state(&mock.uri(), vec![fixed_token("USDC", USDC_ADDR)]);
 
     run_price_cycle(Arc::clone(&state)).await;
     let first = state.price_cache.read().await.last_updated;
@@ -344,11 +324,7 @@ async fn last_updated_not_set_when_ledger_fetch_fails() {
         .mount(&mock)
         .await;
 
-    let tokens = vec![fixed_token(
-        "USDC",
-        "CBAN5YU3KRDKPTQ2H76D6S7HQFPRBGUD524F65BUM2RQCITPTRLKWKES",
-    )];
-    let state = test_state(&mock.uri(), tokens);
+    let state = test_state(&mock.uri(), vec![fixed_token("USDC", USDC_ADDR)]);
 
     run_price_cycle(Arc::clone(&state)).await;
 
