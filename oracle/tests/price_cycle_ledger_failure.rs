@@ -312,3 +312,22 @@ async fn ledger_failure_metrics_count_matches_cycle_count() {
         "metrics counter must match the number of cycle invocations"
     );
 }
+
+#[tokio::test]
+async fn timeout_rpc_error_also_records_failure() {
+    let mock = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(ledger_timeout_body()))
+        .mount(&mock)
+        .await;
+
+    let state = test_state(&mock.uri(), vec![fixed_token("USDC", USDC_ADDR)]);
+
+    run_price_cycle(Arc::clone(&state)).await;
+
+    let failures = state.failures.lock().await;
+    let entries: Vec<_> = failures.iter().collect();
+    assert!(!entries.is_empty());
+    assert_eq!(entries[0].operation, "get_latest_ledger");
+    assert!(entries[0].error.contains("request timed out") || !entries[0].error.is_empty());
+}
