@@ -412,4 +412,26 @@ mod tests {
         let err = validate_pyth_price(&data, 1_010, 60, 100).unwrap_err();
         assert_eq!(err, PythPriceError::InvalidPublishTime(-1));
     }
+
+    // #365 — normalize_pyth_price("4500000000", -8) must equal 45 * FLOAT_PRECISION
+    // exponent_diff = 30 + (-8) = 22 → 4_500_000_000 * 10^22 = 45 * 10^30
+    #[test]
+    fn normalize_pyth_price_negative_exponent_gives_correct_value() {
+        let result = normalize_pyth_price("4500000000", -8).unwrap();
+        assert_eq!(result, 45 * FLOAT_PRECISION);
+    }
+
+    // #367 — validate_pyth_price with a fresh publish_time must return Ok(price)
+    #[test]
+    fn validate_pyth_price_accepts_fresh_price() {
+        let data = PythPriceData {
+            price: "4500000000".to_string(),
+            conf: None,
+            expo: -8,
+            publish_time: Some(1_000),
+        };
+        // now=1_010, age=10 < stale_after=60 → accepted
+        let price = validate_pyth_price(&data, 1_010, 60, 100).unwrap();
+        assert_eq!(price, 45 * FLOAT_PRECISION);
+    }
 }
