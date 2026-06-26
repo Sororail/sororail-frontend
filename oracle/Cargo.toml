@@ -9,6 +9,7 @@ workspace = true
 
 [lib]
 path = "src/lib.rs"
+crate-type = ["cdylib", "rlib"]
 
 [[bin]]
 name = "oracle"
@@ -28,11 +29,12 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 dotenvy = "0.15"
 shared-config = { path = "../shared/config" }
 stellar-rpc-client = "27.0.0"
-stellar-xdr = "27.0.0"
-stellar-strkey = "0.0.16"
+stellar-xdr = { version = "27", features = ["std", "base64"] }
+stellar-strkey = "0.0.18"
 base64 = "0.22"
 sha2 = "0.10"
 digest = "0.10"
+worker = "0.8.5"
 
 [dev-dependencies]
 futures = "0.3"
