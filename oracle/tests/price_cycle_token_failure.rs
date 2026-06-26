@@ -160,6 +160,30 @@ async fn failed_token_error_is_recorded_in_failures() {
 }
 
 #[tokio::test]
+async fn single_bad_token_alone_leaves_cache_empty() {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(ledger_ok_response()))
+        .mount(&mock_server)
+        .await;
+
+    let tokens = vec![bad_token(
+        "ONLY_BAD",
+        "CBADONLY111111111111111111111111111111111111111111111111111",
+    )];
+    let state = test_state(&mock_server.uri(), tokens);
+
+    run_price_cycle(Arc::clone(&state)).await;
+
+    let cache = state.price_cache.read().await;
+    assert!(
+        cache.prices.is_empty(),
+        "cache must be empty when the only token fails"
+    );
+}
+
+#[tokio::test]
 async fn all_good_tokens_processed_when_one_fails() {
     let mock_server = MockServer::start().await;
 
