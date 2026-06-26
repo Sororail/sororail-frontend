@@ -331,3 +331,26 @@ async fn timeout_rpc_error_also_records_failure() {
     assert_eq!(entries[0].operation, "get_latest_ledger");
     assert!(entries[0].error.contains("request timed out") || !entries[0].error.is_empty());
 }
+
+#[tokio::test]
+async fn http_500_also_aborts_cycle() {
+    let mock = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(500).set_body_string("internal server error"))
+        .mount(&mock)
+        .await;
+
+    let state = test_state(&mock.uri(), vec![fixed_token("USDC", USDC_ADDR)]);
+
+    run_price_cycle(Arc::clone(&state)).await;
+
+    let cache = state.price_cache.read().await;
+    assert!(
+        cache.prices.is_empty(),
+        "HTTP 500 must abort the cycle before any token is processed"
+    );
+    drop(cache);
+    let failures = state.failures.lock().await;
+    let entries: Vec<_> = failures.iter().collect();
+    assert!(!entries.is_empty(), "HTTP 500 must produce a failure record");
+}
