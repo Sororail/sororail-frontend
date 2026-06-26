@@ -31,6 +31,8 @@ stellar-rpc-client = "27.0.0"
 stellar-xdr = "27.0.0"
 stellar-strkey = "0.0.16"
 base64 = "0.22"
+sha2 = "0.10"
+digest = "0.10"
 
 [dev-dependencies]
 futures = "0.3"

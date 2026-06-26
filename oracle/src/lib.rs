@@ -1,4 +1,5 @@
 pub mod binance;
+pub mod chain;
 pub mod coinbase;
 pub mod config;
 pub mod fixed;
