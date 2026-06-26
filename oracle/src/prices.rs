@@ -109,8 +109,8 @@ pub fn compute_confidence_interval_with_spread(
         let mid = compute_median_allow_single(&sorted)?;
         let spread = mid.saturating_mul(spread_bps as i128) / 10_000;
         Some(PriceProps {
-            min: mid - spread,
-            max: mid + spread,
+            min: mid.saturating_sub(spread),
+            max: mid.saturating_add(spread),
         })
     }
 }
@@ -409,6 +409,16 @@ mod tests {
         assert_eq!(percentile(&sorted, 10), 42);
         assert_eq!(percentile(&sorted, 50), 42);
         assert_eq!(percentile(&sorted, 90), 42);
+    }
+
+    #[test]
+    fn fallback_spread_with_large_bps_does_not_underflow() {
+        let prices = vec![100i128, 200];
+        // spread_bps=20000 means 200%, so spread=200 and mid=150
+        // mid - spread = -50 would underflow; saturating_sub should clamp to 0
+        let p = compute_confidence_interval_with_spread(&prices, 20_000).unwrap();
+        assert!(p.min >= 0, "min should not be negative, got {}", p.min);
+        assert!(p.max >= p.min);
     }
 
     #[test]
