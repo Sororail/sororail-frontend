@@ -389,3 +389,28 @@ async fn three_good_two_bad_log_fields_are_three_and_two() {
     assert_eq!(cache.prices.len(), 3, "tokens_ok = 3");
     assert_eq!(token_failures.len(), 2, "tokens_failed = 2");
 }
+
+#[tokio::test]
+async fn tokens_ok_is_per_token_not_per_source() {
+    let mock = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(ledger_ok()))
+        .mount(&mock)
+        .await;
+
+    // ADDR4 gets a fixed token — one token with one source.
+    // tokens_ok should be 1 (one token succeeded), NOT 1-per-source.
+    let state = test_state(
+        &mock.uri(),
+        vec![fixed_token("USDC", ADDR4)],
+    );
+
+    run_price_cycle(Arc::clone(&state)).await;
+
+    let cache = state.price_cache.read().await;
+    assert_eq!(
+        cache.prices.len(),
+        1,
+        "tokens_ok = 1: counted per token, not per source"
+    );
+}
