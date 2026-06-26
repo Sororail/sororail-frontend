@@ -22,6 +22,14 @@ fn ledger_ok() -> serde_json::Value {
     })
 }
 
+fn ledger_fail() -> serde_json::Value {
+    serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "error": { "code": -32000, "message": "node unavailable" }
+    })
+}
+
 fn fixed_token(symbol: &str, address: &str) -> TokenConfig {
     TokenConfig {
         symbol: symbol.to_string(),
@@ -327,11 +335,7 @@ async fn last_updated_not_set_when_ledger_fetch_fails() {
     let mock = MockServer::start().await;
     // Return an RPC error for getLatestLedger — cycle aborts before any token.
     Mock::given(method("POST"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-            "jsonrpc": "2.0",
-            "id": 1,
-            "error": { "code": -32000, "message": "node unavailable" }
-        })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(ledger_fail()))
         .mount(&mock)
         .await;
 
