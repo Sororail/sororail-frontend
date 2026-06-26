@@ -336,6 +336,7 @@ async fn last_updated_not_set_when_ledger_fetch_fails() {
 }
 
 const ADDR3: &str = "CADDR3111111111111111111111111111111111111111111111111111111";
+const ADDR4: &str = "CADDR4111111111111111111111111111111111111111111111111111111";
 
 #[tokio::test]
 async fn last_updated_set_with_three_successful_tokens() {
@@ -357,4 +358,41 @@ async fn last_updated_set_with_three_successful_tokens() {
     let cache = state.price_cache.read().await;
     assert!(cache.last_updated.is_some());
     assert_eq!(cache.prices.len(), 3, "all three tokens must be cached");
+}
+
+#[tokio::test]
+async fn last_updated_not_set_when_token_has_no_sources() {
+    let mock = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(ledger_ok()))
+        .mount(&mock)
+        .await;
+
+    // A token with an empty source list cannot produce any price → tokens_ok stays 0.
+    let no_source_token = TokenConfig {
+        symbol: "NOSRC".to_string(),
+        display_symbol: Some("NOSRC".to_string()),
+        stellar_address: ADDR4.to_string(),
+        sources: vec![],
+        fixed_price: None,
+        binance_symbol: None,
+        coinbase_symbol: None,
+        pyth_feed_id: None,
+        min_sources: 1,
+        max_deviation_bps: 100,
+        stale_after_seconds: 60,
+        submit_threshold_bps: 10,
+        min: 0.0,
+        max: 0.0,
+        sources_used: vec![],
+    };
+    let state = test_state(&mock.uri(), vec![no_source_token]);
+
+    run_price_cycle(Arc::clone(&state)).await;
+
+    let cache = state.price_cache.read().await;
+    assert!(
+        cache.last_updated.is_none(),
+        "last_updated must stay None when the token has no sources to query"
+    );
 }
