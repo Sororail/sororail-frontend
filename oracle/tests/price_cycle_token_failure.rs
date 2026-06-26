@@ -212,6 +212,34 @@ async fn failed_token_does_not_overwrite_previous_good_cache_entry() {
 }
 
 #[tokio::test]
+async fn cycle_status_not_stuck_running_after_partial_failure() {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(ledger_ok_response()))
+        .mount(&mock_server)
+        .await;
+
+    let tokens = vec![
+        bad_token("FAILME", "CFAILME11111111111111111111111111111111111111111111111111111"),
+        fixed_token("USDC", "CBAN5YU3KRDKPTQ2H76D6S7HQFPRBGUD524F65BUM2RQCITPTRLKWKES"),
+    ];
+    let state = test_state(&mock_server.uri(), tokens);
+
+    run_price_cycle(Arc::clone(&state)).await;
+
+    let status = state.cycle_status.read().await;
+    assert!(
+        !status.price_cycle_running,
+        "price_cycle_running must be false after cycle completes, even with partial failure"
+    );
+    assert!(
+        status.last_price_cycle_at.is_some(),
+        "last_price_cycle_at must be recorded after cycle completes"
+    );
+}
+
+#[tokio::test]
 async fn all_good_tokens_processed_when_one_fails() {
     let mock_server = MockServer::start().await;
 
