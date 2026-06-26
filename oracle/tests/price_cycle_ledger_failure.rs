@@ -354,3 +354,21 @@ async fn http_500_also_aborts_cycle() {
     let entries: Vec<_> = failures.iter().collect();
     assert!(!entries.is_empty(), "HTTP 500 must produce a failure record");
 }
+
+#[tokio::test]
+async fn ledger_failure_with_empty_token_list_still_resets_cycle() {
+    let mock = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(ledger_fail()))
+        .mount(&mock)
+        .await;
+
+    // No tokens configured — but ledger failure still aborts and resets state.
+    let state = test_state(&mock.uri(), vec![]);
+
+    run_price_cycle(Arc::clone(&state)).await;
+
+    let status = state.cycle_status.read().await;
+    assert!(!status.price_cycle_running);
+    assert!(status.last_price_cycle_at.is_some());
+}
