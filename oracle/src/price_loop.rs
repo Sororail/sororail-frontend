@@ -48,7 +48,11 @@ pub async fn run_price_cycle(state: Arc<AppState>) {
             }
             Err(error) => {
                 tokens_failed += 1;
-                record_error(&state, format!("price:{}", token.symbol), error).await;
+                let ctx = ErrorContext {
+                    token: token.stellar_address.clone(),
+                    symbol: token.symbol.clone(),
+                };
+                record_error_with_context(&state, format!("price:{}", token.symbol), error, ctx).await;
             }
         }
     }
@@ -93,10 +97,15 @@ async fn build_cached_price(
                 sources.push(source.clone());
             }
             Err(error) => {
-                record_error(
+                let ctx = ErrorContext {
+                    token: token.stellar_address.clone(),
+                    symbol: token.symbol.clone(),
+                };
+                record_error_with_context(
                     state,
                     format!("source:{}:{}", token.symbol, source),
                     error.clone(),
+                    ctx,
                 )
                 .await;
                 tracing::warn!(symbol = %token.symbol, source = %source, error = %error, "price source failed");
@@ -193,17 +202,31 @@ fn signed_cached_price(
     })
 }
 
+struct ErrorContext {
+    token: String,
+    symbol: String,
+}
+
 async fn record_error(
     state: &Arc<AppState>,
     operation: impl Into<String>,
     error: impl Into<String>,
 ) {
+    record_error_with_context(state, operation, error, ErrorContext { token: String::new(), symbol: String::new() }).await;
+}
+
+async fn record_error_with_context(
+    state: &Arc<AppState>,
+    operation: impl Into<String>,
+    error: impl Into<String>,
+    ctx: ErrorContext,
+) {
     state.failures.lock().await.push(FailedSubmission {
         at: SystemTime::now(),
         operation: operation.into(),
         network: state.config.network.as_str().to_string(),
-        token: String::new(),
-        symbol: String::new(),
+        token: ctx.token,
+        symbol: ctx.symbol,
         min: 0,
         max: 0,
         tx_hash: None,
