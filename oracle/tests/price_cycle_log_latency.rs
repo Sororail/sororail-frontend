@@ -515,3 +515,40 @@ async fn mixed_ledger_fail_and_ok_both_logged_in_metrics() {
         "successful cycle also logs latency_ms"
     );
 }
+
+#[tokio::test]
+async fn tokens_ok_plus_tokens_failed_equals_total_tokens() {
+    let mock = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(ledger_ok()))
+        .mount(&mock)
+        .await;
+
+    let state = test_state(
+        &mock.uri(),
+        vec![
+            fixed_token("T1", USDC_ADDR),
+            bad_token("F1", FAIL1_ADDR),
+            fixed_token("T2", XLM_ADDR),
+            bad_token("F2", FAIL2_ADDR),
+            fixed_token("T3", ADDR3),
+        ],
+    );
+
+    run_price_cycle(Arc::clone(&state)).await;
+
+    let cache = state.price_cache.read().await;
+    let failures = state.failures.lock().await;
+    let token_failures: Vec<_> = failures
+        .iter()
+        .filter(|e| e.operation.starts_with("price:"))
+        .collect();
+
+    let tokens_ok = cache.prices.len();
+    let tokens_failed = token_failures.len();
+    assert_eq!(
+        tokens_ok + tokens_failed,
+        5,
+        "tokens_ok ({tokens_ok}) + tokens_failed ({tokens_failed}) must equal total tokens (5)"
+    );
+}
