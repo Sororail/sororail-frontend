@@ -367,3 +367,34 @@ async fn two_cycles_with_partial_failure_count_both_in_metrics() {
         "both cycles must be counted even though a token failed in each"
     );
 }
+
+#[tokio::test]
+async fn failure_operation_field_contains_token_symbol() {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(ledger_ok_response()))
+        .mount(&mock_server)
+        .await;
+
+    let tokens = vec![bad_token(
+        "XLM",
+        "CXLM1111111111111111111111111111111111111111111111111111111",
+    )];
+    let state = test_state(&mock_server.uri(), tokens);
+
+    run_price_cycle(Arc::clone(&state)).await;
+
+    let failures = state.failures.lock().await;
+    let entries: Vec<_> = failures.iter().collect();
+    assert!(
+        !entries.is_empty(),
+        "at least one failure must be recorded"
+    );
+    let has_symbol = entries.iter().any(|f| f.operation.contains("XLM"));
+    assert!(
+        has_symbol,
+        "failure operation field must contain the token symbol; got: {:?}",
+        entries.iter().map(|f| &f.operation).collect::<Vec<_>>()
+    );
+}
