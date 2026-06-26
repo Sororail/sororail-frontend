@@ -18,8 +18,7 @@ fn test_config(rpc_url: &str, horizon_url: &str) -> Arc<Config> {
         network_passphrase: "Test SDF Network ; September 2015".to_string(),
         stellar_rpc_url: rpc_url.to_string(),
         horizon_url: horizon_url.to_string(),
-        oracle_contract_id: "CBEMTV23SIJJBIST3V5HTMWHR4MHYGHNBIG4M26U4LGUJTWZXTFSVQEY"
-            .to_string(),
+        oracle_contract_id: "CBEMTV23SIJJBIST3V5HTMWHR4MHYGHNBIG4M26U4LGUJTWZXTFSVQEY".to_string(),
         role_store_contract_id: "CBSUAIAMIFFS4AXQYZ7KR7FNO7IMKAPS5WF4DXANVXDTPKH2F7YUIN6Q"
             .to_string(),
         data_store_contract_id: "CCZ3VKBEDLNBO2JM3EXL3SNBDJOV5BTN52FVQPER7F6D5GCE53PITQ3J"
@@ -30,16 +29,14 @@ fn test_config(rpc_url: &str, horizon_url: &str) -> Arc<Config> {
             .to_string(),
         withdrawal_handler_contract_id: "CCA5HRHMG6E6BVYRICSLZ5CK5KNPAAKXQ7XWDM34WWVGNHWHA26GRVVE"
             .to_string(),
-        reader_contract_id: "CC6OZUHF3LVO6PNP3V2EB36ORB3YSVYSH3LWD3RFLO4NUO3BYCXSWSYC"
-            .to_string(),
+        reader_contract_id: "CC6OZUHF3LVO6PNP3V2EB36ORB3YSVYSH3LWD3RFLO4NUO3BYCXSWSYC".to_string(),
         keeper_private_key: SecretString::new(
             "1111111111111111111111111111111111111111111111111111111111111111".to_string(),
         ),
         keeper_secret_key: SecretString::new(
             "1111111111111111111111111111111111111111111111111111111111111111".to_string(),
         ),
-        keeper_account_id: "GAUHMCMUP5FZO5675W3ISZ6E6CNYJGXBUW5WANE2JR4TGAARYCTSCBKI"
-            .to_string(),
+        keeper_account_id: "GAUHMCMUP5FZO5675W3ISZ6E6CNYJGXBUW5WANE2JR4TGAARYCTSCBKI".to_string(),
         keeper_index: 0,
         admin_api_token: Some(SecretString::new("test-admin-token".to_string())),
         min_keeper_balance_xlm: 10.0,
