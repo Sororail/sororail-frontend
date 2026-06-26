@@ -56,7 +56,8 @@ pub async fn ready(State(state): State<Arc<AppState>>) -> Result<Json<HealthResp
                 ));
             }
         }
-        Err(_) => {
+        Err(error) => {
+            tracing::warn!(error = %error, "keeper balance check failed");
             return Err(ApiError::new(
                 StatusCode::SERVICE_UNAVAILABLE,
                 "keeper_balance_check_failed",
