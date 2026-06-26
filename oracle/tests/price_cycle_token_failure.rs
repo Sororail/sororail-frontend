@@ -296,6 +296,30 @@ async fn all_good_tokens_processed_when_one_fails() {
 }
 
 #[tokio::test]
+async fn good_tokens_have_non_zero_price_after_partial_failure() {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(ledger_ok_response()))
+        .mount(&mock_server)
+        .await;
+
+    let tokens = vec![
+        bad_token("SKIPME", "CSKIPME111111111111111111111111111111111111111111111111111"),
+        fixed_token("USDC", "CBAN5YU3KRDKPTQ2H76D6S7HQFPRBGUD524F65BUM2RQCITPTRLKWKES"),
+    ];
+    let state = test_state(&mock_server.uri(), tokens);
+
+    run_price_cycle(Arc::clone(&state)).await;
+
+    let cache = state.price_cache.read().await;
+    let usdc_key = cache_key("CBAN5YU3KRDKPTQ2H76D6S7HQFPRBGUD524F65BUM2RQCITPTRLKWKES");
+    let price = cache.prices.get(&usdc_key).expect("USDC must be cached");
+    assert!(price.min > 0, "cached min price must be positive");
+    assert!(price.max > 0, "cached max price must be positive");
+}
+
+#[tokio::test]
 async fn metrics_price_cycle_count_increments_after_partial_failure() {
     let mock_server = MockServer::start().await;
 
