@@ -482,3 +482,36 @@ async fn accumulated_cycle_count_matches_invocations() {
         "latency_ms is logged once per cycle; after {N} cycles counter must be {N}"
     );
 }
+
+#[tokio::test]
+async fn mixed_ledger_fail_and_ok_both_logged_in_metrics() {
+    // Cycle 1: ledger fails — finish_cycle still runs, logs latency_ms.
+    let mock_fail = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(ledger_fail()))
+        .mount(&mock_fail)
+        .await;
+    let state = test_state(&mock_fail.uri(), vec![fixed_token("USDC", USDC_ADDR)]);
+    run_price_cycle(Arc::clone(&state)).await;
+
+    assert_eq!(
+        state.metrics.to_response().price_cycle_count,
+        1,
+        "failed ledger cycle must also log latency_ms"
+    );
+
+    // Cycle 2: ledger succeeds — a second log event.
+    let mock_ok = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(ledger_ok()))
+        .mount(&mock_ok)
+        .await;
+    let state2 = test_state(&mock_ok.uri(), vec![fixed_token("USDC", USDC_ADDR)]);
+    run_price_cycle(Arc::clone(&state2)).await;
+
+    assert_eq!(
+        state2.metrics.to_response().price_cycle_count,
+        1,
+        "successful cycle also logs latency_ms"
+    );
+}
