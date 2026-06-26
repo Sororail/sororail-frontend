@@ -1,5 +1,9 @@
 /// Tests for issue #395: individual token failure must be recorded and skipped
-/// while all remaining tokens continue to be processed.
+/// while all remaining tokens continue to be processed in the same cycle.
+///
+/// Relevant code: oracle/src/price_loop.rs — the token loop in `run_price_cycle`
+/// continues on `Err` from `build_cached_price`, increments `tokens_failed`,
+/// and calls `record_error`, never aborting the iteration.
 use std::sync::Arc;
 use std::time::Duration;
 
