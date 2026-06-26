@@ -72,12 +72,10 @@ async fn finish_cycle(
         status.last_price_cycle_at = Some(SystemTime::now());
     }
 
-    tracing::info!(
-        tokens_ok,
-        tokens_failed,
-        latency_ms = started.elapsed().as_millis() as u64,
-        "cycle_complete"
-    );
+    let latency_ms = started.elapsed().as_millis() as u64;
+    state.metrics.record_price_cycle(latency_ms);
+
+    tracing::info!(tokens_ok, tokens_failed, latency_ms, "cycle_complete");
 }
 
 async fn build_cached_price(
@@ -109,8 +107,8 @@ async fn build_cached_price(
     let aggregate = crate::prices::aggregate_prices(
         &prices,
         &sources,
-        token.min_sources(),
-        token.max_deviation_bps(),
+        token.min_sources,
+        token.max_deviation_bps,
     )?;
     signed_cached_price(state, token, ledger_seq, aggregate)
 }
@@ -154,7 +152,7 @@ async fn fetch_source_price(source: &str, token: &TokenConfig) -> Result<i128, S
                 .pyth_feed_id
                 .as_ref()
                 .ok_or_else(|| "missing pyth_feed_id".to_string())?;
-            crate::pyth::fetch_pyth_price(feed_id, token.stale_after_seconds(), 50)
+            crate::pyth::fetch_pyth_price(feed_id, token.stale_after_seconds, 50)
                 .await
                 .map_err(|err| format!("{err:?}"))
         }
@@ -203,7 +201,15 @@ async fn record_error(
     state.failures.lock().await.push(FailedSubmission {
         at: SystemTime::now(),
         operation: operation.into(),
+        network: state.config.network.as_str().to_string(),
+        token: String::new(),
+        symbol: String::new(),
+        min: 0,
+        max: 0,
+        tx_hash: None,
         error: error.into(),
+        timestamp: 0,
+        ledger_seq: 0,
     });
 }
 
@@ -263,10 +269,10 @@ mod tests {
             coinbase_symbol: None,
             pyth_feed_id: None,
             fixed_price: Some("1000000000000000000000000000000".to_string()),
-            min_sources: Some(1),
-            max_deviation_bps: Some(100),
-            stale_after_seconds: None,
-            submit_threshold_bps: None,
+            min_sources: 1,
+            max_deviation_bps: 100,
+            stale_after_seconds: 60,
+            submit_threshold_bps: 10,
             min: 0.0,
             max: 0.0,
             sources_used: vec![],
