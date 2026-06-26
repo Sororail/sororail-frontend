@@ -137,41 +137,66 @@ mod tests {
         assert_eq!(resp.balance_xlm, 20.0);
     }
 
-    /// Closes #413: check_keeper_balance returns Err when balance is below minimum.
+    // ── check_keeper_balance — HTTP-level tests (#406) ────────────────────────
+
+    /// Closes #414: above minimum returns Ok(stroops).
     #[tokio::test]
-    async fn check_keeper_balance_below_min() {
+    async fn check_keeper_balance_above_minimum_returns_ok() {
+        use wiremock::matchers::path;
+
         let server = MockServer::start().await;
+        let body = r#"{
+            "id": "GKEEPER",
+            "balances": [{"asset_type":"native","balance":"20.0000000"}]
+        }"#;
+
         Mock::given(method("GET"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-                "balances": [{"asset_type": "native", "balance": "5.0000000"}]
-            })))
+            .and(path("/accounts/GKEEPER"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json"))
             .mount(&server)
             .await;
-        let config = KeeperBalanceConfig {
+
+        let cfg = KeeperBalanceConfig {
             horizon_url: server.uri(),
-            account_id: "GABC".to_string(),
+            account_id: "GKEEPER".to_string(),
             min_balance_xlm: 10.0,
         };
-        let result = check_keeper_balance(&config).await;
-        assert!(result.is_err());
+
+        let stroops = check_keeper_balance(&cfg).await.unwrap();
+        assert_eq!(stroops, 200_000_000); // 20 XLM in stroops
     }
 
-    /// Closes #414: check_keeper_balance returns Ok(stroops) when balance is above minimum.
+    /// Closes #413: below minimum returns Err(BalanceBelowMinimum).
     #[tokio::test]
-    async fn check_keeper_balance_above_min() {
+    async fn check_keeper_balance_below_minimum_returns_err() {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-                "balances": [{"asset_type": "native", "balance": "100.0000000"}]
+                "balances": [{"asset_type": "native", "balance": "3.0000000"}]
             })))
             .mount(&server)
             .await;
-        let config = KeeperBalanceConfig {
+
+        let cfg = KeeperBalanceConfig {
             horizon_url: server.uri(),
-            account_id: "GABC".to_string(),
+            account_id: "GKEEPER".to_string(),
             min_balance_xlm: 10.0,
         };
-        let result = check_keeper_balance(&config).await.unwrap();
-        assert_eq!(result, 1_000_000_000); // 100 XLM in stroops
+
+        let err = check_keeper_balance(&cfg).await.unwrap_err();
+        assert!(matches!(err, RpcError::BalanceBelowMinimum { .. }));
+    }
+
+    /// Horizon unreachable returns NetworkError.
+    #[tokio::test]
+    async fn check_keeper_balance_horizon_unreachable_returns_network_error() {
+        let cfg = KeeperBalanceConfig {
+            horizon_url: "http://127.0.0.1:19999".to_string(), // nothing listening
+            account_id: "GKEEPER".to_string(),
+            min_balance_xlm: 10.0,
+        };
+
+        let err = check_keeper_balance(&cfg).await.unwrap_err();
+        assert!(matches!(err, RpcError::NetworkError(_)));
     }
 }
