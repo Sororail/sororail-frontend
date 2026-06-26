@@ -13,12 +13,14 @@
 /// ```
 ///
 /// Covered invariants:
-/// - Error recorded in `state.failures` with operation = "get_latest_ledger".
-/// - Price cache untouched (no tokens processed, `last_updated` stays `None`).
+/// - Error recorded in `state.failures` with `operation = "get_latest_ledger"`.
+/// - Price cache untouched (`prices` empty, `last_updated` stays `None`).
 /// - `cycle_status.price_cycle_running` reset to `false` by `finish_cycle`.
-/// - `cycle_status.last_price_cycle_at` set even on abort.
-/// - Metrics counter incremented (finish_cycle always runs).
-/// - A subsequent good cycle succeeds normally after a prior ledger failure.
+/// - `cycle_status.last_price_cycle_at` is set (and within the test window).
+/// - Metrics counter increments on every invocation, abort or not.
+/// - Both JSON-RPC error codes and HTTP 5xx responses trigger the abort path.
+/// - Consecutive failures each generate independent failure records.
+/// - A subsequent successful cycle recovers normally.
 use std::sync::Arc;
 use std::time::Duration;
 
