@@ -20,6 +20,10 @@ pub async fn run_price_loop(state: Arc<AppState>) {
     }
 }
 
+/// Executes a single price collection and processing cycle (Resolves Issue #391).
+/// Fetches the latest Stellar ledger sequence, iterates through configured tokens,
+/// builds and aggregates their prices, signs the results, and updates the cache.
+/// Never panics on individual errors; they are recorded as failure submissions.
 pub async fn run_price_cycle(state: Arc<AppState>) {
     let started = Instant::now();
     {
@@ -64,6 +68,7 @@ pub async fn run_price_cycle(state: Arc<AppState>) {
     finish_cycle(&state, started, tokens_ok, tokens_failed).await;
 }
 
+/// Finalizes the cycle timing and updates `CycleStatus` state flags (Resolves Issue #394).
 async fn finish_cycle(
     state: &Arc<AppState>,
     started: Instant,
@@ -82,6 +87,8 @@ async fn finish_cycle(
     tracing::info!(tokens_ok, tokens_failed, latency_ms, "cycle_complete");
 }
 
+/// Fetches prices from all configured sources, filters and aggregates them,
+/// and produces a signed cached price (Resolves Issue #392).
 async fn build_cached_price(
     state: &Arc<AppState>,
     token: &TokenConfig,
@@ -170,6 +177,8 @@ async fn fetch_source_price(source: &str, token: &TokenConfig) -> Result<i128, S
     }
 }
 
+/// Signs the aggregated price payload and returns a CachedPrice (Resolves Issue #393).
+/// The signature matches the required format and is encoded to a 128 hex character string.
 fn signed_cached_price(
     state: &Arc<AppState>,
     token: &TokenConfig,
