@@ -439,3 +439,24 @@ async fn tokens_failed_operation_field_identifies_failing_token() {
         "failure operation must contain the token symbol so the log is meaningful"
     );
 }
+
+#[tokio::test]
+async fn cycle_status_set_by_finish_cycle_before_log() {
+    let mock = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(ledger_ok()))
+        .mount(&mock)
+        .await;
+
+    let state = test_state(&mock.uri(), vec![fixed_token("USDC", USDC_ADDR)]);
+
+    run_price_cycle(Arc::clone(&state)).await;
+
+    let status = state.cycle_status.read().await;
+    // finish_cycle sets these before calling record_price_cycle and the log.
+    assert!(!status.price_cycle_running);
+    assert!(
+        status.last_price_cycle_at.is_some(),
+        "last_price_cycle_at must be set, confirming finish_cycle (and the log) ran"
+    );
+}
