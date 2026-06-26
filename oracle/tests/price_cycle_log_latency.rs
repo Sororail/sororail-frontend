@@ -460,3 +460,25 @@ async fn cycle_status_set_by_finish_cycle_before_log() {
         "last_price_cycle_at must be set, confirming finish_cycle (and the log) ran"
     );
 }
+
+#[tokio::test]
+async fn accumulated_cycle_count_matches_invocations() {
+    let mock = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(ledger_ok()))
+        .mount(&mock)
+        .await;
+
+    let state = test_state(&mock.uri(), vec![fixed_token("USDC", USDC_ADDR)]);
+
+    const N: u64 = 4;
+    for _ in 0..N {
+        run_price_cycle(Arc::clone(&state)).await;
+    }
+
+    let metrics = state.metrics.to_response();
+    assert_eq!(
+        metrics.price_cycle_count, N,
+        "latency_ms is logged once per cycle; after {N} cycles counter must be {N}"
+    );
+}
