@@ -1,14 +1,15 @@
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 
 use tokio::time::{interval, MissedTickBehavior};
 use tracing::{error, info, warn};
 
+use crate::chain::scval;
+use crate::chain::tx_builder;
 use crate::state::{AppState, CachedPrice, FailedSubmission, KeeperExecution};
 
 const KEEPER_TX_FEE: u32 = 2_000_000;
-const POLL_INTERVAL_MS: u64 = 3000;
-const MAX_POLL_ATTEMPTS: u32 = 20;
 
 pub async fn run_keeper_loop(state: Arc<AppState>) {
     let mut ticker = interval(state.config.keeper_loop_interval);
@@ -16,11 +17,11 @@ pub async fn run_keeper_loop(state: Arc<AppState>) {
 
     loop {
         ticker.tick().await;
-        run_keeper_cycle(Arc::clone(&state)).await;
+        let _ = run_keeper_cycle(Arc::clone(&state)).await;
     }
 }
 
-pub async fn run_keeper_cycle(state: Arc<AppState>) {
+pub async fn run_keeper_cycle(state: Arc<AppState>) -> Result<CycleSummary, String> {
     let started = Instant::now();
     {
         let mut status = state.cycle_status.write().await;
@@ -36,7 +37,7 @@ pub async fn run_keeper_cycle(state: Arc<AppState>) {
     }
 
     let latency_ms = started.elapsed().as_millis() as u64;
-    match result {
+    match &result {
         Ok(summary) => {
             info!(
                 latency_ms,
@@ -56,17 +57,20 @@ pub async fn run_keeper_cycle(state: Arc<AppState>) {
         }
         Err(error) => {
             error!(latency_ms, %error, "keeper_cycle_failed");
-            record_error(&state, "keeper_cycle", error).await;
+            record_error(&state, "keeper_cycle", error, None).await;
             state.metrics.record_submit_failure();
         }
     }
+
+    result
 }
 
-struct CycleSummary {
-    orders_executed: usize,
-    deposits_executed: usize,
-    withdrawals_executed: usize,
-    errors: usize,
+#[derive(Debug)]
+pub struct CycleSummary {
+    pub orders_executed: usize,
+    pub deposits_executed: usize,
+    pub withdrawals_executed: usize,
+    pub errors: usize,
 }
 
 async fn execute_keeper_cycle(state: Arc<AppState>) -> Result<CycleSummary, String> {
@@ -104,7 +108,8 @@ async fn execute_keeper_cycle(state: Arc<AppState>) -> Result<CycleSummary, Stri
         "found_pending_work"
     );
 
-    let _ = set_prices_on_chain(&state, &prices).await?;
+    let tx_hash = set_prices_on_chain(&state, &prices).await?;
+    info!(hash = %tx_hash, "set_prices_confirmed");
     tokio::time::sleep(Duration::from_millis(5000)).await;
 
     let mut summary = CycleSummary {
@@ -115,7 +120,14 @@ async fn execute_keeper_cycle(state: Arc<AppState>) -> Result<CycleSummary, Stri
     };
 
     for order_key in &order_keys {
-        match execute_order(&state, order_key).await {
+        match execute_handler(
+            &state,
+            &state.config.order_handler_contract_id,
+            "execute_order",
+            order_key,
+        )
+        .await
+        {
             Ok(tx_hash) => {
                 summary.orders_executed += 1;
                 record_execution(
@@ -134,25 +146,28 @@ async fn execute_keeper_cycle(state: Arc<AppState>) -> Result<CycleSummary, Stri
 
                 let mut freeze_error_msg = None;
                 if error.contains("Budget, ExceededLimit") {
-                    match freeze_order(&state, order_key).await {
+                    match execute_handler(
+                        &state,
+                        &state.config.order_handler_contract_id,
+                        "freeze_order",
+                        order_key,
+                    )
+                    .await
+                    {
                         Ok(_) => info!(key = %order_key, "order_frozen_budget_exceeded"),
                         Err(freeze_error) => {
                             error!(key = %order_key, %freeze_error, "freeze_order_failed");
                             freeze_error_msg = Some(freeze_error.clone());
-                            record_error(
-                                &state,
-                                format!("freeze_order:{}", order_key),
-                                freeze_error,
-                            )
-                            .await;
+                            record_error(&state, "freeze_order", &freeze_error, None).await;
                         }
                     }
                 }
 
                 record_error(
                     &state,
-                    format!("execute_order:{}", order_key),
-                    error.clone(),
+                    &format!("execute_order:{}", order_key),
+                    &error,
+                    None,
                 )
                 .await;
                 record_execution(
@@ -169,7 +184,14 @@ async fn execute_keeper_cycle(state: Arc<AppState>) -> Result<CycleSummary, Stri
     }
 
     for deposit_key in &deposit_keys {
-        match execute_deposit(&state, deposit_key).await {
+        match execute_handler(
+            &state,
+            &state.config.deposit_handler_contract_id,
+            "execute_deposit",
+            deposit_key,
+        )
+        .await
+        {
             Ok(tx_hash) => {
                 summary.deposits_executed += 1;
                 record_execution(
@@ -187,8 +209,9 @@ async fn execute_keeper_cycle(state: Arc<AppState>) -> Result<CycleSummary, Stri
                 warn!(key = %deposit_key, %error, "deposit_execution_failed");
                 record_error(
                     &state,
-                    format!("execute_deposit:{}", deposit_key),
-                    error.clone(),
+                    &format!("execute_deposit:{}", deposit_key),
+                    &error,
+                    None,
                 )
                 .await;
                 record_execution(
@@ -205,7 +228,14 @@ async fn execute_keeper_cycle(state: Arc<AppState>) -> Result<CycleSummary, Stri
     }
 
     for withdrawal_key in &withdrawal_keys {
-        match execute_withdrawal(&state, withdrawal_key).await {
+        match execute_handler(
+            &state,
+            &state.config.withdrawal_handler_contract_id,
+            "execute_withdrawal",
+            withdrawal_key,
+        )
+        .await
+        {
             Ok(tx_hash) => {
                 summary.withdrawals_executed += 1;
                 record_execution(
@@ -223,8 +253,9 @@ async fn execute_keeper_cycle(state: Arc<AppState>) -> Result<CycleSummary, Stri
                 warn!(key = %withdrawal_key, %error, "withdrawal_execution_failed");
                 record_error(
                     &state,
-                    format!("execute_withdrawal:{}", withdrawal_key),
-                    error.clone(),
+                    &format!("execute_withdrawal:{}", withdrawal_key),
+                    &error,
+                    None,
                 )
                 .await;
                 record_execution(
@@ -281,75 +312,113 @@ async fn set_prices_on_chain(
     prices: &BTreeMap<String, CachedPrice>,
 ) -> Result<String, String> {
     let prices_vec: Vec<&CachedPrice> = prices.values().collect();
-    let scval_arg = build_prices_scval(&prices_vec)?;
+    let prices_scval = scval::encode_prices_vec(&prices_vec)?;
 
-    submit_contract_transaction(
-        state,
+    let sequence = get_account_sequence(state).await?;
+
+    let tx = tx_builder::build_invoke_tx(
+        &state.config.keeper_account_id,
         &state.config.oracle_contract_id,
         "set_prices",
-        &[&state.config.keeper_account_id, &scval_arg],
+        vec![prices_scval],
         1_000_000,
-    )
-    .await
+        sequence,
+    )?;
+
+    let signed_xdr = tx_builder::sign_transaction(
+        &tx,
+        state.config.keeper_secret_key.as_str(),
+        &state.config.network_passphrase,
+    )?;
+
+    let ledger = crate::submit::submit_and_poll(&state.config.stellar_rpc_url, &signed_xdr)
+        .await
+        .map_err(|e| format!("set_prices submit failed: {e}"))?;
+
+    info!(ledger, "set_prices confirmed on ledger");
+    Ok(format!("confirmed on ledger {ledger}"))
 }
 
-async fn execute_order(state: &Arc<AppState>, key: &str) -> Result<String, String> {
-    submit_handler_transaction(
-        state,
-        &state.config.order_handler_contract_id,
-        "execute_order",
-        key,
-    )
-    .await
-}
-
-async fn execute_deposit(state: &Arc<AppState>, key: &str) -> Result<String, String> {
-    submit_handler_transaction(
-        state,
-        &state.config.deposit_handler_contract_id,
-        "execute_deposit",
-        key,
-    )
-    .await
-}
-
-async fn execute_withdrawal(state: &Arc<AppState>, key: &str) -> Result<String, String> {
-    submit_handler_transaction(
-        state,
-        &state.config.withdrawal_handler_contract_id,
-        "execute_withdrawal",
-        key,
-    )
-    .await
-}
-
-async fn freeze_order(state: &Arc<AppState>, key: &str) -> Result<String, String> {
-    submit_handler_transaction(
-        state,
-        &state.config.order_handler_contract_id,
-        "freeze_order",
-        key,
-    )
-    .await
-}
-
-async fn submit_handler_transaction(
+async fn execute_handler(
     state: &Arc<AppState>,
     contract_id: &str,
     method: &str,
     key: &str,
 ) -> Result<String, String> {
-    let key_hex = hex::decode(key).map_err(|e| format!("invalid key hex: {e}"))?;
-    let key_scval = format!("Bytes({})", hex::encode(&key_hex));
+    let key_bytes = hex::decode(key).map_err(|e| format!("invalid key hex: {e}"))?;
+    let key_scval = stellar_xdr::ScVal::Bytes(stellar_xdr::ScBytes(
+        key_bytes
+            .try_into()
+            .map_err(|e| format!("key bytes conversion failed: {e}"))?,
+    ));
 
-    submit_contract_transaction(
-        state,
+    let sequence = get_account_sequence(state).await?;
+
+    let tx = tx_builder::build_invoke_tx(
+        &state.config.keeper_account_id,
         contract_id,
         method,
-        &[&state.config.keeper_account_id, &key_scval],
+        vec![
+            stellar_xdr::ScVal::Address(crate::chain::scval::strkey_to_sc_address(
+                &state.config.keeper_account_id,
+            )?),
+            key_scval,
+        ],
         KEEPER_TX_FEE,
-    )
-    .await
+        sequence,
+    )?;
+
+    let signed_xdr = tx_builder::sign_transaction(
+        &tx,
+        state.config.keeper_secret_key.as_str(),
+        &state.config.network_passphrase,
+    )?;
+
+    let ledger = crate::submit::submit_and_poll(&state.config.stellar_rpc_url, &signed_xdr)
+        .await
+        .map_err(|e| format!("{method} submit failed: {e}"))?;
+
+    info!(method, key = %key, ledger, "handler_confirmed");
+    Ok(format!("confirmed on ledger {ledger}"))
+}
+
+async fn get_account_sequence(state: &Arc<AppState>) -> Result<u64, String> {
+    let rpc_url = &state.config.stellar_rpc_url;
+    let account_id = &state.config.keeper_account_id;
+
+    let payload = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "getAccount",
+        "params": { "account": account_id }
+    });
+
+    let response = state
+        .http
+        .post(rpc_url)
+        .json(&payload)
+        .send()
+        .await
+        .map_err(|e| format!("getAccount request failed: {e}"))?;
+
+    let response_json: serde_json::Value = response
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse getAccount response: {e}"))?;
+
+    if let Some(error) = response_json.get("error") {
+        return Err(format!("getAccount error: {error}"));
+    }
+
+    let seq_str = response_json
+        .get("result")
+        .and_then(|r| r.get("sequence"))
+        .and_then(|s| s.as_str())
+        .ok_or_else(|| "Missing sequence in getAccount response".to_string())?;
+
+    seq_str
+        .parse::<u64>()
+        .map_err(|e| format!("failed to parse sequence '{seq_str}': {e}"))
 }
 
 async fn simulate_contract_call(
@@ -409,135 +478,6 @@ async fn simulate_contract_call(
     Ok(result.to_string())
 }
 
-async fn submit_contract_transaction(
-    state: &Arc<AppState>,
-    contract_id: &str,
-    method: &str,
-    args: &[&str],
-    fee: u32,
-) -> Result<String, String> {
-    let rpc_url = &state.config.stellar_rpc_url;
-    let passphrase = &state.config.network_passphrase;
-
-    let args_json: Vec<serde_json::Value> = args
-        .iter()
-        .map(|arg| serde_json::Value::String(arg.to_string()))
-        .collect();
-
-    let payload = serde_json::json!({
-        "jsonrpc": "2.0",
-        "id": 1,
-        "method": "sendTransaction",
-        "params": {
-            "transaction": {
-                "source_account": state.config.keeper_account_id,
-                "fee": fee.to_string(),
-                "network_passphrase": passphrase,
-                "operations": [{
-                    "type": "invoke",
-                    "contract_id": contract_id,
-                    "method": method,
-                    "args": args_json
-                }]
-            }
-        }
-    });
-
-    let response = state
-        .http
-        .post(rpc_url)
-        .json(&payload)
-        .send()
-        .await
-        .map_err(|e| format!("RPC request failed: {e}"))?;
-
-    let response_json: serde_json::Value = response
-        .json()
-        .await
-        .map_err(|e| format!("Failed to parse RPC response: {e}"))?;
-
-    if let Some(error) = response_json.get("error") {
-        return Err(format!("Submit error: {error}"));
-    }
-
-    let hash = response_json
-        .get("result")
-        .and_then(|r| r.get("hash"))
-        .and_then(|h| h.as_str())
-        .ok_or_else(|| "Missing hash in submit response".to_string())?;
-
-    let hash = hash.to_string();
-    info!(hash = %hash, "transaction_submitted");
-
-    poll_transaction(state, &hash).await?;
-
-    Ok(hash)
-}
-
-async fn poll_transaction(state: &Arc<AppState>, hash: &str) -> Result<(), String> {
-    let rpc_url = &state.config.stellar_rpc_url;
-
-    for attempt in 1..=MAX_POLL_ATTEMPTS {
-        tokio::time::sleep(Duration::from_millis(POLL_INTERVAL_MS)).await;
-
-        let payload = serde_json::json!({
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "getTransaction",
-            "params": {
-                "hash": hash
-            }
-        });
-
-        let response = state
-            .http
-            .post(rpc_url)
-            .json(&payload)
-            .send()
-            .await
-            .map_err(|e| format!("RPC request failed: {e}"))?;
-
-        let response_json: serde_json::Value = response
-            .json()
-            .await
-            .map_err(|e| format!("Failed to parse RPC response: {e}"))?;
-
-        let status = response_json
-            .get("result")
-            .and_then(|r| r.get("status"))
-            .and_then(|s| s.as_str())
-            .unwrap_or("UNKNOWN");
-
-        match status {
-            "SUCCESS" => {
-                info!(hash = %hash, attempt, "transaction_confirmed");
-                return Ok(());
-            }
-            "FAILED" => {
-                let meta = response_json
-                    .get("result")
-                    .and_then(|r| r.get("resultMetaXdr"))
-                    .and_then(|m| m.as_str())
-                    .unwrap_or("n/a");
-                return Err(format!(
-                    "Transaction FAILED on-chain. hash={} meta={}",
-                    &hash[..8.min(hash.len())],
-                    &meta[..100.min(meta.len())]
-                ));
-            }
-            _ => {
-                info!(hash = %hash, attempt, max = MAX_POLL_ATTEMPTS, "transaction_pending");
-            }
-        }
-    }
-
-    Err(format!(
-        "Transaction timed out after {}s: {}",
-        (MAX_POLL_ATTEMPTS as u64 * POLL_INTERVAL_MS) / 1000,
-        &hash[..8.min(hash.len())]
-    ))
-}
-
 fn parse_u32_from_result(result: &str) -> Result<u32, String> {
     let value: serde_json::Value =
         serde_json::from_str(result).map_err(|e| format!("failed to parse result: {e}"))?;
@@ -580,51 +520,24 @@ fn parse_bytes_vec_from_result(result: &str) -> Result<Vec<String>, String> {
     }
 }
 
-use std::collections::BTreeMap;
-
-fn build_prices_scval(prices: &[&CachedPrice]) -> Result<String, String> {
-    let scval_entries: Vec<serde_json::Value> = prices
-        .iter()
-        .map(|_price| {
-            serde_json::json!({
-                "key": "prices",
-                "val": {
-                    "vec": prices.iter().map(|p| build_signed_price_scval(p)).collect::<Vec<_>>()
-                }
-            })
-        })
-        .collect();
-
-    serde_json::to_string(&scval_entries).map_err(|e| format!("failed to serialize prices: {e}"))
-}
-
-fn build_signed_price_scval(price: &CachedPrice) -> serde_json::Value {
-    let sig_bytes = hex::decode(&price.signature).unwrap_or_default();
-    let min_price_str = price.min.to_string();
-    let max_price_str = price.max.to_string();
-
-    serde_json::json!({
-        "map": [
-            {"key": "keeper_index", "val": {"u32": 0}},
-            {"key": "ledger_seq", "val": {"u32": price.ledger_seq}},
-            {"key": "max_price", "val": {"i128": max_price_str}},
-            {"key": "min_price", "val": {"i128": min_price_str}},
-            {"key": "signature", "val": {"bytes": sig_bytes}},
-            {"key": "timestamp", "val": {"u64": price.timestamp}},
-            {"key": "token", "val": {"address": price.token_address}}
-        ]
-    })
-}
-
 async fn record_error(
     state: &Arc<AppState>,
-    operation: impl Into<String>,
-    error: impl Into<String>,
+    operation: &str,
+    error: &str,
+    _tx_hash: Option<String>,
 ) {
     state.failures.lock().await.push(FailedSubmission {
         at: SystemTime::now(),
-        operation: operation.into(),
-        error: error.into(),
+        operation: operation.to_string(),
+        network: state.config.network.as_str().to_string(),
+        token: String::new(),
+        symbol: String::new(),
+        min: 0,
+        max: 0,
+        tx_hash: None,
+        error: error.to_string(),
+        timestamp: 0,
+        ledger_seq: 0,
     });
 }
 
@@ -645,7 +558,6 @@ async fn record_execution(
         success,
         error,
     });
-    // Keep only the last 100 executions
     if keeper_status.last_executions.len() > 100 {
         keeper_status.last_executions.remove(0);
     }
@@ -659,24 +571,5 @@ mod tests {
     fn test_parse_u32_from_result() {
         assert_eq!(parse_u32_from_result("42").unwrap(), 42);
         assert_eq!(parse_u32_from_result(r#"{"u32": 42}"#).unwrap(), 42);
-    }
-
-    #[test]
-    fn test_build_signed_price_scval() {
-        let price = CachedPrice {
-            token_address: "CBAN5YU3KRDKPTQ2H76D6S7HQFPRBGUD524F65BUM2RQCITPTRLKWKES".to_string(),
-            symbol: "TUSDC".to_string(),
-            display_symbol: "USDC".to_string(),
-            min: 1_000_000_000_000_000_000_000_000_000_000,
-            max: 1_000_000_000_000_000_000_000_000_000_000,
-            median: 1_000_000_000_000_000_000_000_000_000_000,
-            timestamp: 1718400000,
-            ledger_seq: 12345,
-            sources_used: vec!["fixed".to_string()],
-            signature: "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000".to_string(),
-        };
-
-        let scval = build_signed_price_scval(&price);
-        assert!(scval.get("map").is_some());
     }
 }

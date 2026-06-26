@@ -1428,6 +1428,7 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "base64",
+ "digest",
  "dotenvy",
  "ed25519-dalek",
  "futures",
@@ -1435,6 +1436,7 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
+ "sha2",
  "shared-config",
  "stellar-rpc-client",
  "stellar-strkey 0.0.16",

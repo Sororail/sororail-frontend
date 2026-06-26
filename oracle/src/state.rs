@@ -67,7 +67,18 @@ pub struct KeeperExecution {
 pub struct FailedSubmission {
     pub at: SystemTime,
     pub operation: String,
+    pub network: String,
+    pub token: String,
+    pub symbol: String,
+    #[serde(serialize_with = "ser_i128_str")]
+    pub min: i128,
+    #[serde(serialize_with = "ser_i128_str")]
+    pub max: i128,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tx_hash: Option<String>,
     pub error: String,
+    pub timestamp: u64,
+    pub ledger_seq: u32,
 }
 
 pub fn ser_i128_str<S>(value: &i128, serializer: S) -> Result<S::Ok, S::Error>

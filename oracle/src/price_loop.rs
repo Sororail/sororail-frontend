@@ -201,7 +201,15 @@ async fn record_error(
     state.failures.lock().await.push(FailedSubmission {
         at: SystemTime::now(),
         operation: operation.into(),
+        network: state.config.network.as_str().to_string(),
+        token: String::new(),
+        symbol: String::new(),
+        min: 0,
+        max: 0,
+        tx_hash: None,
         error: error.into(),
+        timestamp: 0,
+        ledger_seq: 0,
     });
 }
 
