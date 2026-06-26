@@ -72,12 +72,10 @@ async fn finish_cycle(
         status.last_price_cycle_at = Some(SystemTime::now());
     }
 
-    tracing::info!(
-        tokens_ok,
-        tokens_failed,
-        latency_ms = started.elapsed().as_millis() as u64,
-        "cycle_complete"
-    );
+    let latency_ms = started.elapsed().as_millis() as u64;
+    state.metrics.record_price_cycle(latency_ms);
+
+    tracing::info!(tokens_ok, tokens_failed, latency_ms, "cycle_complete");
 }
 
 async fn build_cached_price(
@@ -203,7 +201,15 @@ async fn record_error(
     state.failures.lock().await.push(FailedSubmission {
         at: SystemTime::now(),
         operation: operation.into(),
+        network: state.config.network.as_str().to_string(),
+        token: String::new(),
+        symbol: String::new(),
+        min: 0,
+        max: 0,
+        tx_hash: None,
         error: error.into(),
+        timestamp: 0,
+        ledger_seq: 0,
     });
 }
 
