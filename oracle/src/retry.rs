@@ -1,4 +1,4 @@
-/// Retry an async fallible closure with exponential backoff.
+/// Retry an async fallible closure with exponential backoff (resolves #356).
 ///
 /// Doubles the delay after every failure, starting at `base_delay_ms`.
 /// Returns `Ok(T)` on the first success, or the last `Err(E)` after all
