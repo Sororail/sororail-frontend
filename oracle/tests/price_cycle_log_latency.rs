@@ -357,3 +357,35 @@ async fn latency_logged_for_every_cycle_in_consecutive_run() {
         "latency_ms must be logged on every cycle — 5 invocations = 5 events"
     );
 }
+
+#[tokio::test]
+async fn three_good_two_bad_log_fields_are_three_and_two() {
+    let mock = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(ledger_ok()))
+        .mount(&mock)
+        .await;
+
+    let state = test_state(
+        &mock.uri(),
+        vec![
+            fixed_token("T1", USDC_ADDR),
+            fixed_token("T2", XLM_ADDR),
+            fixed_token("T3", ADDR3),
+            bad_token("F1", FAIL1_ADDR),
+            bad_token("F2", FAIL2_ADDR),
+        ],
+    );
+
+    run_price_cycle(Arc::clone(&state)).await;
+
+    let cache = state.price_cache.read().await;
+    let failures = state.failures.lock().await;
+    let token_failures: Vec<_> = failures
+        .iter()
+        .filter(|e| e.operation.starts_with("price:"))
+        .collect();
+
+    assert_eq!(cache.prices.len(), 3, "tokens_ok = 3");
+    assert_eq!(token_failures.len(), 2, "tokens_failed = 2");
+}
