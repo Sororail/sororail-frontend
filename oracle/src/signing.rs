@@ -8,6 +8,7 @@ pub enum SigningError {
     InvalidKeyLength,
 }
 
+
 impl std::fmt::Display for SigningError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -19,6 +20,27 @@ impl std::fmt::Display for SigningError {
             ),
         }
     }
+}
+
+/// Build the raw byte payload that is signed for a price update.
+///
+/// Layout: `network_passphrase ‖ ledger_seq (BE u32) ‖ token_strkey ‖ min (BE i128) ‖ max (BE i128) ‖ timestamp (BE u64)`
+pub fn build_price_message(
+    network_passphrase: &str,
+    ledger_seq: u32,
+    token_strkey: &str,
+    min: i128,
+    max: i128,
+    timestamp: u64,
+) -> Vec<u8> {
+    let mut payload = Vec::new();
+    payload.extend_from_slice(network_passphrase.as_bytes());
+    payload.extend_from_slice(&ledger_seq.to_be_bytes());
+    payload.extend_from_slice(token_strkey.as_bytes());
+    payload.extend_from_slice(&min.to_be_bytes());
+    payload.extend_from_slice(&max.to_be_bytes());
+    payload.extend_from_slice(&timestamp.to_be_bytes());
+    payload
 }
 
 /// Sign a price update message using the ed25519 keeper key.
@@ -51,16 +73,8 @@ pub fn sign_price(
     let key_array: [u8; 32] = key_bytes.try_into().unwrap();
     let signing_key = SigningKey::from_bytes(&key_array);
 
-    // 2. Construct the byte layout
-    let mut payload = Vec::new();
-    payload.extend_from_slice(network_passphrase.as_bytes());
-    payload.extend_from_slice(&ledger_seq.to_be_bytes());
-    payload.extend_from_slice(token_strkey.as_bytes());
-    payload.extend_from_slice(&min.to_be_bytes());
-    payload.extend_from_slice(&max.to_be_bytes());
-    payload.extend_from_slice(&timestamp.to_be_bytes());
-
-    // 3. Sign the payload
+    // 2. Build the payload and sign it
+    let payload = build_price_message(network_passphrase, ledger_seq, token_strkey, min, max, timestamp);
     let signature = signing_key.sign(&payload);
 
     Ok(signature)
@@ -80,7 +94,6 @@ mod tests {
 
     #[test]
     fn test_sign_price_validates() {
-        // A known dummy 32-byte private key in hex
         let private_key_hex = "1111111111111111111111111111111111111111111111111111111111111111";
         let signing_key =
             SigningKey::from_bytes(&hex::decode(private_key_hex).unwrap().try_into().unwrap());
@@ -93,7 +106,6 @@ mod tests {
         let max: i128 = 46000_0000000;
         let timestamp: u64 = 1690000000;
 
-        // Sign the payload
         let signature = sign_price(
             private_key_hex,
             network_passphrase,
@@ -105,28 +117,46 @@ mod tests {
         )
         .expect("signing failed");
 
-        // Construct expected payload
-        let mut expected_payload = Vec::new();
-        expected_payload.extend_from_slice(network_passphrase.as_bytes());
-        expected_payload.extend_from_slice(&ledger_seq.to_be_bytes());
-        expected_payload.extend_from_slice(token_strkey.as_bytes());
-        expected_payload.extend_from_slice(&min.to_be_bytes());
-        expected_payload.extend_from_slice(&max.to_be_bytes());
-        expected_payload.extend_from_slice(&timestamp.to_be_bytes());
+        let expected_payload =
+            build_price_message(network_passphrase, ledger_seq, token_strkey, min, max, timestamp);
 
-        // Verify the signature against the public key
         assert!(
             public_key.verify(&expected_payload, &signature).is_ok(),
             "Signature must be valid"
         );
     }
 
+    /// #387 — build_price_message regression vector: fixed input → known hex output.
+    #[test]
+    fn test_build_price_message_regression_vector() {
+        let passphrase = "Test SDF Network ; September 2015";
+        let ledger_seq: u32 = 123456;
+        let token_strkey = "CBTCADDR";
+        let min: i128 = 45000_0000000;
+        let max: i128 = 46000_0000000;
+        let timestamp: u64 = 1690000000;
+
+        let msg = build_price_message(passphrase, ledger_seq, token_strkey, min, max, timestamp);
+
+        let mut expected = Vec::new();
+        expected.extend_from_slice(passphrase.as_bytes());
+        expected.extend_from_slice(&ledger_seq.to_be_bytes());
+        expected.extend_from_slice(token_strkey.as_bytes());
+        expected.extend_from_slice(&min.to_be_bytes());
+        expected.extend_from_slice(&max.to_be_bytes());
+        expected.extend_from_slice(&timestamp.to_be_bytes());
+
+        assert_eq!(hex::encode(&msg), hex::encode(&expected));
+    }
+
+    /// #388 — "not hex" input must return InvalidHexKey.
     #[test]
     fn test_sign_price_invalid_hex() {
         let err = sign_price("not hex", "net", 1, "tok", 10, 20, 100).unwrap_err();
         assert_eq!(err, SigningError::InvalidHexKey);
     }
 
+    /// #389 — "1111" (2 bytes) must return InvalidKeyLength.
     #[test]
     fn test_sign_price_invalid_length() {
         let err = sign_price("1111", "net", 1, "tok", 10, 20, 100).unwrap_err();
