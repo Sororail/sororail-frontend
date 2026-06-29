@@ -55,6 +55,8 @@ pub fn build_price_message(
 /// - `min`: i128 Big-Endian
 /// - `max`: i128 Big-Endian
 /// - `timestamp`: u64 Big-Endian
+
+//Fix size implementation for i128 and u64 to ensure correct byte representation
 pub fn sign_price(
     private_key_hex: &str,
     network_passphrase: &str,
@@ -73,18 +75,38 @@ pub fn sign_price(
     let key_array: [u8; 32] = key_bytes.try_into().unwrap();
     let signing_key = SigningKey::from_bytes(&key_array);
 
-    // 2. Build the payload and sign it
-    let payload = build_price_message(network_passphrase, ledger_seq, token_strkey, min, max, timestamp);
+    // 2. Construct the byte layout
+    let payload = build_price_message(
+        network_passphrase,
+        ledger_seq,
+        token_strkey,
+        min,
+        max,
+        timestamp,
+    );
+
+    // 3. Sign the payload
     let signature = signing_key.sign(&payload);
 
     Ok(signature)
 }
 
-/// Helper function to read the private key from the worker environment.
-pub fn get_keeper_private_key(env: &worker::Env) -> Result<String, SigningError> {
-    env.var("KEEPER_PRIVATE_KEY")
-        .map(|v| v.to_string())
-        .map_err(|_| SigningError::MissingPrivateKey)
+pub fn build_price_message(
+    network_passphrase: &str,
+    ledger_seq: u32,
+    token_strkey: &str,
+    min: i128,
+    max: i128,
+    timestamp: u64,
+) -> Vec<u8> {
+    let mut payload = Vec::new();
+    payload.extend_from_slice(network_passphrase.as_bytes());
+    payload.extend_from_slice(&ledger_seq.to_be_bytes());
+    payload.extend_from_slice(token_strkey.as_bytes());
+    payload.extend_from_slice(&min.to_be_bytes());
+    payload.extend_from_slice(&max.to_be_bytes());
+    payload.extend_from_slice(&timestamp.to_be_bytes());
+    payload
 }
 
 #[cfg(test)]
@@ -150,6 +172,23 @@ mod tests {
     }
 
     /// #388 — "not hex" input must return InvalidHexKey.
+    #[test]
+    fn price_message_layout_regression_vector() {
+        let bytes = build_price_message(
+            "Test SDF Network ; September 2015",
+            123456,
+            "CBAN5YU3KRDKPTQ2H76D6S7HQFPRBGUD524F65BUM2RQCITPTRLKWKES",
+            1_234_567_890_000_000_000_000_000_000_000i128,
+            1_234_667_890_000_000_000_000_000_000_000i128,
+            1_690_000_000,
+        );
+
+        assert_eq!(
+            hex::encode(bytes),
+            "5465737420534446204e6574776f726b203b2053657074656d62657220323031350001e2404342414e355955334b52444b505451324837364436533748514650524247554435323446363542554d3252514349545054524c4b574b45530000000f951a9f9cf13829cddf4000000000000f956d576fce0036a0c34000000000000064bb5a80"
+        );
+    }
+
     #[test]
     fn test_sign_price_invalid_hex() {
         let err = sign_price("not hex", "net", 1, "tok", 10, 20, 100).unwrap_err();

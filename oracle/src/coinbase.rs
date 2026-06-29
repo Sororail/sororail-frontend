@@ -1,5 +1,4 @@
 use serde::Deserialize;
-use worker::{Fetch, Url};
 
 pub const COINBASE_EXCHANGE_RATES_URL: &str =
     "https://api.coinbase.com/v2/exchange-rates?currency=";
@@ -62,24 +61,23 @@ pub fn parse_coinbase_http_result(
 pub async fn fetch_spot_price(symbol: &str) -> Result<i128, CoinbasePriceError> {
     // Usually the symbol passed is something like "BTC".
     // If it comes with USDT suffix, we should strip it or ensure we query the base asset.
-    let base_currency = if symbol.ends_with("USDT") {
-        &symbol[..symbol.len() - 4]
-    } else if symbol.ends_with("USD") {
-        &symbol[..symbol.len() - 3]
+    let base_currency = if let Some(stripped) = symbol.strip_suffix("USDT") {
+        stripped
+    } else if let Some(stripped) = symbol.strip_suffix("USD") {
+        stripped
     } else {
         symbol
     };
 
     let url_str = format!("{}{}", COINBASE_EXCHANGE_RATES_URL, base_currency);
-    let coinbase_url =
-        Url::parse(&url_str).map_err(|err| CoinbasePriceError::NetworkError(err.to_string()))?;
 
-    let mut response = Fetch::Url(coinbase_url)
+    let response = crate::http::client()
+        .get(&url_str)
         .send()
         .await
         .map_err(|err| CoinbasePriceError::NetworkError(err.to_string()))?;
 
-    let status = response.status_code();
+    let status = response.status().as_u16();
     let body = response
         .text()
         .await
@@ -140,5 +138,36 @@ mod tests {
     fn test_parse_coinbase_http_result_network_failure() {
         let err = parse_coinbase_http_result(Err("timeout".to_string())).unwrap_err();
         assert_eq!(err, CoinbasePriceError::NetworkError("timeout".to_string()));
+    }
+
+    // #363 — verify the USD rate is extracted and scaled to 1e30 precision
+    #[test]
+    fn test_coinbase_parse_extracts_usd_rate_correctly() {
+        let body = r#"{
+            "data": {
+                "currency": "XLM",
+                "rates": {
+                    "USD": "1.0",
+                    "EUR": "0.9"
+                }
+            }
+        }"#;
+        let result = parse_coinbase_response_body(body).unwrap();
+        assert_eq!(result, FLOAT_PRECISION);
+    }
+
+    // #364 — a response body without a USD key must return MissingUsdRate
+    #[test]
+    fn test_coinbase_parse_rejects_missing_usd_rate() {
+        let body = r#"{
+            "data": {
+                "currency": "XLM",
+                "rates": {
+                    "EUR": "0.9"
+                }
+            }
+        }"#;
+        let err = parse_coinbase_response_body(body).unwrap_err();
+        assert_eq!(err, CoinbasePriceError::MissingUsdRate);
     }
 }

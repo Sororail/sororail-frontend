@@ -1,13 +1,15 @@
 use serde::{Deserialize, Serialize};
-use worker::{Fetch, Headers, Method, Request, RequestInit};
 
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum RpcError {
     NetworkError(String),
     HttpError(u16),
     JsonError(String),
     RpcFault { code: i64, message: String },
+    BalanceBelowMinimum { balance_xlm: f64, min_xlm: f64 },
 }
+
+impl Eq for RpcError {}
 
 impl std::fmt::Display for RpcError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -17,6 +19,15 @@ impl std::fmt::Display for RpcError {
             RpcError::JsonError(msg) => write!(f, "JSON parse error: {msg}"),
             RpcError::RpcFault { code, message } => {
                 write!(f, "RPC fault {code}: {message}")
+            }
+            RpcError::BalanceBelowMinimum {
+                balance_xlm,
+                min_xlm,
+            } => {
+                write!(
+                    f,
+                    "balance {balance_xlm} XLM is below minimum {min_xlm} XLM"
+                )
             }
         }
     }
@@ -53,7 +64,7 @@ struct GetLatestLedgerResult {
     id: String,
     #[serde(rename = "protocolVersion")]
     #[allow(dead_code)]
-    protocol_version: String,
+    protocol_version: serde_json::Value,
 }
 
 /// Parse the raw JSON body returned by a `getLatestLedger` RPC call.
@@ -87,7 +98,7 @@ pub async fn get_latest_ledger_sequence(rpc_url: &str) -> Result<u32, RpcError> 
         jsonrpc: "2.0",
         id: 1,
         method: "getLatestLedger",
-        params: serde_json::Value::Array(vec![]),
+        params: serde_json::Value::Object(serde_json::Map::new()),
     })
     .map_err(|e| RpcError::JsonError(e.to_string()))?;
 
@@ -97,25 +108,15 @@ pub async fn get_latest_ledger_sequence(rpc_url: &str) -> Result<u32, RpcError> 
 
 /// Low-level helper: POST a JSON string to the RPC URL, return the response body.
 pub(crate) async fn rpc_post(rpc_url: &str, payload: String) -> Result<String, RpcError> {
-    let headers = Headers::new();
-    headers
-        .set("Content-Type", "application/json")
-        .map_err(|e| RpcError::NetworkError(e.to_string()))?;
-
-    let mut init = RequestInit::new();
-    init.with_method(Method::Post)
-        .with_headers(headers)
-        .with_body(Some(payload.into()));
-
-    let request = Request::new_with_init(rpc_url, &init)
-        .map_err(|e| RpcError::NetworkError(e.to_string()))?;
-
-    let mut response = Fetch::Request(request)
+    let response = crate::http::client()
+        .post(rpc_url)
+        .header("Content-Type", "application/json")
+        .body(payload)
         .send()
         .await
         .map_err(|e| RpcError::NetworkError(e.to_string()))?;
 
-    let status = response.status_code();
+    let status = response.status().as_u16();
     let body = response
         .text()
         .await
@@ -171,15 +172,13 @@ pub async fn get_account_balance_stroops(
 ) -> Result<i64, RpcError> {
     let url = format!("{horizon_url}/accounts/{account_id}");
 
-    let request = worker::Request::new(&url, worker::Method::Get)
-        .map_err(|e| RpcError::NetworkError(e.to_string()))?;
-
-    let mut response = worker::Fetch::Request(request)
+    let response = crate::http::client()
+        .get(&url)
         .send()
         .await
         .map_err(|e| RpcError::NetworkError(e.to_string()))?;
 
-    let status = response.status_code();
+    let status = response.status().as_u16();
     let body = response
         .text()
         .await
@@ -196,15 +195,20 @@ pub async fn get_account_balance_stroops(
 mod tests {
     use super::*;
 
+    /// Verifies that a valid `getLatestLedger` RPC response is parsed correctly
+    /// and the sequence number is extracted. Closes #409.
     #[test]
     fn parse_valid_latest_ledger_response() {
         let body = r#"{
             "jsonrpc":"2.0","id":1,
-            "result":{"id":"abc123","sequence":12345,"protocolVersion":"22"}
+            "result":{"id":"abc123","sequence":12345,"protocolVersion":22}
         }"#;
         assert_eq!(parse_latest_ledger_response(body).unwrap(), 12345u32);
     }
 
+    /// Verifies that an RPC fault in the `getLatestLedger` response is
+    /// propagated as `RpcError::RpcFault` with the correct code and message.
+    /// Closes #410.
     #[test]
     fn parse_rpc_fault_response() {
         let body = r#"{
@@ -273,5 +277,68 @@ mod tests {
     fn parse_account_balance_malformed_json() {
         let err = parse_account_balance_response("not json").unwrap_err();
         assert!(matches!(err, RpcError::JsonError(_)));
+    }
+
+    // ── get_account_balance_stroops — HTTP-level tests (#404) ────────────────
+
+    #[tokio::test]
+    async fn get_account_balance_stroops_200_returns_stroops() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let body = r#"{
+            "id": "GABC",
+            "balances": [
+                {"asset_type":"native","balance":"50.0000000"}
+            ]
+        }"#;
+
+        Mock::given(method("GET"))
+            .and(path("/accounts/GABC"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json"))
+            .mount(&server)
+            .await;
+
+        let result = get_account_balance_stroops(&server.uri(), "GABC").await;
+        assert_eq!(result.unwrap(), 500_000_000); // 50 XLM in stroops
+    }
+
+    #[tokio::test]
+    async fn get_account_balance_stroops_404_returns_http_error() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(path("/accounts/GNOT_FOUND"))
+            .respond_with(ResponseTemplate::new(404))
+            .mount(&server)
+            .await;
+
+        let err = get_account_balance_stroops(&server.uri(), "GNOT_FOUND")
+            .await
+            .unwrap_err();
+        assert_eq!(err, RpcError::HttpError(404));
+    }
+
+    #[tokio::test]
+    async fn get_account_balance_stroops_500_returns_http_error() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(path("/accounts/GABC"))
+            .respond_with(ResponseTemplate::new(500))
+            .mount(&server)
+            .await;
+
+        let err = get_account_balance_stroops(&server.uri(), "GABC")
+            .await
+            .unwrap_err();
+        assert_eq!(err, RpcError::HttpError(500));
     }
 }
