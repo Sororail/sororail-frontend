@@ -13,39 +13,6 @@ pub struct KeeperBalanceConfig {
     pub min_balance_xlm: f64,
 }
 
-/// Load keeper balance config from the worker environment.
-///
-/// Reads:
-/// - `KEEPER_ACCOUNT_ID` (required)
-/// - `HORIZON_URL` (optional; defaults based on `network_config::StellarNetwork`)
-/// - `MIN_KEEPER_BALANCE_XLM` (optional; defaults to 10.0)
-pub fn load_keeper_config(
-    env: &worker::Env,
-    default_horizon_url: &str,
-) -> Result<KeeperBalanceConfig, String> {
-    let account_id = env
-        .var("KEEPER_ACCOUNT_ID")
-        .map_err(|_| "KEEPER_ACCOUNT_ID is not set".to_string())?
-        .to_string();
-
-    let horizon_url = env
-        .var("HORIZON_URL")
-        .map(|v| v.to_string())
-        .unwrap_or_else(|_| default_horizon_url.to_string());
-
-    let min_balance_xlm = env
-        .var("MIN_KEEPER_BALANCE_XLM")
-        .ok()
-        .and_then(|v| v.to_string().parse::<f64>().ok())
-        .unwrap_or(DEFAULT_MIN_KEEPER_BALANCE_XLM);
-
-    Ok(KeeperBalanceConfig {
-        horizon_url,
-        account_id,
-        min_balance_xlm,
-    })
-}
-
 /// Check the keeper balance.  Returns the current balance in stroops.
 ///
 /// Logs a critical warning and optionally returns the balance even when below
@@ -55,18 +22,23 @@ pub async fn check_keeper_balance(cfg: &KeeperBalanceConfig) -> Result<i64, RpcE
 
     let xlm = stroops as f64 / XLM_IN_STROOPS as f64;
     if xlm < cfg.min_balance_xlm {
-        worker::console_error!(
-            "[keeper] CRITICAL: balance {xlm:.7} XLM is below minimum {:.7} XLM — \
-             consider topping up account {}",
-            cfg.min_balance_xlm,
-            cfg.account_id
+        tracing::error!(
+            balance_xlm = xlm,
+            min_balance_xlm = cfg.min_balance_xlm,
+            account_id = cfg.account_id,
+            "keeper balance below minimum"
         );
-    } else {
-        worker::console_log!(
-            "[keeper] balance ok: {xlm:.7} XLM (min={:.7})",
-            cfg.min_balance_xlm
-        );
+        return Err(RpcError::BalanceBelowMinimum {
+            balance_xlm: xlm,
+            min_xlm: cfg.min_balance_xlm,
+        });
     }
+
+    tracing::info!(
+        balance_xlm = xlm,
+        min_balance_xlm = cfg.min_balance_xlm,
+        "keeper balance ok"
+    );
 
     Ok(stroops)
 }
@@ -96,31 +68,24 @@ pub fn build_balance_response(cfg: &KeeperBalanceConfig, stroops: i64) -> Balanc
 pub const FRIENDBOT_URL: &str = "https://friendbot.stellar.org";
 
 /// Call the Stellar testnet Friendbot to fund `account_id`.
-///
-/// Uses `worker::Fetch` (the only HTTP client available in the WASM Worker
-/// runtime).  Returns `Ok(())` on a 200/400 response (400 means the account
-/// already exists/is funded, which is not an error).  Returns `Err` on
-/// network failures or other non-success statuses.
-///
-/// This function must be called directly inside an `async` Cloudflare Worker
-/// handler — it must **not** be spawned, because `worker::Fetch` futures are
-/// `!Send`.
 pub async fn fund_keeper_via_friendbot(account_id: &str) -> Result<(), String> {
-    let url = format!("{FRIENDBOT_URL}?addr={account_id}");
-    worker::console_log!("[keeper] calling Friendbot for account {account_id}");
+    fund_keeper_at(FRIENDBOT_URL, account_id).await
+}
 
-    let request = worker::Request::new(&url, worker::Method::Get)
-        .map_err(|e| format!("failed to build Friendbot request: {e}"))?;
+async fn fund_keeper_at(base_url: &str, account_id: &str) -> Result<(), String> {
+    let url = format!("{base_url}?addr={account_id}");
+    tracing::info!(account_id, "calling Friendbot");
 
-    let mut response = worker::Fetch::Request(request)
+    let response = crate::http::client()
+        .get(url)
         .send()
         .await
         .map_err(|e| format!("Friendbot fetch failed: {e}"))?;
 
-    let status = response.status_code();
+    let status = response.status().as_u16();
     // 200 = funded; 400 = account already exists (idempotent — treat as success)
     if status == 200 || status == 400 {
-        worker::console_log!("[keeper] Friendbot response {status} for {account_id}");
+        tracing::info!(account_id, status, "Friendbot response accepted");
         return Ok(());
     }
 
@@ -137,6 +102,8 @@ pub async fn fund_keeper_via_friendbot(account_id: &str) -> Result<(), String> {
 mod tests {
     use super::*;
     use crate::stellar_rpc::parse_account_balance_response;
+    use wiremock::matchers::method;
+    use wiremock::{Mock, MockServer, ResponseTemplate};
 
     fn low_balance_body() -> &'static str {
         r#"{"id":"GABC","balances":[{"asset_type":"native","balance":"3.0000000"}]}"#
@@ -172,5 +139,104 @@ mod tests {
         let resp = build_balance_response(&cfg, stroops);
         assert!(!resp.below_minimum);
         assert_eq!(resp.balance_xlm, 20.0);
+    }
+
+    // ── check_keeper_balance — HTTP-level tests (#406) ────────────────────────
+
+    /// Closes #414: above minimum returns Ok(stroops).
+    #[tokio::test]
+    async fn check_keeper_balance_above_minimum_returns_ok() {
+        use wiremock::matchers::path;
+
+        let server = MockServer::start().await;
+        let body = r#"{
+            "id": "GKEEPER",
+            "balances": [{"asset_type":"native","balance":"20.0000000"}]
+        }"#;
+
+        Mock::given(method("GET"))
+            .and(path("/accounts/GKEEPER"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json"))
+            .mount(&server)
+            .await;
+
+        let cfg = KeeperBalanceConfig {
+            horizon_url: server.uri(),
+            account_id: "GKEEPER".to_string(),
+            min_balance_xlm: 10.0,
+        };
+
+        let stroops = check_keeper_balance(&cfg).await.unwrap();
+        assert_eq!(stroops, 200_000_000); // 20 XLM in stroops
+    }
+
+    /// Closes #413: below minimum returns Err(BalanceBelowMinimum).
+    #[tokio::test]
+    async fn check_keeper_balance_below_minimum_returns_err() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "balances": [{"asset_type": "native", "balance": "3.0000000"}]
+            })))
+            .mount(&server)
+            .await;
+
+        let cfg = KeeperBalanceConfig {
+            horizon_url: server.uri(),
+            account_id: "GKEEPER".to_string(),
+            min_balance_xlm: 10.0,
+        };
+
+        let err = check_keeper_balance(&cfg).await.unwrap_err();
+        assert!(matches!(err, RpcError::BalanceBelowMinimum { .. }));
+    }
+
+    /// Horizon unreachable returns NetworkError.
+    #[tokio::test]
+    async fn check_keeper_balance_horizon_unreachable_returns_network_error() {
+        let cfg = KeeperBalanceConfig {
+            horizon_url: "http://127.0.0.1:19999".to_string(), // nothing listening
+            account_id: "GKEEPER".to_string(),
+            min_balance_xlm: 10.0,
+        };
+
+        let err = check_keeper_balance(&cfg).await.unwrap_err();
+        assert!(matches!(err, RpcError::NetworkError(_)));
+    }
+
+    // ── fund_keeper_via_friendbot — HTTP-level tests ─────────────────────────
+
+    /// Verifies that a 400 response from Friendbot (account already funded) is
+    /// treated as success — the operation is idempotent.
+    #[tokio::test]
+    async fn fund_keeper_via_friendbot_already_funded_400_returns_ok() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(
+                ResponseTemplate::new(400).set_body_string(
+                    r#"{"detail":"createAccountAlreadyExist","status":400,"title":"Transaction Failed"}"#,
+                ),
+            )
+            .mount(&server)
+            .await;
+
+        let result = super::fund_keeper_at(&server.uri(), "GNEWACCOUNT").await;
+        assert!(result.is_ok());
+    }
+
+    /// Verifies that a 200 response from Friendbot (new account funded) returns Ok.
+    #[tokio::test]
+    async fn fund_keeper_via_friendbot_new_account_200_returns_ok() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_string(r#"{"hash":"abc123","ledger":12345}"#),
+            )
+            .mount(&server)
+            .await;
+
+        let result = super::fund_keeper_at(&server.uri(), "GNEWACCOUNT").await;
+        assert!(result.is_ok());
     }
 }

@@ -1,7 +1,6 @@
 use serde::Deserialize;
-use worker::{Fetch, Url};
 
-pub const BINANCE_TICKER_PRICE_URL: &str = "https://api.binance.com/api/v3/ticker/price";
+pub const BINANCE_TICKER_PRICE_URL: &str = "https://data-api.binance.vision/api/v3/ticker/price";
 pub const FLOAT_PRECISION: i128 = 1_000_000_000_000_000_000_000_000_000_000;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -18,12 +17,23 @@ pub struct BinanceTickerEntry {
     pub price: String,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum BinanceTickerResponse {
+    Single(BinanceTickerEntry),
+    Many(Vec<BinanceTickerEntry>),
+}
+
 pub fn parse_ticker_response_body(
     body: &str,
     symbols: &[String],
 ) -> Result<Vec<(String, i128)>, BinancePriceError> {
-    let entries: Vec<BinanceTickerEntry> =
+    let response: BinanceTickerResponse =
         serde_json::from_str(body).map_err(|err| BinancePriceError::JsonError(err.to_string()))?;
+    let entries = match response {
+        BinanceTickerResponse::Single(entry) => vec![entry],
+        BinanceTickerResponse::Many(entries) => entries,
+    };
 
     let mut results = Vec::new();
     for symbol in symbols {
@@ -58,13 +68,17 @@ pub fn parse_ticker_http_result(
 pub async fn fetch_spot_prices(
     symbols: &[String],
 ) -> Result<Vec<(String, i128)>, BinancePriceError> {
-    let binance_url = Url::parse(BINANCE_TICKER_PRICE_URL)
-        .map_err(|err| BinancePriceError::NetworkError(err.to_string()))?;
-    let mut response = Fetch::Url(binance_url)
+    let url = if symbols.len() == 1 {
+        format!("{}?symbol={}", BINANCE_TICKER_PRICE_URL, symbols[0])
+    } else {
+        BINANCE_TICKER_PRICE_URL.to_string()
+    };
+    let response = crate::http::client()
+        .get(&url)
         .send()
         .await
         .map_err(|err| BinancePriceError::NetworkError(err.to_string()))?;
-    let status = response.status_code();
+    let status = response.status().as_u16();
     let body = response
         .text()
         .await
@@ -150,6 +164,60 @@ mod tests {
         assert!(parse_price_to_precision("abc").is_err());
     }
 
+    // #345 — rejects negatives and multiple dots
+    #[test]
+    fn parse_price_rejects_negative() {
+        let err = parse_price_to_precision("-1.5").unwrap_err();
+        assert!(matches!(err, BinancePriceError::PriceParseError(_)));
+    }
+
+    #[test]
+    fn parse_price_rejects_multiple_dots() {
+        let err = parse_price_to_precision("1.2.3").unwrap_err();
+        assert!(matches!(err, BinancePriceError::PriceParseError(_)));
+    }
+
+    #[test]
+    fn parse_price_truncates_fractional_part_to_30_digits() {
+        // 40 fractional digits should be truncated to 30
+        let result =
+            parse_price_to_precision("1.1234567890123456789012345678901234567890").unwrap();
+        // Only first 30 digits used: 123456789012345678901234567890
+        let expected_frac = 123_456_789_012_345_678_901_234_567_890i128;
+        assert_eq!(result, FLOAT_PRECISION + expected_frac);
+    }
+
+    #[test]
+    fn parse_price_truncates_fractional_with_leading_zeros() {
+        // 31 fractional digits, first 30 are zeros; truncation loses the trailing 5
+        let result = parse_price_to_precision("1.0000000000000000000000000000005").unwrap();
+        assert_eq!(result, FLOAT_PRECISION);
+    }
+
+    #[test]
+    fn parse_price_pads_fractional_to_30_digits() {
+        // 2 fractional digits padded to 30 zeros
+        let result = parse_price_to_precision("1.5").unwrap();
+        assert_eq!(result, FLOAT_PRECISION + (FLOAT_PRECISION / 2));
+    }
+
+    #[test]
+    fn parse_price_exact_30_fractional_digits() {
+        // Exactly 30 fractional digits, no truncation or padding needed
+        let result = parse_price_to_precision("1.123456789012345678901234567890").unwrap();
+        let expected_frac = 123_456_789_012_345_678_901_234_567_890i128;
+        assert_eq!(result, FLOAT_PRECISION + expected_frac);
+    }
+
+    #[test]
+    fn parse_price_correct_scaling_to_1e30() {
+        assert_eq!(parse_price_to_precision("1").unwrap(), FLOAT_PRECISION);
+        assert_eq!(
+            parse_price_to_precision("0.5").unwrap(),
+            FLOAT_PRECISION / 2
+        );
+    }
+
     #[test]
     fn parse_ticker_response_filters_symbols() {
         let body = r#"[{"symbol":"BTCUSDT","price":"100.25"},{"symbol":"ETHUSDT","price":"10.5"}]"#;
@@ -158,6 +226,19 @@ mod tests {
         assert_eq!(parsed.len(), 1);
         assert_eq!(parsed[0].0, "ETHUSDT".to_string());
         assert_eq!(parsed[0].1, 10 * FLOAT_PRECISION + (FLOAT_PRECISION / 2));
+    }
+
+    #[test]
+    fn parse_single_ticker_response() {
+        let body = r#"{"symbol":"BTCUSDT","price":"60733.99000000"}"#;
+        let symbols = vec!["BTCUSDT".to_string()];
+        let parsed = parse_ticker_response_body(body, &symbols).unwrap();
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0].0, "BTCUSDT".to_string());
+        assert_eq!(
+            parsed[0].1,
+            60733 * FLOAT_PRECISION + 99 * (FLOAT_PRECISION / 100)
+        );
     }
 
     #[test]
