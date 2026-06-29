@@ -168,4 +168,31 @@ mod tests {
         assert_eq!(cfg.tokens[0].sources, vec!["binance"]);
         assert_eq!(cfg.tokens[1].sources, vec!["coinbase"]);
     }
+
+    // ── #324 acceptance criteria ──────────────────────────────────────────────
+
+    /// #324 — empty array → EmptyTokenList.
+    #[test]
+    fn parse_token_configs_empty_array_returns_empty_token_list() {
+        let err = parse_price_feed_config("[]").unwrap_err();
+        assert_eq!(err, ConfigError::EmptyTokenList);
+    }
+
+    /// #324 — entry with empty symbol → InvalidToken.
+    #[test]
+    fn parse_token_configs_empty_symbol_returns_invalid_token() {
+        let json = r#"[{"symbol":"","stellar_address":"CADDR","sources":["binance"]}]"#;
+        let err = parse_price_feed_config(json).unwrap_err();
+        assert!(matches!(err, ConfigError::InvalidToken { .. }));
+    }
+
+    /// #324 — missing stellar_address → InvalidToken (required field).
+    #[test]
+    fn parse_token_configs_missing_stellar_address_returns_invalid_token() {
+        let json = r#"[{"symbol":"BTC","stellar_address":"","sources":["binance"]}]"#;
+        let err = parse_price_feed_config(json).unwrap_err();
+        assert!(
+            matches!(err, ConfigError::InvalidToken { ref symbol, .. } if symbol == "BTC")
+        );
+    }
 }
