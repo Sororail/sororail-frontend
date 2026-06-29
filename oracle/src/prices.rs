@@ -484,10 +484,24 @@ mod tests {
     }
 
     #[test]
+    fn test_compute_median_five_prices() {
+        let prices = [1000, 3000, 2000, 5000, 4000];
+        let median = compute_median(&prices);
+        assert_eq!(median, Some(3000));
+    }
+
+    #[test]
     fn test_compute_median_two_prices() {
         let prices = [1000, 3000];
         let median = compute_median(&prices);
         assert_eq!(median, Some(2000));
+    }
+
+    #[test]
+    fn test_compute_median_six_prices() {
+        let prices = [1000, 2000, 3000, 4000, 5000, 6000];
+        let median = compute_median(&prices);
+        assert_eq!(median, Some(3500));
     }
 
     #[test]
