@@ -17,6 +17,8 @@ pub mod retry;
 pub mod signing;
 pub mod stellar_rpc;
 pub mod submit;
+pub mod auth;
+pub mod ring_buffer;
 
 use network_config::StellarNetwork;
 use serde::{Deserialize, Serialize};
