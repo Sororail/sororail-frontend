@@ -22,6 +22,7 @@ impl std::fmt::Display for SigningError {
     }
 }
 
+/// Construct the price message byte payload.
 /// Build the raw byte payload that is signed for a price update.
 ///
 /// Layout: `network_passphrase ‖ ledger_seq (BE u32) ‖ token_strkey ‖ min (BE i128) ‖ max (BE i128) ‖ timestamp (BE u64)`
@@ -45,8 +46,7 @@ pub fn build_price_message(
 
 /// Sign a price update message using the ed25519 keeper key.
 ///
-/// The message layout is:
-/// `network_passphrase ‖ ledger_seq ‖ token_strkey ‖ min ‖ max ‖ timestamp`
+/// Layout: `network_passphrase || ledger_seq || token_strkey || min || max || timestamp`
 ///
 /// Data types:
 /// - `network_passphrase`: UTF-8 bytes
@@ -55,6 +55,25 @@ pub fn build_price_message(
 /// - `min`: i128 Big-Endian
 /// - `max`: i128 Big-Endian
 /// - `timestamp`: u64 Big-Endian
+pub fn build_price_message(
+    network_passphrase: &str,
+    ledger_seq: u32,
+    token_strkey: &str,
+    min: i128,
+    max: i128,
+    timestamp: u64,
+) -> Vec<u8> {
+    let mut payload = Vec::new();
+    payload.extend_from_slice(network_passphrase.as_bytes());
+    payload.extend_from_slice(&ledger_seq.to_be_bytes());
+    payload.extend_from_slice(token_strkey.as_bytes());
+    payload.extend_from_slice(&min.to_be_bytes());
+    payload.extend_from_slice(&max.to_be_bytes());
+    payload.extend_from_slice(&timestamp.to_be_bytes());
+    payload
+}
+
+/// Sign a price update message using the ed25519 keeper key.
 
 //Fix size implementation for i128 and u64 to ensure correct byte representation
 pub fn sign_price(
@@ -66,7 +85,6 @@ pub fn sign_price(
     max: i128,
     timestamp: u64,
 ) -> Result<Signature, SigningError> {
-    // 1. Parse the private key securely without logging it
     let key_bytes = hex::decode(private_key_hex).map_err(|_| SigningError::InvalidHexKey)?;
     if key_bytes.len() != 32 {
         return Err(SigningError::InvalidKeyLength);
@@ -75,6 +93,10 @@ pub fn sign_price(
     let key_array: [u8; 32] = key_bytes.try_into().unwrap();
     let signing_key = SigningKey::from_bytes(&key_array);
 
+    let payload = build_price_message(network_passphrase, ledger_seq, token_strkey, min, max, timestamp);
+    let signature = signing_key.sign(&payload);
+
+    Ok(signature)
     // 2. Construct the byte layout
     let payload = build_price_message(
         network_passphrase,
@@ -184,5 +206,37 @@ mod tests {
     fn test_sign_price_invalid_length() {
         let err = sign_price("1111", "net", 1, "tok", 10, 20, 100).unwrap_err();
         assert_eq!(err, SigningError::InvalidKeyLength);
+    }
+
+    #[test]
+    fn test_build_price_message_layout() {
+        let payload = build_price_message(
+            "Test SDF Network ; September 2015",
+            123456,
+            "CBTCADDR",
+            45000_0000000,
+            46000_0000000,
+            1690000000,
+        );
+
+        let expected = b"Test SDF Network ; September 2015";
+        assert_eq!(&payload[0..expected.len()], expected);
+
+        let offset = expected.len();
+        assert_eq!(&payload[offset..offset + 4], &123456u32.to_be_bytes());
+
+        let offset = offset + 4;
+        assert_eq!(&payload[offset..offset + 8], b"CBTCADDR");
+
+        let offset = offset + 8;
+        assert_eq!(&payload[offset..offset + 16], &45000_0000000i128.to_be_bytes());
+
+        let offset = offset + 16;
+        assert_eq!(&payload[offset..offset + 16], &46000_0000000i128.to_be_bytes());
+
+        let offset = offset + 16;
+        assert_eq!(&payload[offset..offset + 8], &1690000000u64.to_be_bytes());
+
+        assert_eq!(payload.len(), expected.len() + 4 + 8 + 16 + 16 + 8);
     }
 }

@@ -36,4 +36,4 @@ temp_docs.md
 ISSUES.md
 scripts/.deploy-testnet-state
 /target_local
-.kilo/
+oracle/target_local
