@@ -181,21 +181,53 @@ impl Config {
             admin_api_token: lookup("ADMIN_API_TOKEN")
                 .filter(|value| !value.trim().is_empty())
                 .map(SecretString::new),
-            min_keeper_balance_xlm: parse_or_default(
-                &mut lookup,
-                "MIN_KEEPER_BALANCE_XLM",
-                &DEFAULT_MIN_KEEPER_BALANCE_XLM.to_string(),
-            )?,
-            price_loop_interval: Duration::from_millis(parse_or_default(
-                &mut lookup,
-                "PRICE_LOOP_MS",
-                &DEFAULT_PRICE_LOOP_MS.to_string(),
-            )?),
-            keeper_loop_interval: Duration::from_millis(parse_or_default(
-                &mut lookup,
-                "KEEPER_LOOP_MS",
-                &DEFAULT_KEEPER_LOOP_MS.to_string(),
-            )?),
+            min_keeper_balance_xlm: {
+                let value: f64 = parse_or_default(
+                    &mut lookup,
+                    "MIN_KEEPER_BALANCE_XLM",
+                    &DEFAULT_MIN_KEEPER_BALANCE_XLM.to_string(),
+                )?;
+                // Issue #564: reject non-finite/negative values — a NaN threshold
+                // silently disables the low-balance check (NaN comparisons are
+                // always false); an infinite threshold makes the keeper consider
+                // itself perpetually below minimum.
+                if !value.is_finite() || value < 0.0 {
+                    return Err(EnvError::InvalidVar {
+                        var: "MIN_KEEPER_BALANCE_XLM",
+                        reason: format!("must be a finite, non-negative number, got {value}"),
+                    });
+                }
+                value
+            },
+            price_loop_interval: {
+                let ms: u64 = parse_or_default(
+                    &mut lookup,
+                    "PRICE_LOOP_MS",
+                    &DEFAULT_PRICE_LOOP_MS.to_string(),
+                )?;
+                // Issue #563: tokio::time::interval() panics on a zero period.
+                if ms == 0 {
+                    return Err(EnvError::InvalidVar {
+                        var: "PRICE_LOOP_MS",
+                        reason: "must be greater than 0".to_string(),
+                    });
+                }
+                Duration::from_millis(ms)
+            },
+            keeper_loop_interval: {
+                let ms: u64 = parse_or_default(
+                    &mut lookup,
+                    "KEEPER_LOOP_MS",
+                    &DEFAULT_KEEPER_LOOP_MS.to_string(),
+                )?;
+                if ms == 0 {
+                    return Err(EnvError::InvalidVar {
+                        var: "KEEPER_LOOP_MS",
+                        reason: "must be greater than 0".to_string(),
+                    });
+                }
+                Duration::from_millis(ms)
+            },
             price_feed,
         })
     }
