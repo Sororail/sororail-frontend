@@ -291,3 +291,219 @@ fn test_scval_encoding_matches_ts_keeper_pattern() {
         _ => panic!("expected ScVal::Map with 7 entries"),
     }
 }
+
+#[tokio::test]
+async fn keeper_cycle_freezes_order_when_budget_exceeded_and_freeze_succeeds() {
+    let mock_server = MockServer::start().await;
+    let rpc_url = mock_server.uri();
+
+    wiremock::Mock::given(wiremock::matchers::method("POST"))
+        .respond_with(|req: &Request| {
+            let body: serde_json::Value = serde_json::from_slice(&req.body).unwrap();
+            let method = body["method"].as_str().unwrap_or("");
+
+            match method {
+                "simulateTransaction" => {
+                    let op = body["params"]["transaction"]["operations"][0].clone();
+                    let contract = op["contract_id"].as_str().unwrap_or("");
+                    let method_name = op["method"].as_str().unwrap_or("");
+
+                    if contract == "CC6OZUHF3LVO6PNP3V2EB36ORB3YSVYSH3LWD3RFLO4NUO3BYCXSWSYC" {
+                        if method_name == "get_order_count" {
+                            ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                                "jsonrpc": "2.0", "id": 1,
+                                "result": 1
+                            }))
+                        } else if method_name == "get_order_keys" {
+                            ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                                "jsonrpc": "2.0", "id": 1,
+                                "result": {
+                                    "vec": [{"bytes": "aabbccdd00112233aabbccdd00112233aabbccdd00112233aabbccdd00112233"}]
+                                }
+                            }))
+                        } else {
+                            ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                                "jsonrpc": "2.0", "id": 1,
+                                "result": 0
+                            }))
+                        }
+                    } else {
+                        ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                            "jsonrpc": "2.0", "id": 1,
+                            "result": 0
+                        }))
+                    }
+                }
+                "getAccount" => {
+                    ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                        "jsonrpc": "2.0", "id": 1,
+                        "result": {
+                            "id": "GAUHMCMUP5FZO5675W3ISZ6E6CNYJGXBUW5WANE2JR4TGAARYCTSCBKI",
+                            "sequence": "100",
+                            "subentries": 0, "inflationDestination": "", "homeDomain": "",
+                            "thresholds": {"low":1,"med":1,"high":1},
+                            "signers": [], "data": {}, "balances": []
+                        }
+                    }))
+                }
+                "sendTransaction" => {
+                    ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                        "jsonrpc": "2.0", "id": 1,
+                        "result": {
+                            "status": "PENDING",
+                            "hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+                        }
+                    }))
+                }
+                "getTransaction" => {
+                    let body_obj: serde_json::Value = serde_json::from_slice(&req.body).unwrap();
+                    let tx_hash = body_obj["params"]["hash"].as_str().unwrap_or("");
+
+                    // First call returns error with "Budget, ExceededLimit"
+                    // Second call (from freeze_order) returns success
+                    if tx_hash == "aabbccdd00112233aabbccdd00112233aabbccdd00112233aabbccdd00112233" {
+                        ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                            "jsonrpc": "2.0", "id": 1,
+                            "result": {
+                                "status": "FAILED",
+                                "ledger": 50001,
+                                "diagnosticEventsXdr": [],
+                                "resultXdr": "some_error_containing_Budget_ExceededLimit"
+                            },
+                            "error_description": "Budget, ExceededLimit"
+                        }))
+                    } else {
+                        ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                            "jsonrpc": "2.0", "id": 1,
+                            "result": {
+                                "status": "SUCCESS",
+                                "ledger": 50002,
+                                "diagnosticEventsXdr": []
+                            }
+                        }))
+                    }
+                }
+                _ => ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                    "jsonrpc": "2.0", "id": 1,
+                    "error": {"code": -1, "message": "unknown method"}
+                })),
+            }
+        })
+        .mount(&mock_server)
+        .await;
+
+    let config = test_config(&rpc_url);
+    let state = Arc::new(AppState::new(config));
+
+    {
+        let mut cache = state.price_cache.write().await;
+        cache
+            .prices
+            .insert("TUSDC".to_string(), test_cached_price());
+    }
+
+    let result = oracle::keeper_loop::run_keeper_cycle(Arc::clone(&state)).await;
+
+    assert!(
+        result.is_ok(),
+        "keeper cycle should handle budget exceeded with freeze: {:?}",
+        result.err()
+    );
+    let summary = result.unwrap();
+    assert_eq!(summary.errors, 1, "should record 1 error for the budget exceeded order");
+}
+
+#[tokio::test]
+async fn keeper_cycle_rejects_non_hex_order_key() {
+    let mock_server = MockServer::start().await;
+    let rpc_url = mock_server.uri();
+
+    wiremock::Mock::given(wiremock::matchers::method("POST"))
+        .respond_with(|req: &Request| {
+            let body: serde_json::Value = serde_json::from_slice(&req.body).unwrap();
+            let method = body["method"].as_str().unwrap_or("");
+
+            match method {
+                "simulateTransaction" => {
+                    let op = body["params"]["transaction"]["operations"][0].clone();
+                    let contract = op["contract_id"].as_str().unwrap_or("");
+                    let method_name = op["method"].as_str().unwrap_or("");
+
+                    if contract == "CC6OZUHF3LVO6PNP3V2EB36ORB3YSVYSH3LWD3RFLO4NUO3BYCXSWSYC" {
+                        if method_name == "get_order_count" {
+                            ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                                "jsonrpc": "2.0", "id": 1,
+                                "result": 1
+                            }))
+                        } else if method_name == "get_order_keys" {
+                            // Return a non-hex key: contains 'Z' and 'G' which are not valid hex
+                            ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                                "jsonrpc": "2.0", "id": 1,
+                                "result": {
+                                    "vec": [{"bytes": "not-valid-hex-ZGZGZGZGZG"}]
+                                }
+                            }))
+                        } else {
+                            ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                                "jsonrpc": "2.0", "id": 1,
+                                "result": 0
+                            }))
+                        }
+                    } else {
+                        ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                            "jsonrpc": "2.0", "id": 1,
+                            "result": 0
+                        }))
+                    }
+                }
+                "getAccount" => {
+                    ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                        "jsonrpc": "2.0", "id": 1,
+                        "result": {
+                            "id": "GAUHMCMUP5FZO5675W3ISZ6E6CNYJGXBUW5WANE2JR4TGAARYCTSCBKI",
+                            "sequence": "100",
+                            "subentries": 0, "inflationDestination": "", "homeDomain": "",
+                            "thresholds": {"low":1,"med":1,"high":1},
+                            "signers": [], "data": {}, "balances": []
+                        }
+                    }))
+                }
+                "sendTransaction" => {
+                    ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                        "jsonrpc": "2.0", "id": 1,
+                        "result": {
+                            "status": "PENDING",
+                            "hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+                        }
+                    }))
+                }
+                _ => ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                    "jsonrpc": "2.0", "id": 1,
+                    "error": {"code": -1, "message": "unknown method"}
+                })),
+            }
+        })
+        .mount(&mock_server)
+        .await;
+
+    let config = test_config(&rpc_url);
+    let state = Arc::new(AppState::new(config));
+
+    {
+        let mut cache = state.price_cache.write().await;
+        cache
+            .prices
+            .insert("TUSDC".to_string(), test_cached_price());
+    }
+
+    let result = oracle::keeper_loop::run_keeper_cycle(Arc::clone(&state)).await;
+
+    assert!(
+        result.is_ok(),
+        "keeper cycle should complete even with invalid key: {:?}",
+        result.err()
+    );
+    let summary = result.unwrap();
+    assert_eq!(summary.errors, 1, "should record 1 error for the non-hex key");
+    assert_eq!(summary.orders_executed, 0, "should not execute any orders");
+}
