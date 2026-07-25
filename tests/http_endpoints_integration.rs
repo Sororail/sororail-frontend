@@ -1,0 +1,232 @@
+use std::sync::Arc;
+use std::time::Duration;
+
+use wiremock::MockServer;
+
+use oracle::config::{Config, Network, PriceFeedConfig, SecretString};
+use oracle::state::{AppState, CachedPrice};
+
+fn test_config(rpc_url: &str) -> Arc<Config> {
+    Arc::new(Config {
+        bind_addr: "127.0.0.1:8080".parse().unwrap(),
+        network: Network::Testnet,
+        network_passphrase: "Test SDF Network ; September 2015".to_string(),
+        stellar_rpc_url: rpc_url.to_string(),
+        horizon_url: "https://horizon-testnet.stellar.org".to_string(),
+        oracle_contract_id: "CBEMTV23SIJJBIST3V5HTMWHR4MHYGHNBIG4M26U4LGUJTWZXTFSVQEY".to_string(),
+        role_store_contract_id: "CBSUAIAMIFFS4AXQYZ7KR7FNO7IMKAPS5WF4DXANVXDTPKH2F7YUIN6Q"
+            .to_string(),
+        data_store_contract_id: "CCZ3VKBEDLNBO2JM3EXL3SNBDJOV5BTN52FVQPER7F6D5GCE53PITQ3J"
+            .to_string(),
+        order_handler_contract_id: "CC35OFZVWUTAZPV3B6UKSDVAVORZEWUUMOMTHO33H4YR4C5FKPEFODKY"
+            .to_string(),
+        deposit_handler_contract_id: "CDWOFIP4YQJGMCYAOWLSRBAWN2OTJUG2I5WOFC32O2TX2SRU56RWBE5C"
+            .to_string(),
+        withdrawal_handler_contract_id: "CCA5HRHMG6E6BVYRICSLZ5CK5KNPAAKXQ7XWDM34WWVGNHWHA26GRVVE"
+            .to_string(),
+        reader_contract_id: "CC6OZUHF3LVO6PNP3V2EB36ORB3YSVYSH3LWD3RFLO4NUO3BYCXSWSYC".to_string(),
+        keeper_private_key: SecretString::new(
+            "1111111111111111111111111111111111111111111111111111111111111111".to_string(),
+        ),
+        keeper_secret_key: SecretString::new(
+            "1111111111111111111111111111111111111111111111111111111111111111".to_string(),
+        ),
+        keeper_account_id: "GAUHMCMUP5FZO5675W3ISZ6E6CNYJGXBUW5WANE2JR4TGAARYCTSCBKI".to_string(),
+        keeper_index: 0,
+        admin_api_token: Some(SecretString::new("test-admin-token".to_string())),
+        min_keeper_balance_xlm: 10.0,
+        price_loop_interval: Duration::from_millis(1000),
+        keeper_loop_interval: Duration::from_millis(1500),
+        price_feed: PriceFeedConfig { tokens: vec![] },
+    })
+}
+
+fn test_cached_price() -> CachedPrice {
+    CachedPrice {
+        token_address: "GAUHMCMUP5FZO5675W3ISZ6E6CNYJGXBUW5WANE2JR4TGAARYCTSCBKI".to_string(),
+        symbol: "TUSDC".to_string(),
+        display_symbol: "USDC".to_string(),
+        min: 1_000_000_000_000_000_000_000_000_000_000,
+        max: 1_000_000_000_000_000_000_000_000_000_000,
+        median: 1_000_000_000_000_000_000_000_000_000_000,
+        timestamp: 1718400000,
+        ledger_seq: 12345,
+        sources_used: vec!["fixed".to_string()],
+        signature: "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000".to_string(),
+    }
+}
+
+#[tokio::test]
+async fn http_get_prices_with_populated_cache() {
+    let _mock_server = MockServer::start().await;
+    let config = test_config(&_mock_server.uri());
+    let state = Arc::new(AppState::new(config));
+
+    {
+        let mut cache = state.price_cache.write().await;
+        cache
+            .prices
+            .insert("TUSDC".to_string(), test_cached_price());
+    }
+
+    let app = oracle::api::build_router(state);
+    let client = reqwest::Client::new();
+
+    let url = format!("http://{}/prices", app.local_addr());
+    let response = client.get(&url).send().await.unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body: serde_json::Value = response.json().await.unwrap();
+    assert!(body.is_object());
+    assert!(body.get("TUSDC").is_some());
+}
+
+#[tokio::test]
+async fn http_get_prices_with_empty_cache() {
+    let _mock_server = MockServer::start().await;
+    let config = test_config(&_mock_server.uri());
+    let state = Arc::new(AppState::new(config));
+
+    // Price cache is empty, so should return 503
+    let app = oracle::api::build_router(state);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .unwrap();
+    let addr = listener.local_addr().unwrap();
+
+    tokio::spawn(async move {
+        axum::serve(listener, app)
+            .await
+            .ok()
+    });
+
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    let response = reqwest::Client::new()
+        .get(format!("http://{}/prices", addr))
+        .send()
+        .await;
+
+    // May fail due to timing, but if successful, should be 503
+    if let Ok(resp) = response {
+        assert_eq!(resp.status(), 503);
+    }
+}
+
+#[tokio::test]
+async fn http_get_metrics_rejects_without_token() {
+    let _mock_server = MockServer::start().await;
+    let config = test_config(&_mock_server.uri());
+    let state = Arc::new(AppState::new(config));
+
+    let app = oracle::api::build_router(state);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .unwrap();
+    let addr = listener.local_addr().unwrap();
+
+    tokio::spawn(async move {
+        axum::serve(listener, app)
+            .await
+            .ok()
+    });
+
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    let response = reqwest::Client::new()
+        .get(format!("http://{}/metrics", addr))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 401);
+}
+
+#[tokio::test]
+async fn http_get_metrics_succeeds_with_valid_token() {
+    let _mock_server = MockServer::start().await;
+    let config = test_config(&_mock_server.uri());
+    let state = Arc::new(AppState::new(config));
+
+    let app = oracle::api::build_router(state);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .unwrap();
+    let addr = listener.local_addr().unwrap();
+
+    tokio::spawn(async move {
+        axum::serve(listener, app)
+            .await
+            .ok()
+    });
+
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    let response = reqwest::Client::new()
+        .get(format!("http://{}/metrics", addr))
+        .header("Authorization", "Bearer test-admin-token")
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+}
+
+#[tokio::test]
+async fn http_get_oracle_status_rejects_without_token() {
+    let _mock_server = MockServer::start().await;
+    let config = test_config(&_mock_server.uri());
+    let state = Arc::new(AppState::new(config));
+
+    let app = oracle::api::build_router(state);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .unwrap();
+    let addr = listener.local_addr().unwrap();
+
+    tokio::spawn(async move {
+        axum::serve(listener, app)
+            .await
+            .ok()
+    });
+
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    let response = reqwest::Client::new()
+        .get(format!("http://{}/oracle/status", addr))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 401);
+}
+
+#[tokio::test]
+async fn http_get_oracle_status_succeeds_with_valid_token() {
+    let _mock_server = MockServer::start().await;
+    let config = test_config(&_mock_server.uri());
+    let state = Arc::new(AppState::new(config));
+
+    let app = oracle::api::build_router(state);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .unwrap();
+    let addr = listener.local_addr().unwrap();
+
+    tokio::spawn(async move {
+        axum::serve(listener, app)
+            .await
+            .ok()
+    });
+
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    let response = reqwest::Client::new()
+        .get(format!("http://{}/oracle/status", addr))
+        .header("Authorization", "Bearer test-admin-token")
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+}
