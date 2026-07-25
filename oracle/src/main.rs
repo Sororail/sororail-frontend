@@ -71,6 +71,7 @@ async fn shutdown_signal(shutdown_token: CancellationToken) {
     let ctrl_c = async {
         if let Err(error) = tokio::signal::ctrl_c().await {
             tracing::error!(%error, "failed to install SIGINT handler");
+            std::future::pending::<()>().await;
         }
     };
 
@@ -80,7 +81,10 @@ async fn shutdown_signal(shutdown_token: CancellationToken) {
             Ok(mut signal) => {
                 signal.recv().await;
             }
-            Err(error) => tracing::error!(%error, "failed to install SIGTERM handler"),
+            Err(error) => {
+                tracing::error!(%error, "failed to install SIGTERM handler");
+                std::future::pending::<()>().await;
+            }
         }
     };
 
