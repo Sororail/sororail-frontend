@@ -545,3 +545,119 @@ async fn get_ready_returns_503_when_price_loop_stale() {
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(json["error"], "price_loop_stale");
 }
+
+// #520 — GET /ready returns 503 with keeper_balance_low when the keeper account
+//        balance is below the configured minimum while all other checks pass
+#[tokio::test]
+async fn get_ready_returns_503_when_keeper_balance_low() {
+    let rpc_mock = MockServer::start().await;
+    let horizon_mock = MockServer::start().await;
+
+    wiremock::Mock::given(method("GET"))
+        .respond_with(ResponseTemplate::new(200).set_body_string("ok"))
+        .mount(&rpc_mock)
+        .await;
+
+    // 5 XLM is below the 10 XLM minimum configured by test_config
+    wiremock::Mock::given(method("GET"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "id": "GAUHMCMUP5FZO5675W3ISZ6E6CNYJGXBUW5WANE2JR4TGAARYCTSCBKI",
+            "balances": [{"asset_type": "native", "balance": "5.0000000"}]
+        })))
+        .mount(&horizon_mock)
+        .await;
+
+    let config = test_config(&rpc_mock.uri(), &horizon_mock.uri());
+    let state = Arc::new(AppState::new(config));
+
+    // Populate price cache (so empty check passes)
+    {
+        let mut cache = state.price_cache.write().await;
+        cache
+            .prices
+            .insert("BTC".to_string(), sample_cached_price());
+    }
+
+    // Set price cycle as recent (so staleness check passes)
+    {
+        let mut cycle = state.cycle_status.write().await;
+        cycle.last_price_cycle_at = Some(SystemTime::now());
+    }
+
+    let app = build_router(state);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/ready")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 503);
+
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["error"], "keeper_balance_low");
+}
+
+// #520 — GET /ready returns 503 with keeper_balance_check_failed when Horizon
+//        cannot answer the balance query (here: HTTP 500) while all other
+//        checks pass — distinct from keeper_balance_low
+#[tokio::test]
+async fn get_ready_returns_503_when_keeper_balance_check_fails() {
+    let rpc_mock = MockServer::start().await;
+    let horizon_mock = MockServer::start().await;
+
+    wiremock::Mock::given(method("GET"))
+        .respond_with(ResponseTemplate::new(200).set_body_string("ok"))
+        .mount(&rpc_mock)
+        .await;
+
+    // Horizon responds, but with a server error the balance check cannot use
+    wiremock::Mock::given(method("GET"))
+        .respond_with(ResponseTemplate::new(500).set_body_string("internal error"))
+        .mount(&horizon_mock)
+        .await;
+
+    let config = test_config(&rpc_mock.uri(), &horizon_mock.uri());
+    let state = Arc::new(AppState::new(config));
+
+    // Populate price cache (so empty check passes)
+    {
+        let mut cache = state.price_cache.write().await;
+        cache
+            .prices
+            .insert("BTC".to_string(), sample_cached_price());
+    }
+
+    // Set price cycle as recent (so staleness check passes)
+    {
+        let mut cycle = state.cycle_status.write().await;
+        cycle.last_price_cycle_at = Some(SystemTime::now());
+    }
+
+    let app = build_router(state);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/ready")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 503);
+
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["error"], "keeper_balance_check_failed");
+}
