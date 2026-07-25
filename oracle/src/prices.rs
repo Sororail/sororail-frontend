@@ -534,6 +534,36 @@ mod tests {
             .contains("insufficient sources after filtering"));
     }
 
+    // #510 — aggregate_prices length-mismatch and empty-input error branches
+
+    #[test]
+    fn aggregate_prices_length_mismatch_returns_error() {
+        let sources = vec!["binance".to_string()];
+        let err = aggregate_prices(&[100, 200], &sources, 0, 100).unwrap_err();
+        assert_eq!(err, "prices and sources length mismatch");
+    }
+
+    #[test]
+    fn aggregate_prices_empty_input_with_zero_min_sources_returns_error() {
+        // min_sources = 0 bypasses the earlier `prices.len() < min_sources`
+        // guard, so the empty-median branch is the one that must catch this.
+        let prices: Vec<i128> = vec![];
+        let sources: Vec<String> = vec![];
+        let err = aggregate_prices(&prices, &sources, 0, 100).unwrap_err();
+        assert_eq!(err, "cannot aggregate empty price list");
+    }
+
+    #[test]
+    fn aggregate_prices_all_sources_rejected_with_zero_min_sources_returns_error() {
+        // Median of [100, 300] is 200; both prices deviate 5000 bps from it,
+        // far beyond the 200 bps cap, so every source is rejected. With
+        // min_sources = 0 the post-filter count check still passes, leaving
+        // the confidence-interval computation to fail on an empty list.
+        let sources = vec!["binance".to_string(), "coinbase".to_string()];
+        let err = aggregate_prices(&[100, 300], &sources, 0, 200).unwrap_err();
+        assert_eq!(err, "cannot compute confidence interval");
+    }
+
     #[test]
     fn test_issue_380_explicit_percentile_validation() {
         // Input of 3 sources
