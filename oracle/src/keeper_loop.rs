@@ -898,4 +898,68 @@ mod tests {
             "run_keeper_loop must exit within 500 ms of shutdown_token cancellation"
         );
     }
+
+    // #515 — parse_bytes_vec_from_result format branches
+
+    #[test]
+    fn test_parse_bytes_vec_lowercase_vec_and_bytes() {
+        let result = r#"{"vec":[{"bytes":"aabb"},{"bytes":"ccdd"}]}"#;
+        assert_eq!(
+            parse_bytes_vec_from_result(result).unwrap(),
+            vec!["aabb".to_string(), "ccdd".to_string()]
+        );
+    }
+
+    #[test]
+    fn test_parse_bytes_vec_uppercase_vec_and_bytes() {
+        let result = r#"{"Vec":[{"Bytes":"aabb"},{"Bytes":"ccdd"}]}"#;
+        assert_eq!(
+            parse_bytes_vec_from_result(result).unwrap(),
+            vec!["aabb".to_string(), "ccdd".to_string()]
+        );
+    }
+
+    #[test]
+    fn test_parse_bytes_vec_bare_array_fallback() {
+        let result = r#"[{"bytes":"aabb"}]"#;
+        assert_eq!(
+            parse_bytes_vec_from_result(result).unwrap(),
+            vec!["aabb".to_string()]
+        );
+    }
+
+    #[test]
+    fn test_parse_bytes_vec_empty_array_returns_empty_vec() {
+        assert!(parse_bytes_vec_from_result(r#"{"vec":[]}"#)
+            .unwrap()
+            .is_empty());
+        assert!(parse_bytes_vec_from_result("[]").unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_parse_bytes_vec_entries_without_bytes_key_are_skipped() {
+        let result = r#"{"vec":[{"u32":7},{"bytes":"aabb"}]}"#;
+        assert_eq!(
+            parse_bytes_vec_from_result(result).unwrap(),
+            vec!["aabb".to_string()]
+        );
+    }
+
+    #[test]
+    fn test_parse_bytes_vec_non_array_value_returns_error() {
+        let err = parse_bytes_vec_from_result("42").unwrap_err();
+        assert!(err.starts_with("expected array"), "unexpected error: {err}");
+
+        let err = parse_bytes_vec_from_result(r#"{"vec":"not-an-array"}"#).unwrap_err();
+        assert!(err.starts_with("expected array"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn test_parse_bytes_vec_invalid_json_returns_error() {
+        let err = parse_bytes_vec_from_result("not json").unwrap_err();
+        assert!(
+            err.starts_with("failed to parse result"),
+            "unexpected error: {err}"
+        );
+    }
 }
