@@ -14,7 +14,7 @@ pub enum SubmitError {
     JsonError(String),
     Rejected { status: String },
     TransactionFailed { events: Vec<String> },
-    PollTimeout,
+    PollTimeout { hash: String },
 }
 
 impl std::fmt::Display for SubmitError {
@@ -29,9 +29,9 @@ impl std::fmt::Display for SubmitError {
                     "transaction failed on-chain; diagnostic events: {events:?}"
                 )
             }
-            SubmitError::PollTimeout => write!(
+            SubmitError::PollTimeout { hash } => write!(
                 f,
-                "transaction not confirmed after {MAX_POLL_ATTEMPTS} attempts"
+                "transaction not confirmed after {MAX_POLL_ATTEMPTS} attempts (hash: {hash}); check status on next cycle"
             ),
         }
     }
@@ -198,7 +198,13 @@ async fn poll_until_confirmed(rpc_url: &str, hash: &str) -> Result<u32, SubmitEr
         }
     }
 
-    Err(SubmitError::PollTimeout)
+    tracing::warn!(
+        hash,
+        "transaction not confirmed after {MAX_POLL_ATTEMPTS} attempts; will check status on next cycle"
+    );
+    Err(SubmitError::PollTimeout {
+        hash: hash.to_string(),
+    })
 }
 
 async fn sleep_ms(ms: u64) {
@@ -362,11 +368,11 @@ mod tests {
 
     #[test]
     fn submit_error_display_poll_timeout() {
-        let err = SubmitError::PollTimeout;
-        assert_eq!(
-            err.to_string(),
-            "transaction not confirmed after 10 attempts"
-        );
+        let err = SubmitError::PollTimeout {
+            hash: "abc123def456".to_string(),
+        };
+        assert!(err.to_string().contains("not confirmed after 10 attempts"));
+        assert!(err.to_string().contains("abc123def456"));
     }
 
     #[test]
@@ -504,6 +510,54 @@ mod tests {
             .await
             .unwrap_err();
 
-        assert_eq!(err, SubmitError::PollTimeout);
+        assert!(matches!(err, SubmitError::PollTimeout { .. }));
+        if let SubmitError::PollTimeout { hash } = err {
+            assert_eq!(hash, "abc123def456");
+        }
+    }
+
+    #[tokio::test]
+    async fn poll_unrecognized_status_continues_until_success() {
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer};
+
+        let mock = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(rpc_responder(vec![
+                serde_json::json!({ "status": "UNKNOWN_STATUS" }),
+                serde_json::json!({ "status": "SUCCESS", "ledger": 77 }),
+            ]))
+            .mount(&mock)
+            .await;
+
+        let ledger = submit_and_poll(&mock.uri(), "signed_xdr_base64")
+            .await
+            .unwrap();
+
+        assert_eq!(ledger, 77);
+        assert_eq!(mock.received_requests().await.unwrap().len(), 3);
+    }
+
+    #[tokio::test]
+    async fn poll_timeout_includes_hash_for_later_reconciliation() {
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer};
+
+        let mock = MockServer::start().await;
+        let pending = serde_json::json!({ "status": "PENDING" });
+        Mock::given(method("POST"))
+            .respond_with(rpc_responder(vec![pending; MAX_POLL_ATTEMPTS as usize]))
+            .mount(&mock)
+            .await;
+
+        let err = submit_and_poll(&mock.uri(), "signed_xdr_base64")
+            .await
+            .unwrap_err();
+
+        if let SubmitError::PollTimeout { hash } = err {
+            assert_eq!(hash, "abc123def456", "hash should be available for reconciliation");
+        } else {
+            panic!("expected PollTimeout error with hash");
+        }
     }
 }
