@@ -44,29 +44,23 @@ pub fn aggregate_prices(
         ));
     }
 
-    let median = compute_median_allow_single(prices)
-        .ok_or_else(|| "cannot aggregate empty price list".to_string())?;
-    let mut filtered_prices = Vec::new();
-    let mut filtered_sources = Vec::new();
-    let mut rejected_sources = Vec::new();
-
-    for (price, source) in prices.iter().zip(sources.iter()) {
-        let deviation_bps = deviation_bps(*price, median);
-        if deviation_bps > max_deviation_bps as f64 {
-            rejected_sources.push(RejectedSource {
-                source: source.clone(),
-                price: *price,
-                deviation_bps,
-            });
-        } else {
-            filtered_prices.push(*price);
-            filtered_sources.push(source.clone());
-        }
-    }
+    let filter_result = filter_outliers(prices, sources);
+    let filtered_prices = filter_result.filtered_prices;
+    let filtered_sources = filter_result.filtered_sources;
 
     if filtered_prices.len() < min_sources {
+        let rejected_sources = filter_result
+            .rejected
+            .into_iter()
+            .map(|(source, price, deviation)| RejectedSource {
+                source,
+                price,
+                deviation_bps: deviation,
+            })
+            .collect();
+
         return Err(format!(
-            "insufficient sources after filtering: got {}, need {}",
+            "insufficient sources after filtering: got {}, need {} (rejected by MAD-based outlier filter)",
             filtered_prices.len(),
             min_sources
         ));
@@ -75,6 +69,16 @@ pub fn aggregate_prices(
     let props = compute_confidence_interval_with_spread(&filtered_prices, max_deviation_bps)
         .ok_or_else(|| "cannot compute confidence interval".to_string())?;
     let median = compute_median_allow_single(&filtered_prices).unwrap_or(props.min);
+
+    let rejected_sources = filter_result
+        .rejected
+        .into_iter()
+        .map(|(source, price, deviation)| RejectedSource {
+            source,
+            price,
+            deviation_bps: deviation,
+        })
+        .collect();
 
     Ok(AggregatedPrice {
         min: props.min,
@@ -548,5 +552,166 @@ mod tests {
 
         assert_ne!(p.min, 198);
         assert_ne!(p.max, 202);
+    }
+
+    // ── Property-based tests (Issue #528) ────────────────────────────────────
+
+    #[test]
+    fn property_min_max_within_input_range() {
+        let test_cases = vec![
+            vec![100i128, 200, 300],
+            vec![1000, 1001, 1002, 1003, 1004],
+            vec![50, 75, 100, 125, 150, 175, 200],
+            vec![10i128, 20, 30],
+        ];
+
+        for prices in test_cases {
+            let min_input = *prices.iter().min().unwrap();
+            let max_input = *prices.iter().max().unwrap();
+
+            let p = compute_confidence_interval(&prices).unwrap();
+
+            assert!(
+                p.min >= min_input,
+                "computed min {} should be >= input min {}",
+                p.min,
+                min_input
+            );
+            assert!(
+                p.max <= max_input,
+                "computed max {} should be <= input max {}",
+                p.max,
+                max_input
+            );
+        }
+    }
+
+    #[test]
+    fn property_confidence_interval_always_satisfies_min_lte_max() {
+        let test_cases = vec![
+            vec![42i128],
+            vec![100, 200],
+            vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+            vec![999_999_999i128, 1_000_000_000, 1_000_000_001],
+            vec![0i128, 0, 0, 0],
+        ];
+
+        for prices in test_cases {
+            let p = compute_confidence_interval(&prices).unwrap();
+            assert!(
+                p.min <= p.max,
+                "invariant violated: min {} > max {} for prices {:?}",
+                p.min,
+                p.max,
+                prices
+            );
+        }
+    }
+
+    #[test]
+    fn property_filter_outliers_idempotent() {
+        let test_cases = vec![
+            (vec![100i128, 101, 102, 103, 10000], 5),
+            (vec![50i128, 55, 60, 65, 70], 5),
+            (vec![1000i128, 1010, 1020, 1030, 1040, 1050, 1060, 1070], 8),
+        ];
+
+        for (prices, n) in test_cases {
+            let sources: Vec<String> = (0..n).map(|i| format!("src{}", i)).collect();
+
+            let first_pass = filter_outliers(&prices, &sources);
+            let second_pass = filter_outliers(&first_pass.filtered_prices, &first_pass.filtered_sources);
+
+            assert_eq!(
+                first_pass.filtered_prices, second_pass.filtered_prices,
+                "filter_outliers is not idempotent; second pass changed result"
+            );
+            assert_eq!(
+                first_pass.filtered_sources, second_pass.filtered_sources,
+                "filter_outliers sources not idempotent"
+            );
+        }
+    }
+
+    #[test]
+    fn property_sources_used_count_invariant() {
+        let test_cases = vec![
+            (vec![100i128, 200, 300], vec!["a", "b", "c"]),
+            (vec![1000i128, 1001, 1002, 1003], vec!["src1", "src2", "src3", "src4"]),
+        ];
+
+        for (prices, source_names) in test_cases {
+            let sources: Vec<String> = source_names.iter().map(|s| s.to_string()).collect();
+
+            if let Ok(result) = aggregate_prices(&prices, &sources, 1, 10_000) {
+                assert_eq!(
+                    result.sources_used.len() + result.rejected_sources.len(),
+                    prices.len(),
+                    "invariant violated: sources_used.len() + rejected_sources.len() != prices.len()"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn property_aggregate_prices_order_insensitive() {
+        let prices = vec![100i128, 200, 300, 400, 500];
+        let sources: Vec<String> = vec!["a", "b", "c", "d", "e"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+
+        let result1 = aggregate_prices(&prices, &sources, 2, 500).unwrap();
+
+        let mut prices_shuffled = prices.clone();
+        let mut sources_shuffled = sources.clone();
+        prices_shuffled.reverse();
+        sources_shuffled.reverse();
+
+        let result2 = aggregate_prices(&prices_shuffled, &sources_shuffled, 2, 500).unwrap();
+
+        assert_eq!(
+            result1.min, result2.min,
+            "min differs when input order changes"
+        );
+        assert_eq!(
+            result1.max, result2.max,
+            "max differs when input order changes"
+        );
+        assert_eq!(
+            result1.median, result2.median,
+            "median differs when input order changes"
+        );
+    }
+
+    #[test]
+    fn property_confidence_interval_bounds_tight() {
+        let prices = vec![100i128, 150, 200, 250, 300];
+
+        let p = compute_confidence_interval(&prices).unwrap();
+
+        assert!(p.min >= 100, "lower bound should respect minimum input");
+        assert!(p.max <= 300, "upper bound should respect maximum input");
+    }
+
+    #[test]
+    fn property_empty_filter_outliers_idempotent() {
+        let result = filter_outliers(&[], &[]);
+        let result2 = filter_outliers(&result.filtered_prices, &result.filtered_sources);
+
+        assert!(result.filtered_prices.is_empty());
+        assert!(result2.filtered_prices.is_empty());
+    }
+
+    #[test]
+    fn property_single_price_always_kept() {
+        let prices = vec![42i128];
+        let sources = vec!["only".to_string()];
+
+        let result = filter_outliers(&prices, &sources);
+
+        assert_eq!(result.filtered_prices.len(), 1);
+        assert_eq!(result.filtered_prices[0], 42);
+        assert_eq!(result.rejected.len(), 0);
     }
 }
