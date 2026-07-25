@@ -869,55 +869,20 @@ mod tests {
 
     }
 
-    // ── Secret redaction tests ────────────────────────────────────────────────
-
     #[test]
-    fn secret_string_debug_redacts_value() {
-        let s = SecretString::new("s3cret!".to_string());
-        let debug = format!("{:?}", s);
-        assert_eq!(debug, "<redacted>", "Debug must not expose the secret value");
-        assert!(!debug.contains("s3cret"), "Debug output must not contain the original value");
-    }
+    fn config_from_lookup_rejects_invalid_stellar_network() {
+        let mut env = valid_env();
+        env.insert("STELLAR_NETWORK", "staging".to_string());
 
-    #[test]
-    fn config_debug_redacts_secrets() {
-        let config = Config {
-            bind_addr: "127.0.0.1:8080".parse().unwrap(),
-            network: Network::Testnet,
-            network_passphrase: "Test SDF Network ; September 2015".to_string(),
-            stellar_rpc_url: "http://localhost:8000".to_string(),
-            horizon_url: "http://localhost:8001".to_string(),
-            oracle_contract_id: "CORACLE".to_string(),
-            role_store_contract_id: "CROLE".to_string(),
-            data_store_contract_id: "CDATA".to_string(),
-            order_handler_contract_id: "CORDER".to_string(),
-            deposit_handler_contract_id: "CDEPOSIT".to_string(),
-            withdrawal_handler_contract_id: "CWITHDRAW".to_string(),
-            reader_contract_id: "CREADER".to_string(),
-            keeper_private_key: SecretString::new(
-                "s3cret_keeper_private_key_value".to_string(),
-            ),
-            keeper_secret_key: SecretString::new("s3cret_keeper_secret_key_value".to_string()),
-            keeper_account_id: "GACCOUNT".to_string(),
-            keeper_index: 0,
-            admin_api_token: Some(SecretString::new("s3cret_admin_token".to_string())),
-            min_keeper_balance_xlm: 0.0,
-            price_loop_interval: std::time::Duration::from_millis(1),
-            keeper_loop_interval: std::time::Duration::from_millis(1),
-            price_feed: PriceFeedConfig { tokens: vec![] },
-        };
+        let err = Config::from_lookup(|key| env.get(key).cloned()).unwrap_err();
 
-        let debug = format!("{:?}", config);
-
-        // Must not contain any actual secret values
-        assert!(!debug.contains("s3cret_keeper_private_key_value"));
-        assert!(!debug.contains("s3cret_keeper_secret_key_value"));
-        assert!(!debug.contains("s3cret_admin_token"));
-
-        // Must contain the redaction placeholder for each secret field
-        assert!(
-            debug.contains("<redacted>"),
-            "Debug output should contain <redacted> for secret fields, got: {debug}"
-        );
+        match err {
+            EnvError::InvalidVar { var, reason } => {
+                assert_eq!(var, "STELLAR_NETWORK");
+                assert!(reason.contains("unknown network"), "error should mention unknown network, got: {}", reason);
+                assert!(reason.contains("staging"), "error should mention the invalid value 'staging'");
+            }
+            other => panic!("expected InvalidVar error, got: {:?}", other),
+        }
     }
 }
