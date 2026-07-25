@@ -133,7 +133,16 @@ pub async fn fetch_pyth_price(
     stale_after_seconds: u64,
     max_confidence_bps: u32,
 ) -> Result<i128, PythPriceError> {
-    let url_string = format!("{}?ids[]={}", PYTH_HERMES_URL, feed_id);
+    fetch_pyth_price_with_url(PYTH_HERMES_URL, feed_id, stale_after_seconds, max_confidence_bps).await
+}
+
+pub(crate) async fn fetch_pyth_price_with_url(
+    hermes_url: &str,
+    feed_id: &str,
+    stale_after_seconds: u64,
+    max_confidence_bps: u32,
+) -> Result<i128, PythPriceError> {
+    let url_string = format!("{}?ids[]={}", hermes_url, feed_id);
 
     let response = crate::http::client()
         .get(&url_string)
@@ -436,6 +445,119 @@ mod tests {
         let json = r#"[]"#;
         let response: HermesResponse = serde_json::from_str(json).unwrap();
         assert!(matches!(response, HermesResponse::Array(v) if v.is_empty()));
+    }
+
+    // ── HTTP-level wiremock tests ─────────────────────────────────────────────
+
+    fn recent_publish_time() -> i64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64
+    }
+
+    #[tokio::test]
+    async fn fetch_pyth_price_array_format_success() {
+        use wiremock::matchers::{method, query_param};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let publish = recent_publish_time();
+        let body = format!(
+            r#"[{{"id":"feed-1","price":{{"price":"4500000000","expo":-8,"conf":"100000","publish_time":{}}}}}]"#,
+            publish
+        );
+
+        Mock::given(method("GET"))
+            .and(query_param("ids[]", "feed-1"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json"))
+            .mount(&server)
+            .await;
+
+        let result = super::fetch_pyth_price_with_url(&server.uri(), "feed-1", 60, 50)
+            .await
+            .unwrap();
+        assert_eq!(result, 45 * FLOAT_PRECISION);
+    }
+
+    #[tokio::test]
+    async fn fetch_pyth_price_wrapped_format_success() {
+        use wiremock::matchers::{method, query_param};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let publish = recent_publish_time();
+        let body = format!(
+            r#"{{"data":{{"id":"feed-1","price":{{"price":"4500000000","expo":-8,"conf":"100000","publish_time":{}}}}}}}"#,
+            publish
+        );
+
+        Mock::given(method("GET"))
+            .and(query_param("ids[]", "feed-1"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json"))
+            .mount(&server)
+            .await;
+
+        let result = super::fetch_pyth_price_with_url(&server.uri(), "feed-1", 60, 50)
+            .await
+            .unwrap();
+        assert_eq!(result, 45 * FLOAT_PRECISION);
+    }
+
+    #[tokio::test]
+    async fn fetch_pyth_price_empty_array_returns_missing_feed_id() {
+        use wiremock::matchers::{method, query_param};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let body = r#"[]"#;
+
+        Mock::given(method("GET"))
+            .and(query_param("ids[]", "feed-1"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json"))
+            .mount(&server)
+            .await;
+
+        let err = super::fetch_pyth_price_with_url(&server.uri(), "feed-1", 60, 50)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, PythPriceError::MissingFeedId(id) if id == "feed-1"));
+    }
+
+    #[tokio::test]
+    async fn fetch_pyth_price_404_returns_http_error() {
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(404))
+            .mount(&server)
+            .await;
+
+        let err = super::fetch_pyth_price_with_url(&server.uri(), "feed-1", 60, 50)
+            .await
+            .unwrap_err();
+        assert_eq!(err, PythPriceError::HttpError(404));
+    }
+
+    #[tokio::test]
+    async fn fetch_pyth_price_500_returns_http_error() {
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(500))
+            .mount(&server)
+            .await;
+
+        let err = super::fetch_pyth_price_with_url(&server.uri(), "feed-1", 60, 50)
+            .await
+            .unwrap_err();
+        assert_eq!(err, PythPriceError::HttpError(500));
     }
 
     // #365 — normalize_pyth_price("4500000000", -8) must equal 45 * FLOAT_PRECISION
