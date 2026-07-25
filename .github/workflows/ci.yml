@@ -25,8 +25,6 @@ jobs:
           workspaces: |
             .
             oracle
-            apis
-            contracts
       - run: cargo test --all
 
   clippy:
@@ -62,3 +60,10 @@ jobs:
             .
             oracle
       - run: cargo build --release --all
+
+  docker-build:
+    name: docker build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t so4-oracle .

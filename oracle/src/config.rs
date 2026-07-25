@@ -868,4 +868,56 @@ mod tests {
         assert_eq!(err, EnvError::MissingVar("KEEPER_PRIVATE_KEY"));
 
     }
+
+    // ── Secret redaction tests ────────────────────────────────────────────────
+
+    #[test]
+    fn secret_string_debug_redacts_value() {
+        let s = SecretString::new("s3cret!".to_string());
+        let debug = format!("{:?}", s);
+        assert_eq!(debug, "<redacted>", "Debug must not expose the secret value");
+        assert!(!debug.contains("s3cret"), "Debug output must not contain the original value");
+    }
+
+    #[test]
+    fn config_debug_redacts_secrets() {
+        let config = Config {
+            bind_addr: "127.0.0.1:8080".parse().unwrap(),
+            network: Network::Testnet,
+            network_passphrase: "Test SDF Network ; September 2015".to_string(),
+            stellar_rpc_url: "http://localhost:8000".to_string(),
+            horizon_url: "http://localhost:8001".to_string(),
+            oracle_contract_id: "CORACLE".to_string(),
+            role_store_contract_id: "CROLE".to_string(),
+            data_store_contract_id: "CDATA".to_string(),
+            order_handler_contract_id: "CORDER".to_string(),
+            deposit_handler_contract_id: "CDEPOSIT".to_string(),
+            withdrawal_handler_contract_id: "CWITHDRAW".to_string(),
+            reader_contract_id: "CREADER".to_string(),
+            keeper_private_key: SecretString::new(
+                "s3cret_keeper_private_key_value".to_string(),
+            ),
+            keeper_secret_key: SecretString::new("s3cret_keeper_secret_key_value".to_string()),
+            keeper_account_id: "GACCOUNT".to_string(),
+            keeper_index: 0,
+            admin_api_token: Some(SecretString::new("s3cret_admin_token".to_string())),
+            min_keeper_balance_xlm: 0.0,
+            price_loop_interval: std::time::Duration::from_millis(1),
+            keeper_loop_interval: std::time::Duration::from_millis(1),
+            price_feed: PriceFeedConfig { tokens: vec![] },
+        };
+
+        let debug = format!("{:?}", config);
+
+        // Must not contain any actual secret values
+        assert!(!debug.contains("s3cret_keeper_private_key_value"));
+        assert!(!debug.contains("s3cret_keeper_secret_key_value"));
+        assert!(!debug.contains("s3cret_admin_token"));
+
+        // Must contain the redaction placeholder for each secret field
+        assert!(
+            debug.contains("<redacted>"),
+            "Debug output should contain <redacted> for secret fields, got: {debug}"
+        );
+    }
 }

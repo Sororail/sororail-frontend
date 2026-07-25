@@ -59,6 +59,13 @@ pub fn parse_coinbase_http_result(
 }
 
 pub async fn fetch_spot_price(symbol: &str) -> Result<i128, CoinbasePriceError> {
+    fetch_spot_price_with_url(COINBASE_EXCHANGE_RATES_URL, symbol).await
+}
+
+pub(crate) async fn fetch_spot_price_with_url(
+    base_url: &str,
+    symbol: &str,
+) -> Result<i128, CoinbasePriceError> {
     // Usually the symbol passed is something like "BTC".
     // If it comes with USDT suffix, we should strip it or ensure we query the base asset.
     let base_currency = if let Some(stripped) = symbol.strip_suffix("USDT") {
@@ -69,7 +76,7 @@ pub async fn fetch_spot_price(symbol: &str) -> Result<i128, CoinbasePriceError> 
         symbol
     };
 
-    let url_str = format!("{}{}", COINBASE_EXCHANGE_RATES_URL, base_currency);
+    let url_str = format!("{}{}", base_url, base_currency);
 
     let response = crate::http::client()
         .get(&url_str)
@@ -200,5 +207,124 @@ mod tests {
         }"#;
         let err = parse_coinbase_response_body(body).unwrap_err();
         assert_eq!(err, CoinbasePriceError::MissingUsdRate);
+    }
+
+    // ── HTTP-level wiremock tests ─────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn fetch_spot_price_strips_usdt_suffix_success() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let body = r#"{
+            "data": {
+                "currency": "BTC",
+                "rates": { "USD": "50000.0" }
+            }
+        }"#;
+
+        // "BTCUSDT" → base "BTC" → URL path should be "/BTC"
+        Mock::given(method("GET"))
+            .and(path("/BTC"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json"))
+            .mount(&server)
+            .await;
+
+        let base_url = format!("{}/", server.uri());
+        let result = super::fetch_spot_price_with_url(&base_url, "BTCUSDT")
+            .await
+            .unwrap();
+        assert_eq!(result, 50000 * FLOAT_PRECISION);
+    }
+
+    #[tokio::test]
+    async fn fetch_spot_price_strips_usd_suffix_success() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let body = r#"{
+            "data": {
+                "currency": "ETH",
+                "rates": { "USD": "3000.0" }
+            }
+        }"#;
+
+        Mock::given(method("GET"))
+            .and(path("/ETH"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json"))
+            .mount(&server)
+            .await;
+
+        let base_url = format!("{}/", server.uri());
+        let result = super::fetch_spot_price_with_url(&base_url, "ETHUSD")
+            .await
+            .unwrap();
+        assert_eq!(result, 3000 * FLOAT_PRECISION);
+    }
+
+    #[tokio::test]
+    async fn fetch_spot_price_no_suffix_success() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let body = r#"{
+            "data": {
+                "currency": "XLM",
+                "rates": { "USD": "1.0" }
+            }
+        }"#;
+
+        Mock::given(method("GET"))
+            .and(path("/XLM"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json"))
+            .mount(&server)
+            .await;
+
+        let base_url = format!("{}/", server.uri());
+        let result = super::fetch_spot_price_with_url(&base_url, "XLM")
+            .await
+            .unwrap();
+        assert_eq!(result, FLOAT_PRECISION);
+    }
+
+    #[tokio::test]
+    async fn fetch_spot_price_404_returns_http_error() {
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(404))
+            .mount(&server)
+            .await;
+
+        let base_url = format!("{}/", server.uri());
+        let err = super::fetch_spot_price_with_url(&base_url, "BTC")
+            .await
+            .unwrap_err();
+        assert_eq!(err, CoinbasePriceError::HttpError(404));
+    }
+
+    #[tokio::test]
+    async fn fetch_spot_price_500_returns_http_error() {
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(500))
+            .mount(&server)
+            .await;
+
+        let base_url = format!("{}/", server.uri());
+        let err = super::fetch_spot_price_with_url(&base_url, "BTC")
+            .await
+            .unwrap_err();
+        assert_eq!(err, CoinbasePriceError::HttpError(500));
     }
 }
