@@ -868,4 +868,21 @@ mod tests {
         assert_eq!(err, EnvError::MissingVar("KEEPER_PRIVATE_KEY"));
 
     }
+
+    #[test]
+    fn config_from_lookup_rejects_invalid_stellar_network() {
+        let mut env = valid_env();
+        env.insert("STELLAR_NETWORK", "staging".to_string());
+
+        let err = Config::from_lookup(|key| env.get(key).cloned()).unwrap_err();
+
+        match err {
+            EnvError::InvalidVar { var, reason } => {
+                assert_eq!(var, "STELLAR_NETWORK");
+                assert!(reason.contains("unknown network"), "error should mention unknown network, got: {}", reason);
+                assert!(reason.contains("staging"), "error should mention the invalid value 'staging'");
+            }
+            other => panic!("expected InvalidVar error, got: {:?}", other),
+        }
+    }
 }
