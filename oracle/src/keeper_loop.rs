@@ -590,12 +590,12 @@ mod tests {
     use std::time::Duration;
 
     fn shutdown_test_state() -> Arc<AppState> {
-        let config = Arc::new(Config {
+        let config = Config {
             bind_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
             network: Network::Testnet,
             network_passphrase: "Test SDF Network ; September 2015".to_string(),
-            stellar_rpc_url: "http://127.0.0.1:1".to_string(), // unreachable — cycle will error
-            horizon_url: "http://127.0.0.1:1".to_string(),
+            stellar_rpc_url: "not-a-valid-url".to_string(), // immediate error — no network
+            horizon_url: "not-a-valid-url".to_string(),
             oracle_contract_id: "CORACLE".to_string(),
             role_store_contract_id: "CROLE".to_string(),
             data_store_contract_id: "CDATA".to_string(),
@@ -613,11 +613,12 @@ mod tests {
                 .to_string(),
             keeper_index: 0,
             admin_api_token: None,
+            pyth_api_key: None,
             min_keeper_balance_xlm: 0.0,
             price_loop_interval: Duration::from_millis(50),
             keeper_loop_interval: Duration::from_millis(50),
             price_feed: PriceFeedConfig { tokens: vec![] },
-        });
+        };
         Arc::new(AppState::new(Arc::new(config)))
     }
 

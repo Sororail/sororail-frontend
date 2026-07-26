@@ -58,7 +58,7 @@ pub struct PythPrice {
     pub id: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct PythPriceData {
     pub price: String,
     #[serde(default)]
