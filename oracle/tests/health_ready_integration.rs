@@ -56,6 +56,7 @@ fn sample_cached_price() -> CachedPrice {
         token_address: "addr".to_string(),
         symbol: "BTC".to_string(),
         display_symbol: "BTC".to_string(),
+        keeper_index: 0,
         min: 100,
         max: 200,
         median: 150,
