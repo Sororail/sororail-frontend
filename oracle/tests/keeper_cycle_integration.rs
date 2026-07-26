@@ -47,6 +47,7 @@ fn test_cached_price() -> CachedPrice {
         token_address: "GAUHMCMUP5FZO5675W3ISZ6E6CNYJGXBUW5WANE2JR4TGAARYCTSCBKI".to_string(),
         symbol: "TUSDC".to_string(),
         display_symbol: "USDC".to_string(),
+        keeper_index: 0,
         min: 1_000_000_000_000_000_000_000_000_000_000,
         max: 1_000_000_000_000_000_000_000_000_000_000,
         median: 1_000_000_000_000_000_000_000_000_000_000,
