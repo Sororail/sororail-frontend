@@ -12,6 +12,20 @@ pub enum CoinbasePriceError {
     MissingUsdRate,
 }
 
+impl std::fmt::Display for CoinbasePriceError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NetworkError(error) => write!(f, "Coinbase network error: {error}"),
+            Self::HttpError(status) => write!(f, "Coinbase returned HTTP {status}"),
+            Self::JsonError(error) => write!(f, "invalid Coinbase response: {error}"),
+            Self::PriceParseError(error) => write!(f, "invalid Coinbase price: {error}"),
+            Self::MissingUsdRate => f.write_str("Coinbase response has no USD rate"),
+        }
+    }
+}
+
+impl std::error::Error for CoinbasePriceError {}
+
 #[derive(Debug, Deserialize)]
 pub struct CoinbaseRates {
     pub rates: std::collections::HashMap<String, String>,
