@@ -41,13 +41,22 @@ async fn main() {
     );
 
     let shutdown_token = CancellationToken::new();
-    let server_future = axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal(shutdown_token.clone()));
+    let server_future =
+        axum::serve(listener, app).with_graceful_shutdown(shutdown_signal(shutdown_token.clone()));
 
-    let server_result = tokio::time::timeout(std::time::Duration::from_secs(30), server_future).await;
+    let server_result =
+        tokio::time::timeout(std::time::Duration::from_secs(30), server_future).await;
 
-    if server_result.is_err() {
-        tracing::warn!("server shutdown timed out after 30s, canceling background tasks");
+    match server_result {
+        Ok(Ok(())) => {}
+        Ok(Err(error)) => {
+            tracing::error!(%error, "server error");
+            eprintln!("server error: {error}");
+            std::process::exit(1);
+        }
+        Err(_) => {
+            tracing::warn!("server shutdown timed out after 30s, canceling background tasks");
+        }
     }
 
     tracing::info!("shutdown initiated, draining...");
@@ -55,14 +64,6 @@ async fn main() {
     state.shutdown_token.cancel();
 
     let _ = tokio::join!(price_loop, keeper_loop);
-
-    let _ = tokio::join!(price_loop, keeper_loop);
-
-    if let Err(error) = server {
-        tracing::error!(%error, "server error");
-        eprintln!("server error: {error}");
-        std::process::exit(1);
-    }
 }
 
 fn init_tracing() {

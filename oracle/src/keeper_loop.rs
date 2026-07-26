@@ -10,6 +10,8 @@ use crate::chain::tx_builder;
 use crate::state::{AppState, CachedPrice, FailedSubmission, KeeperExecution};
 
 const KEEPER_TX_FEE: u32 = 2_000_000;
+const ACCOUNT_SEQUENCE_RETRY_ATTEMPTS: u32 = 3;
+const ACCOUNT_SEQUENCE_RETRY_BASE_DELAY_MS: u64 = 100;
 
 pub async fn run_keeper_loop(state: Arc<AppState>) {
     let mut ticker = interval(state.config.keeper_loop_interval);
@@ -393,6 +395,15 @@ async fn execute_handler(
 }
 
 async fn get_account_sequence(state: &Arc<AppState>) -> Result<u64, String> {
+    crate::retry::retry_with_backoff(
+        || async { get_account_sequence_once(state).await },
+        ACCOUNT_SEQUENCE_RETRY_ATTEMPTS,
+        ACCOUNT_SEQUENCE_RETRY_BASE_DELAY_MS,
+    )
+    .await
+}
+
+async fn get_account_sequence_once(state: &Arc<AppState>) -> Result<u64, String> {
     let rpc_url = &state.config.stellar_rpc_url;
     let account_id = &state.config.keeper_account_id;
 

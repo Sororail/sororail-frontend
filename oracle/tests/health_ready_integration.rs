@@ -1,3 +1,4 @@
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
@@ -5,50 +6,16 @@ use axum::body::Body;
 use axum::http::Request;
 use tower::ServiceExt;
 use wiremock::matchers::method;
-use wiremock::{Mock, MockServer, Request as WireMockRequest, ResponseTemplate};
+use wiremock::{MockServer, Request as WireMockRequest, ResponseTemplate};
 
-use shared_config::TokenConfig;
+mod common;
 
+use common::{fixed_token_with_price, test_config};
 use oracle::api::build_router;
 use oracle::config::{Config, Network, PriceFeedConfig, SecretString};
-use oracle::price_loop::run_price_loop;
 use oracle::keeper_loop::run_keeper_loop;
+use oracle::price_loop::run_price_loop;
 use oracle::state::{AppState, CachedPrice};
-
-fn test_config(rpc_url: &str, horizon_url: &str) -> Arc<Config> {
-    Arc::new(Config {
-        bind_addr: "127.0.0.1:0".parse().unwrap(),
-        network: Network::Testnet,
-        network_passphrase: "Test SDF Network ; September 2015".to_string(),
-        stellar_rpc_url: rpc_url.to_string(),
-        horizon_url: horizon_url.to_string(),
-        oracle_contract_id: "CBEMTV23SIJJBIST3V5HTMWHR4MHYGHNBIG4M26U4LGUJTWZXTFSVQEY".to_string(),
-        role_store_contract_id: "CBSUAIAMIFFS4AXQYZ7KR7FNO7IMKAPS5WF4DXANVXDTPKH2F7YUIN6Q"
-            .to_string(),
-        data_store_contract_id: "CCZ3VKBEDLNBO2JM3EXL3SNBDJOV5BTN52FVQPER7F6D5GCE53PITQ3J"
-            .to_string(),
-        order_handler_contract_id: "CC35OFZVWUTAZPV3B6UKSDVAVORZEWUUMOMTHO33H4YR4C5FKPEFODKY"
-            .to_string(),
-        deposit_handler_contract_id: "CDWOFIP4YQJGMCYAOWLSRBAWN2OTJUG2I5WOFC32O2TX2SRU56RWBE5C"
-            .to_string(),
-        withdrawal_handler_contract_id: "CCA5HRHMG6E6BVYRICSLZ5CK5KNPAAKXQ7XWDM34WWVGNHWHA26GRVVE"
-            .to_string(),
-        reader_contract_id: "CC6OZUHF3LVO6PNP3V2EB36ORB3YSVYSH3LWD3RFLO4NUO3BYCXSWSYC".to_string(),
-        keeper_private_key: SecretString::new(
-            "1111111111111111111111111111111111111111111111111111111111111111".to_string(),
-        ),
-        keeper_secret_key: SecretString::new(
-            "1111111111111111111111111111111111111111111111111111111111111111".to_string(),
-        ),
-        keeper_account_id: "GAUHMCMUP5FZO5675W3ISZ6E6CNYJGXBUW5WANE2JR4TGAARYCTSCBKI".to_string(),
-        keeper_index: 0,
-        admin_api_token: Some(SecretString::new("test-admin-token".to_string())),
-        min_keeper_balance_xlm: 10.0,
-        price_loop_interval: Duration::from_millis(1000),
-        keeper_loop_interval: Duration::from_millis(1500),
-        price_feed: PriceFeedConfig { tokens: vec![] },
-    })
-}
 
 fn sample_cached_price() -> CachedPrice {
     CachedPrice {
@@ -62,26 +29,6 @@ fn sample_cached_price() -> CachedPrice {
         ledger_seq: 1,
         sources_used: vec!["binance".to_string()],
         signature: "sig".to_string(),
-    }
-}
-
-fn fixed_token(symbol: &str, address: &str, price: &str) -> TokenConfig {
-    TokenConfig {
-        symbol: symbol.to_string(),
-        display_symbol: Some(symbol.to_string()),
-        stellar_address: address.to_string(),
-        sources: vec!["fixed".to_string()],
-        fixed_price: Some(price.to_string()),
-        binance_symbol: None,
-        coinbase_symbol: None,
-        pyth_feed_id: None,
-        min_sources: 1,
-        max_deviation_bps: 100,
-        stale_after_seconds: 60,
-        submit_threshold_bps: 10,
-        min: 0.0,
-        max: 0.0,
-        sources_used: vec![],
     }
 }
 
@@ -137,7 +84,9 @@ async fn get_ready_returns_200_when_healthy() {
     // Populate price cache
     {
         let mut cache = state.price_cache.write().await;
-        cache.prices.insert("BTC".to_string(), sample_cached_price());
+        cache
+            .prices
+            .insert("BTC".to_string(), sample_cached_price());
     }
 
     // Set price cycle and keeper cycle as recent
@@ -168,6 +117,63 @@ async fn get_ready_returns_200_when_healthy() {
     assert_eq!(json["status"], "ok");
 }
 
+#[tokio::test]
+async fn get_ready_retries_transient_keeper_balance_failure() {
+    let rpc_mock = MockServer::start().await;
+    let horizon_mock = MockServer::start().await;
+
+    wiremock::Mock::given(method("GET"))
+        .respond_with(ResponseTemplate::new(200).set_body_string("ok"))
+        .mount(&rpc_mock)
+        .await;
+
+    let balance_attempts = Arc::new(AtomicUsize::new(0));
+    let balance_attempts_for_mock = Arc::clone(&balance_attempts);
+    wiremock::Mock::given(method("GET"))
+        .respond_with(move |_req: &WireMockRequest| {
+            let attempt = balance_attempts_for_mock.fetch_add(1, Ordering::SeqCst);
+            if attempt == 0 {
+                ResponseTemplate::new(500).set_body_string("transient horizon error")
+            } else {
+                ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                    "id": "GAUHMCMUP5FZO5675W3ISZ6E6CNYJGXBUW5WANE2JR4TGAARYCTSCBKI",
+                    "balances": [{"asset_type": "native", "balance": "100.0000000"}]
+                }))
+            }
+        })
+        .mount(&horizon_mock)
+        .await;
+
+    let config = test_config(&rpc_mock.uri(), &horizon_mock.uri());
+    let state = Arc::new(AppState::new(config));
+
+    {
+        let mut cache = state.price_cache.write().await;
+        cache
+            .prices
+            .insert("BTC".to_string(), sample_cached_price());
+    }
+    {
+        let mut cycle = state.cycle_status.write().await;
+        cycle.last_price_cycle_at = Some(SystemTime::now());
+        cycle.last_keeper_cycle_at = Some(SystemTime::now());
+    }
+
+    let app = build_router(state);
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/ready")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    assert_eq!(balance_attempts.load(Ordering::SeqCst), 2);
+}
+
 // #340 — GET /ready returns 503 when keeper loop is stale
 #[tokio::test]
 async fn get_ready_returns_503_when_keeper_loop_stale() {
@@ -193,7 +199,9 @@ async fn get_ready_returns_503_when_keeper_loop_stale() {
     // Populate price cache and make price loop recent
     {
         let mut cache = state.price_cache.write().await;
-        cache.prices.insert("BTC".to_string(), sample_cached_price());
+        cache
+            .prices
+            .insert("BTC".to_string(), sample_cached_price());
     }
     {
         let mut cycle = state.cycle_status.write().await;
@@ -297,7 +305,7 @@ async fn cold_start_reads_ready_after_price_and_keeper_loops() {
                         "data": {},
                         "balances": []
                     }
-                }))
+                })),
                 "sendTransaction" => ResponseTemplate::new(200).set_body_json(serde_json::json!({
                     "jsonrpc": "2.0",
                     "id": 1,
@@ -332,18 +340,19 @@ async fn cold_start_reads_ready_after_price_and_keeper_loops() {
         stellar_rpc_url: rpc_mock.uri(),
         horizon_url: horizon_mock.uri(),
         oracle_contract_id: "CBEMTV23SIJJBIST3V5HTMWHR4MHYGHNBIG4M26U4LGUJTWZXTFSVQEY".to_string(),
-        role_store_contract_id:
-            "CBSUAIAMIFFS4AXQYZ7KR7FNO7IMKAPS5WF4DXANVXDTPKH2F7YUIN6Q".to_string(),
-        data_store_contract_id: "CCZ3VKBEDLNBO2JM3EXL3SNBDJOV5BTN52FVQPER7F6D5GCE53PITQ3J".to_string(),
-        order_handler_contract_id:
-            "CC35OFZVWUTAZPV3B6UKSDVAVORZEWUUMOMTHO33H4YR4C5FKPEFODKY".to_string(),
-        deposit_handler_contract_id:
-            "CDWOFIP4YQJGMCYAOWLSRBAWN2OTJUG2I5WOFC32O2TX2SRU56RWBE5C".to_string(),
-        withdrawal_handler_contract_id:
-            "CCA5HRHMG6E6BVYRICSLZ5CK5KNPAAKXQ7XWDM34WWVGNHWHA26GRVVE".to_string(),
+        role_store_contract_id: "CBSUAIAMIFFS4AXQYZ7KR7FNO7IMKAPS5WF4DXANVXDTPKH2F7YUIN6Q"
+            .to_string(),
+        data_store_contract_id: "CCZ3VKBEDLNBO2JM3EXL3SNBDJOV5BTN52FVQPER7F6D5GCE53PITQ3J"
+            .to_string(),
+        order_handler_contract_id: "CC35OFZVWUTAZPV3B6UKSDVAVORZEWUUMOMTHO33H4YR4C5FKPEFODKY"
+            .to_string(),
+        deposit_handler_contract_id: "CDWOFIP4YQJGMCYAOWLSRBAWN2OTJUG2I5WOFC32O2TX2SRU56RWBE5C"
+            .to_string(),
+        withdrawal_handler_contract_id: "CCA5HRHMG6E6BVYRICSLZ5CK5KNPAAKXQ7XWDM34WWVGNHWHA26GRVVE"
+            .to_string(),
         reader_contract_id: "CC6OZUHF3LVO6PNP3V2EB36ORB3YSVYSH3LWD3RFLO4NUO3BYCXSWSYC".to_string(),
         keeper_private_key: SecretString::new(
-            "1111111111111111111111111111111111111111111111111111111111111111111".to_string(),
+            "1111111111111111111111111111111111111111111111111111111111111111".to_string(),
         ),
         keeper_secret_key: SecretString::new(
             "1111111111111111111111111111111111111111111111111111111111111111".to_string(),
@@ -355,7 +364,7 @@ async fn cold_start_reads_ready_after_price_and_keeper_loops() {
         price_loop_interval: Duration::from_millis(100),
         keeper_loop_interval: Duration::from_millis(100),
         price_feed: PriceFeedConfig {
-            tokens: vec![fixed_token(
+            tokens: vec![fixed_token_with_price(
                 "BTC",
                 "CBAN5YU3KRDKPTQ2H76D6S7HQFPRBGUD524F65BUM2RQCITPTRLKWKES",
                 "1000000000000000000000000000000",
@@ -396,11 +405,14 @@ async fn cold_start_reads_ready_after_price_and_keeper_loops() {
 
     assert!(ready_ok.is_ok(), "ready did not become healthy in time");
 
-    let requests = rpc_mock.received_requests().await;
-    assert!(requests.iter().any(|req| {
-        let body: serde_json::Value = serde_json::from_slice(&req.body).unwrap_or_default();
-        body["method"] == "sendTransaction"
-    }), "keeper did not submit a transaction");
+    let requests = rpc_mock.received_requests().await.unwrap_or_default();
+    assert!(
+        requests.iter().any(|req| {
+            let body: serde_json::Value = serde_json::from_slice(&req.body).unwrap_or_default();
+            body["method"] == "sendTransaction"
+        }),
+        "keeper did not submit a transaction"
+    );
 }
 
 // #340 — GET /ready returns 503 when RPC is unreachable
@@ -499,7 +511,9 @@ async fn get_ready_returns_503_when_price_loop_stale() {
     // Populate price cache (so empty check passes)
     {
         let mut cache = state.price_cache.write().await;
-        cache.prices.insert("BTC".to_string(), sample_cached_price());
+        cache
+            .prices
+            .insert("BTC".to_string(), sample_cached_price());
     }
 
     // Set last_price_cycle_at to 30 seconds ago (stale, since interval is 1s * 3 = 3s)
