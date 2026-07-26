@@ -356,6 +356,7 @@ mod tests {
             keeper_account_id: "GACCOUNT".to_string(),
             keeper_index: 0,
             admin_api_token: None,
+            pyth_api_key: None,
             min_keeper_balance_xlm: 0.0,
             price_loop_interval: Duration::from_millis(1),
             keeper_loop_interval: Duration::from_millis(1),
@@ -373,8 +374,8 @@ mod tests {
             bind_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
             network: Network::Testnet,
             network_passphrase: "Test SDF Network ; September 2015".to_string(),
-            stellar_rpc_url: "http://127.0.0.1:1".to_string(), // unreachable — cycle will error
-            horizon_url: "http://127.0.0.1:1".to_string(),
+            stellar_rpc_url: "not-a-valid-url".to_string(), // immediate error — no network
+            horizon_url: "not-a-valid-url".to_string(),
             oracle_contract_id: "CORACLE".to_string(),
             role_store_contract_id: "CROLE".to_string(),
             data_store_contract_id: "CDATA".to_string(),
@@ -389,6 +390,7 @@ mod tests {
             keeper_account_id: "GACCOUNT".to_string(),
             keeper_index: 0,
             admin_api_token: None,
+            pyth_api_key: None,
             min_keeper_balance_xlm: 0.0,
             price_loop_interval: Duration::from_millis(50),
             keeper_loop_interval: Duration::from_millis(50),
@@ -437,7 +439,9 @@ mod tests {
         };
 
         let state = test_state(token.clone());
-        let cached = build_cached_price(&state, &token, 123).await.unwrap();
+        let cached = build_cached_price(&state, &token, 123, &std::collections::HashMap::new())
+            .await
+            .unwrap();
 
         // Verify all fields are correct (closes #400)
         assert_eq!(
@@ -446,8 +450,8 @@ mod tests {
         );
         assert_eq!(cached.symbol, "TUSDC");
         assert_eq!(cached.display_symbol, "USDC");
-        assert_eq!(cached.min, 1_000_000_000_000_000_000_000_000_000_000);
-        assert_eq!(cached.max, 1_000_000_000_000_000_000_000_000_000_000);
+        assert_eq!(cached.min, 990_000_000_000_000_000_000_000_000_000);
+        assert_eq!(cached.max, 1_010_000_000_000_000_000_000_000_000_000);
         assert_eq!(cached.median, 1_000_000_000_000_000_000_000_000_000_000);
         assert_eq!(cached.ledger_seq, 123);
         assert_eq!(cached.sources_used, vec!["fixed"]);

@@ -175,8 +175,9 @@ pub fn parse_price_to_precision(raw: &str) -> Result<i128, BinancePriceError> {
 #[cfg(test)]
 mod tests {
     use super::{
-        parse_price_to_precision, parse_ticker_http_response, parse_ticker_http_result,
-        parse_ticker_response_body, BinancePriceError, FLOAT_PRECISION,
+        build_spot_price_url, parse_price_to_precision, parse_ticker_http_response,
+        parse_ticker_http_result, parse_ticker_response_body, BinancePriceError,
+        BINANCE_TICKER_PRICE_URL, FLOAT_PRECISION,
     };
 
     #[test]
@@ -377,6 +378,6 @@ mod tests {
         let symbols = vec!["BTCUSDT".to_string(), "ETHUSDT".to_string()];
         let url = build_spot_price_url(&symbols);
         assert!(url.starts_with(BINANCE_TICKER_PRICE_URL));
-        assert!(url.contains("symbols=%5B%22BTCUSDT%22%2C%22ETHUSDT%22%5D"));
+        assert!(url.contains(r#"symbols=["BTCUSDT","ETHUSDT"]"#));
     }
 }

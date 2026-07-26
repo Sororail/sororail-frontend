@@ -555,7 +555,10 @@ mod tests {
             .unwrap_err();
 
         if let SubmitError::PollTimeout { hash } = err {
-            assert_eq!(hash, "abc123def456", "hash should be available for reconciliation");
+            assert_eq!(
+                hash, "abc123def456",
+                "hash should be available for reconciliation"
+            );
         } else {
             panic!("expected PollTimeout error with hash");
         }

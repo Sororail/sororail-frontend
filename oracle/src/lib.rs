@@ -1,5 +1,6 @@
 pub mod price;
 
+pub mod auth;
 pub mod binance;
 pub mod chain;
 pub mod coinbase;
@@ -15,13 +16,12 @@ pub mod prices;
 pub mod pyth;
 pub mod reader;
 pub mod retry;
+pub mod ring_buffer;
 pub mod scval;
 pub mod signing;
 pub mod state;
 pub mod stellar_rpc;
 pub mod submit;
-pub mod auth;
-pub mod ring_buffer;
 pub mod tx_builder;
 
 pub mod api;

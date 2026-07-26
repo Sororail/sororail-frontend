@@ -49,7 +49,7 @@ pub fn aggregate_prices(
     let filtered_sources = filter_result.filtered_sources;
 
     if filtered_prices.len() < min_sources {
-        let rejected_sources = filter_result
+        let _rejected_sources: Vec<RejectedSource> = filter_result
             .rejected
             .into_iter()
             .map(|(source, price, deviation)| RejectedSource {
@@ -524,7 +524,9 @@ mod tests {
         ];
         let result = aggregate_prices(&[100, 101, 1000], &sources, 3, 200);
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("insufficient sources after filtering"));
+        assert!(result
+            .unwrap_err()
+            .contains("insufficient sources after filtering"));
     }
 
     #[test]
@@ -620,7 +622,8 @@ mod tests {
             let sources: Vec<String> = (0..n).map(|i| format!("src{}", i)).collect();
 
             let first_pass = filter_outliers(&prices, &sources);
-            let second_pass = filter_outliers(&first_pass.filtered_prices, &first_pass.filtered_sources);
+            let second_pass =
+                filter_outliers(&first_pass.filtered_prices, &first_pass.filtered_sources);
 
             assert_eq!(
                 first_pass.filtered_prices, second_pass.filtered_prices,
@@ -637,7 +640,10 @@ mod tests {
     fn property_sources_used_count_invariant() {
         let test_cases = vec![
             (vec![100i128, 200, 300], vec!["a", "b", "c"]),
-            (vec![1000i128, 1001, 1002, 1003], vec!["src1", "src2", "src3", "src4"]),
+            (
+                vec![1000i128, 1001, 1002, 1003],
+                vec!["src1", "src2", "src3", "src4"],
+            ),
         ];
 
         for (prices, source_names) in test_cases {
@@ -656,7 +662,7 @@ mod tests {
     #[test]
     fn property_aggregate_prices_order_insensitive() {
         let prices = vec![100i128, 200, 300, 400, 500];
-        let sources: Vec<String> = vec!["a", "b", "c", "d", "e"]
+        let sources: Vec<String> = ["a", "b", "c", "d", "e"]
             .iter()
             .map(|s| s.to_string())
             .collect();
