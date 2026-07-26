@@ -34,6 +34,7 @@ fn test_config(rpc_url: &str) -> Arc<Config> {
         keeper_account_id: "GAUHMCMUP5FZO5675W3ISZ6E6CNYJGXBUW5WANE2JR4TGAARYCTSCBKI".to_string(),
         keeper_index: 0,
         admin_api_token: Some(SecretString::new("test-admin-token".to_string())),
+        pyth_api_key: None,
         min_keeper_balance_xlm: 10.0,
         price_loop_interval: Duration::from_millis(1000),
         keeper_loop_interval: Duration::from_millis(1500),
@@ -410,7 +411,10 @@ async fn keeper_cycle_freezes_order_when_budget_exceeded_and_freeze_succeeds() {
         result.err()
     );
     let summary = result.unwrap();
-    assert_eq!(summary.errors, 1, "should record 1 error for the budget exceeded order");
+    assert_eq!(
+        summary.errors, 1,
+        "should record 1 error for the budget exceeded order"
+    );
 }
 
 #[tokio::test]
@@ -456,27 +460,23 @@ async fn keeper_cycle_rejects_non_hex_order_key() {
                         }))
                     }
                 }
-                "getAccount" => {
-                    ResponseTemplate::new(200).set_body_json(serde_json::json!({
-                        "jsonrpc": "2.0", "id": 1,
-                        "result": {
-                            "id": "GAUHMCMUP5FZO5675W3ISZ6E6CNYJGXBUW5WANE2JR4TGAARYCTSCBKI",
-                            "sequence": "100",
-                            "subentries": 0, "inflationDestination": "", "homeDomain": "",
-                            "thresholds": {"low":1,"med":1,"high":1},
-                            "signers": [], "data": {}, "balances": []
-                        }
-                    }))
-                }
-                "sendTransaction" => {
-                    ResponseTemplate::new(200).set_body_json(serde_json::json!({
-                        "jsonrpc": "2.0", "id": 1,
-                        "result": {
-                            "status": "PENDING",
-                            "hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-                        }
-                    }))
-                }
+                "getAccount" => ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                    "jsonrpc": "2.0", "id": 1,
+                    "result": {
+                        "id": "GAUHMCMUP5FZO5675W3ISZ6E6CNYJGXBUW5WANE2JR4TGAARYCTSCBKI",
+                        "sequence": "100",
+                        "subentries": 0, "inflationDestination": "", "homeDomain": "",
+                        "thresholds": {"low":1,"med":1,"high":1},
+                        "signers": [], "data": {}, "balances": []
+                    }
+                })),
+                "sendTransaction" => ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                    "jsonrpc": "2.0", "id": 1,
+                    "result": {
+                        "status": "PENDING",
+                        "hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+                    }
+                })),
                 _ => ResponseTemplate::new(200).set_body_json(serde_json::json!({
                     "jsonrpc": "2.0", "id": 1,
                     "error": {"code": -1, "message": "unknown method"}
@@ -504,7 +504,10 @@ async fn keeper_cycle_rejects_non_hex_order_key() {
         result.err()
     );
     let summary = result.unwrap();
-    assert_eq!(summary.errors, 1, "should record 1 error for the non-hex key");
+    assert_eq!(
+        summary.errors, 1,
+        "should record 1 error for the non-hex key"
+    );
     assert_eq!(summary.orders_executed, 0, "should not execute any orders");
 }
 

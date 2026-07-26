@@ -81,14 +81,14 @@ pub(crate) async fn fetch_spot_price_with_url(
     symbol: &str,
 ) -> Result<i128, CoinbasePriceError> {
     // Usually the symbol passed is something like "BTC".
-    // If it comes with USDT suffix, we should strip it or ensure we query the base asset.
-    let base_currency = if let Some(stripped) = symbol.strip_suffix("USDT") {
-        stripped
-    } else if let Some(stripped) = symbol.strip_suffix("USD") {
-        stripped
-    } else {
-        symbol
-    };
+    // If it comes with USDT/USD suffix, strip it to get the base asset.
+    // Guard against stripping leaving an empty string (e.g. symbol "USDT"
+    // or "USD" exactly) — fall back to the original symbol in that case.
+    let base_currency = symbol
+        .strip_suffix("USDT")
+        .or_else(|| symbol.strip_suffix("USD"))
+        .filter(|stripped| !stripped.is_empty())
+        .unwrap_or(symbol);
 
     let url_str = format!("{}{}", base_url, base_currency);
 
@@ -206,6 +206,62 @@ mod tests {
         }"#;
         let result = parse_coinbase_response_body(body).unwrap();
         assert_eq!(result, FLOAT_PRECISION);
+    }
+
+    // ── exact-match USDT/USD regression tests ────────────────────────────────
+
+    /// When the configured coinbase_symbol is exactly "USDT", strip_suffix("USDT")
+    /// must NOT produce an empty base currency — the symbol itself should be used.
+    #[test]
+    fn coinbase_exact_usdt_symbol_uses_symbol_not_empty() {
+        let body = r#"{
+            "data": {
+                "currency": "USDT",
+                "rates": { "USD": "1.0" }
+            }
+        }"#;
+        let result = parse_coinbase_response_body(body).unwrap();
+        assert_eq!(result, FLOAT_PRECISION);
+    }
+
+    /// When the configured coinbase_symbol is exactly "USD", strip_suffix("USD")
+    /// must NOT produce an empty base currency — the symbol itself should be used.
+    #[test]
+    fn coinbase_exact_usd_symbol_uses_symbol_not_empty() {
+        let body = r#"{
+            "data": {
+                "currency": "USD",
+                "rates": { "USD": "1.0" }
+            }
+        }"#;
+        let result = parse_coinbase_response_body(body).unwrap();
+        assert_eq!(result, FLOAT_PRECISION);
+    }
+
+    /// When the symbol is exactly "USDT", the suffix-stripping logic must
+    /// keep the symbol as-is (not produce an empty string).
+    #[test]
+    fn coinbase_exact_usdt_strips_to_self() {
+        let symbol = "USDT";
+        let base = symbol
+            .strip_suffix("USDT")
+            .or_else(|| symbol.strip_suffix("USD"))
+            .filter(|s| !s.is_empty())
+            .unwrap_or(symbol);
+        assert_eq!(base, "USDT");
+    }
+
+    /// When the symbol is exactly "USD", the suffix-stripping logic must
+    /// keep the symbol as-is (not produce an empty string).
+    #[test]
+    fn coinbase_exact_usd_strips_to_self() {
+        let symbol = "USD";
+        let base = symbol
+            .strip_suffix("USDT")
+            .or_else(|| symbol.strip_suffix("USD"))
+            .filter(|s| !s.is_empty())
+            .unwrap_or(symbol);
+        assert_eq!(base, "USD");
     }
 
     // #364 — a response body without a USD key must return MissingUsdRate

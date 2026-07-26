@@ -212,7 +212,8 @@ mod tests {
             ledger_seq: 12345,
             sources_used: vec!["fixed".to_string()],
             // valid hex but only 32 bytes (64 hex chars), needs 128 hex chars
-            signature: "0000000000000000000000000000000000000000000000000000000000000000".to_string(),
+            signature: "0000000000000000000000000000000000000000000000000000000000000000"
+                .to_string(),
         };
 
         let err = encode_signed_price(&price).unwrap_err();
