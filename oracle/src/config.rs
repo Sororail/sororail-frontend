@@ -77,6 +77,8 @@ pub struct Config {
     pub keeper_account_id: String,
     pub keeper_index: u32,
     pub admin_api_token: Option<SecretString>,
+    /// API key used to authenticate requests to the production Hermes endpoint.
+    pub pyth_api_key: Option<SecretString>,
     pub min_keeper_balance_xlm: f64,
     pub price_loop_interval: Duration,
     pub keeper_loop_interval: Duration,
@@ -87,7 +89,7 @@ pub struct Config {
 pub enum EnvError {
     MissingVar(&'static str),
     InvalidVar { var: &'static str, reason: String },
-    TokenConfig(String),
+    TokenConfig(ConfigError),
 }
 
 impl fmt::Display for EnvError {
@@ -95,7 +97,7 @@ impl fmt::Display for EnvError {
         match self {
             EnvError::MissingVar(var) => write!(f, "required env var '{var}' is not set"),
             EnvError::InvalidVar { var, reason } => write!(f, "invalid env var '{var}': {reason}"),
-            EnvError::TokenConfig(reason) => write!(f, "invalid PRICE_FEED_CONFIG: {reason}"),
+            EnvError::TokenConfig(error) => write!(f, "invalid PRICE_FEED_CONFIG: {error}"),
         }
     }
 }
@@ -104,7 +106,7 @@ impl std::error::Error for EnvError {}
 
 impl From<ConfigError> for EnvError {
     fn from(value: ConfigError) -> Self {
-        EnvError::TokenConfig(value.to_string())
+        EnvError::TokenConfig(value)
     }
 }
 
@@ -179,6 +181,9 @@ impl Config {
             // Optional: when unset, admin-only endpoints reject with 503 rather
             // than refusing to boot. Keeps the foundation runnable without secrets.
             admin_api_token: lookup("ADMIN_API_TOKEN")
+                .filter(|value| !value.trim().is_empty())
+                .map(SecretString::new),
+            pyth_api_key: lookup("PYTH_API_KEY")
                 .filter(|value| !value.trim().is_empty())
                 .map(SecretString::new),
             min_keeper_balance_xlm: {
@@ -535,9 +540,7 @@ mod tests {
     fn parse_token_configs_missing_stellar_address_returns_invalid_token() {
         let json = r#"[{"symbol":"BTC","stellar_address":"","sources":["binance"]}]"#;
         let err = parse_price_feed_config(json).unwrap_err();
-        assert!(
-            matches!(err, ConfigError::InvalidToken { ref symbol, .. } if symbol == "BTC")
-        );
+        assert!(matches!(err, ConfigError::InvalidToken { ref symbol, .. } if symbol == "BTC"));
     }
 
     #[test]
@@ -866,7 +869,6 @@ mod tests {
         }
 
         assert_eq!(err, EnvError::MissingVar("KEEPER_PRIVATE_KEY"));
-
     }
 
     #[test]
@@ -879,8 +881,15 @@ mod tests {
         match err {
             EnvError::InvalidVar { var, reason } => {
                 assert_eq!(var, "STELLAR_NETWORK");
-                assert!(reason.contains("unknown network"), "error should mention unknown network, got: {}", reason);
-                assert!(reason.contains("staging"), "error should mention the invalid value 'staging'");
+                assert!(
+                    reason.contains("unknown network"),
+                    "error should mention unknown network, got: {}",
+                    reason
+                );
+                assert!(
+                    reason.contains("staging"),
+                    "error should mention the invalid value 'staging'"
+                );
             }
             other => panic!("expected InvalidVar error, got: {:?}", other),
         }

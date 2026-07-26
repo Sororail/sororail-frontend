@@ -1,6 +1,8 @@
 use serde::Deserialize;
+use std::collections::HashMap;
 
-pub const PYTH_HERMES_URL: &str = "https://hermes.pyth.network/api/latest_price_feeds";
+/// Provider endpoint recommended by Pyth for authenticated production traffic.
+pub const PYTH_HERMES_URL: &str = "https://pyth.dourolabs.app/hermes/api/latest_price_feeds";
 pub const FLOAT_PRECISION: i128 = 1_000_000_000_000_000_000_000_000_000_000;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -21,6 +23,35 @@ pub enum PythPriceError {
     InvalidPublishTime(i64),
 }
 
+impl std::fmt::Display for PythPriceError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NetworkError(error) => write!(f, "Pyth network error: {error}"),
+            Self::HttpError(status) => write!(f, "Pyth returned HTTP {status}"),
+            Self::JsonError(error) => write!(f, "invalid Pyth response: {error}"),
+            Self::PriceParseError(error) => write!(f, "invalid Pyth price: {error}"),
+            Self::MissingFeedId(id) => write!(f, "Pyth response is missing feed {id}"),
+            Self::StalePrice {
+                age_seconds,
+                max_age_seconds,
+            } => write!(
+                f,
+                "Pyth price is stale ({age_seconds}s; maximum {max_age_seconds}s)"
+            ),
+            Self::ConfidenceTooWide {
+                confidence_bps,
+                max_bps,
+            } => write!(
+                f,
+                "Pyth confidence interval is too wide ({confidence_bps:.2} bps; maximum {max_bps})"
+            ),
+            Self::InvalidPublishTime(value) => write!(f, "invalid Pyth publish time: {value}"),
+        }
+    }
+}
+
+impl std::error::Error for PythPriceError {}
+
 #[derive(Debug, Deserialize)]
 pub struct PythPrice {
     pub price: PythPriceData,
@@ -37,7 +68,7 @@ pub struct PythPriceData {
     pub publish_time: Option<i64>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct PythPriceFeed {
     pub id: String,
     pub price: PythPriceData,
@@ -133,19 +164,40 @@ pub async fn fetch_pyth_price(
     stale_after_seconds: u64,
     max_confidence_bps: u32,
 ) -> Result<i128, PythPriceError> {
-    fetch_pyth_price_with_url(PYTH_HERMES_URL, feed_id, stale_after_seconds, max_confidence_bps).await
+    let mut prices = fetch_pyth_prices(&[feed_id], None).await?;
+    let feed = prices
+        .remove(feed_id)
+        .ok_or_else(|| PythPriceError::MissingFeedId(feed_id.to_string()))?;
+    validate_pyth_price(
+        &feed.price,
+        crate::current_timestamp_secs(),
+        stale_after_seconds,
+        max_confidence_bps,
+    )
 }
 
-pub(crate) async fn fetch_pyth_price_with_url(
-    hermes_url: &str,
-    feed_id: &str,
-    stale_after_seconds: u64,
-    max_confidence_bps: u32,
-) -> Result<i128, PythPriceError> {
-    let url_string = format!("{}?ids[]={}", hermes_url, feed_id);
+/// Fetches all requested feeds in a single Hermes request. The bearer token is
+/// optional during the migration period, but production deployments should set
+/// `PYTH_API_KEY` before authentication becomes mandatory.
+pub async fn fetch_pyth_prices(
+    feed_ids: &[&str],
+    api_key: Option<&str>,
+) -> Result<HashMap<String, PythPriceFeed>, PythPriceError> {
+    if feed_ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let query = feed_ids
+        .iter()
+        .map(|id| format!("ids[]={id}"))
+        .collect::<Vec<_>>()
+        .join("&");
+    let url_string = format!("{PYTH_HERMES_URL}?{query}");
 
-    let response = crate::http::client()
-        .get(&url_string)
+    let mut request = crate::http::client().get(&url_string);
+    if let Some(key) = api_key {
+        request = request.bearer_auth(key);
+    }
+    let response = request
         .send()
         .await
         .map_err(|err| PythPriceError::NetworkError(err.to_string()))?;
@@ -162,20 +214,14 @@ pub(crate) async fn fetch_pyth_price_with_url(
 
     let response: HermesResponse =
         serde_json::from_str(&body).map_err(|err| PythPriceError::JsonError(err.to_string()))?;
-    let feed = match response {
-        HermesResponse::Array(feeds) => feeds
-            .into_iter()
-            .find(|f| f.id == feed_id)
-            .ok_or_else(|| PythPriceError::MissingFeedId(feed_id.to_string()))?,
-        HermesResponse::Wrapped(wrapped) => wrapped.data,
+    let feeds = match response {
+        HermesResponse::Array(feeds) => feeds,
+        HermesResponse::Wrapped(wrapped) => vec![wrapped.data],
     };
-
-    validate_pyth_price(
-        &feed.price,
-        crate::current_timestamp_secs(),
-        stale_after_seconds,
-        max_confidence_bps,
-    )
+    Ok(feeds
+        .into_iter()
+        .map(|feed| (feed.id.clone(), feed))
+        .collect())
 }
 
 #[cfg(test)]
@@ -574,8 +620,7 @@ mod tests {
             },
         }];
         let requested = "requested_feed_id";
-        let result: Option<PythPriceFeed> =
-            feeds.into_iter().find(|f| f.id == requested);
+        let result: Option<PythPriceFeed> = feeds.into_iter().find(|f| f.id == requested);
         assert!(
             result.is_none(),
             "find() must return None when no feed matches the requested id"

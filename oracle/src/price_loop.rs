@@ -49,9 +49,32 @@ pub async fn run_price_cycle(state: Arc<AppState>) {
             }
         };
 
+    // Hermes accepts multiple `ids[]` values. Fetch all Pyth feeds once per
+    // cycle, rather than spending one rate-limited request per token.
+    let pyth_feed_ids: Vec<&str> = state
+        .config
+        .price_feed
+        .tokens
+        .iter()
+        .filter(|token| token.sources.iter().any(|source| source == "pyth"))
+        .filter_map(|token| token.pyth_feed_id.as_deref())
+        .collect();
+    let pyth_prices = match crate::pyth::fetch_pyth_prices(
+        &pyth_feed_ids,
+        state.config.pyth_api_key.as_ref().map(|key| key.as_str()),
+    )
+    .await
+    {
+        Ok(prices) => prices,
+        Err(error) => {
+            tracing::warn!(error = %error, "batched Pyth request failed");
+            std::collections::HashMap::new()
+        }
+    };
+
     let mut new_prices = std::collections::BTreeMap::new();
     for token in &state.config.price_feed.tokens {
-        match build_cached_price(&state, token, ledger_seq).await {
+        match build_cached_price(&state, token, ledger_seq, &pyth_prices).await {
             Ok(price) => {
                 new_prices.insert(token.lookup_key(), price);
                 tokens_ok += 1;
@@ -104,12 +127,20 @@ async fn build_cached_price(
     state: &Arc<AppState>,
     token: &TokenConfig,
     ledger_seq: u32,
+    pyth_prices: &std::collections::HashMap<String, crate::pyth::PythPriceFeed>,
 ) -> Result<CachedPrice, String> {
     let mut prices = Vec::new();
     let mut sources = Vec::new();
 
     for source in &token.sources {
-        match fetch_source_with_retry(source, token).await {
+        match fetch_source_with_retry(
+            source,
+            token,
+            state.config.pyth_api_key.as_ref().map(|key| key.as_str()),
+            pyth_prices,
+        )
+        .await
+        {
             Ok(price) => {
                 prices.push(price);
                 sources.push(source.clone());
@@ -140,16 +171,26 @@ async fn build_cached_price(
     signed_cached_price(state, token, ledger_seq, aggregate)
 }
 
-async fn fetch_source_with_retry(source: &str, token: &TokenConfig) -> Result<i128, String> {
+async fn fetch_source_with_retry(
+    source: &str,
+    token: &TokenConfig,
+    pyth_api_key: Option<&str>,
+    pyth_prices: &std::collections::HashMap<String, crate::pyth::PythPriceFeed>,
+) -> Result<i128, String> {
     crate::retry::retry_with_backoff(
-        || async { fetch_source_price(source, token).await },
+        || async { fetch_source_price(source, token, pyth_api_key, pyth_prices).await },
         SOURCE_RETRY_ATTEMPTS,
         SOURCE_RETRY_BASE_DELAY_MS,
     )
     .await
 }
 
-async fn fetch_source_price(source: &str, token: &TokenConfig) -> Result<i128, String> {
+async fn fetch_source_price(
+    source: &str,
+    token: &TokenConfig,
+    pyth_api_key: Option<&str>,
+    pyth_prices: &std::collections::HashMap<String, crate::pyth::PythPriceFeed>,
+) -> Result<i128, String> {
     match source {
         "binance" => {
             let symbol = token
@@ -158,7 +199,7 @@ async fn fetch_source_price(source: &str, token: &TokenConfig) -> Result<i128, S
                 .ok_or_else(|| "missing binance_symbol".to_string())?;
             let results = crate::binance::fetch_spot_prices(std::slice::from_ref(symbol))
                 .await
-                .map_err(|err| format!("{err:?}"))?;
+                .map_err(|err| err.to_string())?;
             results
                 .into_iter()
                 .find(|(got_symbol, _)| got_symbol == symbol)
@@ -172,18 +213,40 @@ async fn fetch_source_price(source: &str, token: &TokenConfig) -> Result<i128, S
                 .ok_or_else(|| "missing coinbase_symbol".to_string())?;
             crate::coinbase::fetch_spot_price(symbol)
                 .await
-                .map_err(|err| format!("{err:?}"))
+                .map_err(|err| err.to_string())
         }
         "pyth" => {
             let feed_id = token
                 .pyth_feed_id
                 .as_ref()
                 .ok_or_else(|| "missing pyth_feed_id".to_string())?;
-            crate::pyth::fetch_pyth_price(feed_id, token.stale_after_seconds, 50)
-                .await
-                .map_err(|err| format!("{err:?}"))
+            if let Some(feed) = pyth_prices.get(feed_id) {
+                crate::pyth::validate_pyth_price(
+                    &feed.price,
+                    crate::current_timestamp_secs(),
+                    token.stale_after_seconds,
+                    50,
+                )
+            } else {
+                crate::pyth::fetch_pyth_prices(&[feed_id], pyth_api_key)
+                    .await
+                    .and_then(|mut feeds| {
+                        feeds.remove(feed_id).ok_or_else(|| {
+                            crate::pyth::PythPriceError::MissingFeedId(feed_id.clone())
+                        })
+                    })
+                    .and_then(|feed| {
+                        crate::pyth::validate_pyth_price(
+                            &feed.price,
+                            crate::current_timestamp_secs(),
+                            token.stale_after_seconds,
+                            50,
+                        )
+                    })
+            }
+            .map_err(|err| err.to_string())
         }
-        "fixed" => crate::fixed::fixed_price(token).map_err(|err| format!("{err:?}")),
+        "fixed" => crate::fixed::fixed_price(token).map_err(|err| err.to_string()),
         other => Err(format!("unsupported source: {other}")),
     }
 }
@@ -377,7 +440,10 @@ mod tests {
         let cached = build_cached_price(&state, &token, 123).await.unwrap();
 
         // Verify all fields are correct (closes #400)
-        assert_eq!(cached.token_address, "CBAN5YU3KRDKPTQ2H76D6S7HQFPRBGUD524F65BUM2RQCITPTRLKWKES");
+        assert_eq!(
+            cached.token_address,
+            "CBAN5YU3KRDKPTQ2H76D6S7HQFPRBGUD524F65BUM2RQCITPTRLKWKES"
+        );
         assert_eq!(cached.symbol, "TUSDC");
         assert_eq!(cached.display_symbol, "USDC");
         assert_eq!(cached.min, 1_000_000_000_000_000_000_000_000_000_000);
