@@ -6,6 +6,17 @@ pub enum FixedPriceError {
     InvalidFixedPrice(String),
 }
 
+impl std::fmt::Display for FixedPriceError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::MissingFixedPrice => f.write_str("fixed price is not configured"),
+            Self::InvalidFixedPrice(price) => write!(f, "invalid fixed price: {price}"),
+        }
+    }
+}
+
+impl std::error::Error for FixedPriceError {}
+
 pub fn fixed_price(token: &TokenConfig) -> Result<i128, FixedPriceError> {
     let raw = token
         .fixed_price
