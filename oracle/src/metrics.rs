@@ -1,5 +1,7 @@
+use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
@@ -17,6 +19,14 @@ pub struct Metrics {
     pub withdrawals_executed: AtomicU64,
     pub submit_failures: AtomicU64,
     pub last_metrics_update: AtomicU64,
+    pub token_source_fetch_failures: Mutex<BTreeMap<TokenSourceLabels, u64>>,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub struct TokenSourceLabels {
+    pub symbol: String,
+    pub token: String,
+    pub source: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -74,6 +84,21 @@ impl Metrics {
 
     pub fn record_submit_failure(&self) {
         self.submit_failures.fetch_add(1, Ordering::Relaxed);
+        self.update_timestamp();
+    }
+
+    pub fn record_token_source_fetch_failure(&self, symbol: &str, token: &str, source: &str) {
+        let labels = TokenSourceLabels {
+            symbol: symbol.to_string(),
+            token: token.to_string(),
+            source: source.to_string(),
+        };
+        let mut failures = self
+            .token_source_fetch_failures
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        *failures.entry(labels).or_insert(0) += 1;
+        drop(failures);
         self.update_timestamp();
     }
 
@@ -172,6 +197,23 @@ impl Metrics {
             self.token_fetch_failures.load(Ordering::Relaxed)
         ));
 
+        output.push_str("# HELP oracle_token_source_fetch_failures_total Total source fetch failures by configured token and source\n");
+        output.push_str("# TYPE oracle_token_source_fetch_failures_total counter\n");
+        for (labels, count) in self
+            .token_source_fetch_failures
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .iter()
+        {
+            output.push_str(&format!(
+                "oracle_token_source_fetch_failures_total{{symbol=\"{}\",token=\"{}\",source=\"{}\"}} {}\n",
+                escape_label_value(&labels.symbol),
+                escape_label_value(&labels.token),
+                escape_label_value(&labels.source),
+                count
+            ));
+        }
+
         output.push_str("# HELP oracle_submit_failures Total number of submit failures\n");
         output.push_str("# TYPE oracle_submit_failures counter\n");
         output.push_str(&format!(
@@ -188,6 +230,13 @@ impl Metrics {
 
         output
     }
+}
+
+fn escape_label_value(value: &str) -> String {
+    value
+        .replace('\\', r"\\")
+        .replace('\n', r"\n")
+        .replace('"', r#"\""#)
 }
 
 #[cfg(test)]
@@ -239,5 +288,32 @@ mod tests {
 
         let resp = metrics.to_response();
         assert_eq!(resp.token_fetch_ok, 6, "4 + 2 = 6 total successes");
+    }
+
+    #[test]
+    fn token_source_failures_are_exported_with_bounded_labels() {
+        let metrics = Metrics::new();
+        metrics.record_token_source_fetch_failure("XLM", "CXLM", "pyth");
+        metrics.record_token_source_fetch_failure("XLM", "CXLM", "pyth");
+        metrics.record_token_source_fetch_failure("BTC", "CBTC", "binance");
+
+        let prometheus = metrics.to_prometheus();
+        assert!(prometheus.contains(
+            "oracle_token_source_fetch_failures_total{symbol=\"XLM\",token=\"CXLM\",source=\"pyth\"} 2"
+        ));
+        assert!(prometheus.contains(
+            "oracle_token_source_fetch_failures_total{symbol=\"BTC\",token=\"CBTC\",source=\"binance\"} 1"
+        ));
+    }
+
+    #[test]
+    fn prometheus_label_values_are_escaped() {
+        let metrics = Metrics::new();
+        metrics.record_token_source_fetch_failure("A\"B", "C\\D", "line\nfeed");
+
+        let prometheus = metrics.to_prometheus();
+        assert!(prometheus.contains(
+            "oracle_token_source_fetch_failures_total{symbol=\"A\\\"B\",token=\"C\\\\D\",source=\"line\\nfeed\"} 1"
+        ));
     }
 }

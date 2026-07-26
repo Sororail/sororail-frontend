@@ -85,9 +85,29 @@ fn build_spot_price_url(symbols: &[String]) -> String {
         format!(
             "{}?symbols={}",
             BINANCE_TICKER_PRICE_URL,
-            serde_json::to_string(symbols).unwrap()
+            percent_encode_query_value(&serde_json::to_string(symbols).unwrap())
         )
     }
+}
+
+fn percent_encode_query_value(value: &str) -> String {
+    const HEX: &[u8; 16] = b"0123456789ABCDEF";
+    let mut encoded = String::with_capacity(value.len());
+
+    for byte in value.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
+                encoded.push(byte as char);
+            }
+            _ => {
+                encoded.push('%');
+                encoded.push(HEX[(byte >> 4) as usize] as char);
+                encoded.push(HEX[(byte & 0x0f) as usize] as char);
+            }
+        }
+    }
+
+    encoded
 }
 
 pub async fn fetch_spot_prices(
@@ -163,8 +183,9 @@ pub fn parse_price_to_precision(raw: &str) -> Result<i128, BinancePriceError> {
 #[cfg(test)]
 mod tests {
     use super::{
-        parse_price_to_precision, parse_ticker_http_response, parse_ticker_http_result,
-        parse_ticker_response_body, BinancePriceError, FLOAT_PRECISION,
+        build_spot_price_url, parse_price_to_precision, parse_ticker_http_response,
+        parse_ticker_http_result, parse_ticker_response_body, BinancePriceError,
+        BINANCE_TICKER_PRICE_URL, FLOAT_PRECISION,
     };
 
     #[test]

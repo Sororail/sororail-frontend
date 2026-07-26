@@ -517,7 +517,7 @@ mod tests {
     #[test]
     fn parse_token_configs_empty_array_returns_empty_token_list() {
         let err = parse_price_feed_config("[]").unwrap_err();
-        assert_eq!(err, ConfigError::EmptyTokenList);
+        assert!(matches!(err, ConfigError::EmptyTokenList));
     }
 
     /// #324 — entry with empty symbol → InvalidToken.

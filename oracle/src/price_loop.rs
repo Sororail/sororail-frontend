@@ -146,6 +146,11 @@ async fn build_cached_price(
                 sources.push(source.clone());
             }
             Err(error) => {
+                state.metrics.record_token_source_fetch_failure(
+                    &token.symbol,
+                    &token.stellar_address,
+                    source,
+                );
                 let ctx = ErrorContext {
                     token: token.stellar_address.clone(),
                     symbol: token.symbol.clone(),
@@ -438,6 +443,8 @@ mod tests {
 
         let state = test_state(token.clone());
         let cached = build_cached_price(&state, &token, 123).await.unwrap();
+        let configured_price = token.fixed_price.as_ref().unwrap().parse::<i128>().unwrap();
+        let spread = configured_price * token.max_deviation_bps as i128 / 10_000;
 
         // Verify all fields are correct (closes #400)
         assert_eq!(
@@ -446,9 +453,9 @@ mod tests {
         );
         assert_eq!(cached.symbol, "TUSDC");
         assert_eq!(cached.display_symbol, "USDC");
-        assert_eq!(cached.min, 1_000_000_000_000_000_000_000_000_000_000);
-        assert_eq!(cached.max, 1_000_000_000_000_000_000_000_000_000_000);
-        assert_eq!(cached.median, 1_000_000_000_000_000_000_000_000_000_000);
+        assert_eq!(cached.min, configured_price - spread);
+        assert_eq!(cached.max, configured_price + spread);
+        assert_eq!(cached.median, configured_price);
         assert_eq!(cached.ledger_seq, 123);
         assert_eq!(cached.sources_used, vec!["fixed"]);
         assert_eq!(cached.signature.len(), 128);

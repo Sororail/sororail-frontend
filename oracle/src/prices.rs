@@ -524,7 +524,9 @@ mod tests {
         ];
         let result = aggregate_prices(&[100, 101, 1000], &sources, 3, 200);
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("insufficient sources after filtering"));
+        assert!(result
+            .unwrap_err()
+            .contains("insufficient sources after filtering"));
     }
 
     #[test]
