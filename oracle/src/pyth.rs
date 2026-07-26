@@ -154,8 +154,9 @@ pub async fn fetch_pyth_price(
     let response: HermesResponse =
         serde_json::from_str(&body).map_err(|err| PythPriceError::JsonError(err.to_string()))?;
     let feed = match response {
-        HermesResponse::Array(mut feeds) => feeds
-            .pop()
+        HermesResponse::Array(feeds) => feeds
+            .into_iter()
+            .find(|f| f.id == feed_id)
             .ok_or_else(|| PythPriceError::MissingFeedId(feed_id.to_string()))?,
         HermesResponse::Wrapped(wrapped) => wrapped.data,
     };
@@ -436,6 +437,57 @@ mod tests {
         let json = r#"[]"#;
         let response: HermesResponse = serde_json::from_str(json).unwrap();
         assert!(matches!(response, HermesResponse::Array(v) if v.is_empty()));
+    }
+
+    // #532 — array branch must match the requested feed_id, not blindly pop
+    #[test]
+    fn hermes_array_with_wrong_feed_id_returns_missing_feed_id_error() {
+        // Simulate what fetch_pyth_price does on the array branch when no entry
+        // matches the requested feed_id.
+        let feeds: Vec<PythPriceFeed> = vec![PythPriceFeed {
+            id: "other_feed_id".to_string(),
+            price: PythPriceData {
+                price: "4500000000".to_string(),
+                conf: None,
+                expo: -8,
+                publish_time: Some(1_000),
+            },
+        }];
+        let requested = "requested_feed_id";
+        let result: Option<PythPriceFeed> =
+            feeds.into_iter().find(|f| f.id == requested);
+        assert!(
+            result.is_none(),
+            "find() must return None when no feed matches the requested id"
+        );
+    }
+
+    #[test]
+    fn hermes_array_with_matching_feed_id_returns_correct_feed() {
+        let feeds: Vec<PythPriceFeed> = vec![
+            PythPriceFeed {
+                id: "feed_a".to_string(),
+                price: PythPriceData {
+                    price: "1000000000".to_string(),
+                    conf: None,
+                    expo: -8,
+                    publish_time: Some(1_000),
+                },
+            },
+            PythPriceFeed {
+                id: "feed_b".to_string(),
+                price: PythPriceData {
+                    price: "4500000000".to_string(),
+                    conf: None,
+                    expo: -8,
+                    publish_time: Some(1_000),
+                },
+            },
+        ];
+        let requested = "feed_b";
+        let found = feeds.into_iter().find(|f| f.id == requested).unwrap();
+        assert_eq!(found.id, "feed_b");
+        assert_eq!(found.price.price, "4500000000");
     }
 
     // #365 — normalize_pyth_price("4500000000", -8) must equal 45 * FLOAT_PRECISION
