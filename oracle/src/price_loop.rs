@@ -275,6 +275,7 @@ fn signed_cached_price(
         token_address: token.stellar_address.clone(),
         symbol: token.symbol.clone(),
         display_symbol: token.display_symbol().to_string(),
+        keeper_index: state.config.keeper_index,
         min: aggregate.min,
         max: aggregate.max,
         median: aggregate.median,
