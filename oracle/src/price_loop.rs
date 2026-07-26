@@ -49,11 +49,11 @@ pub async fn run_price_cycle(state: Arc<AppState>) {
             }
         };
 
+    let mut new_prices = std::collections::BTreeMap::new();
     for token in &state.config.price_feed.tokens {
         match build_cached_price(&state, token, ledger_seq).await {
             Ok(price) => {
-                let key = token.lookup_key();
-                state.price_cache.write().await.prices.insert(key, price);
+                new_prices.insert(token.lookup_key(), price);
                 tokens_ok += 1;
             }
             Err(error) => {
@@ -69,7 +69,9 @@ pub async fn run_price_cycle(state: Arc<AppState>) {
     }
 
     if tokens_ok > 0 {
-        state.price_cache.write().await.last_updated = Some(SystemTime::now());
+        let mut cache = state.price_cache.write().await;
+        cache.prices = new_prices;
+        cache.last_updated = Some(SystemTime::now());
     }
 
     finish_cycle(&state, started, tokens_ok, tokens_failed).await;
@@ -299,6 +301,56 @@ mod tests {
             },
         };
         Arc::new(AppState::new(Arc::new(config)))
+    }
+
+    // ── #512: run_price_loop shutdown coverage ───────────────────────────────
+
+    fn shutdown_test_state() -> Arc<AppState> {
+        let config = Config {
+            bind_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
+            network: Network::Testnet,
+            network_passphrase: "Test SDF Network ; September 2015".to_string(),
+            stellar_rpc_url: "http://127.0.0.1:1".to_string(), // unreachable — cycle will error
+            horizon_url: "http://127.0.0.1:1".to_string(),
+            oracle_contract_id: "CORACLE".to_string(),
+            role_store_contract_id: "CROLE".to_string(),
+            data_store_contract_id: "CDATA".to_string(),
+            order_handler_contract_id: "CORDER".to_string(),
+            deposit_handler_contract_id: "CDEPOSIT".to_string(),
+            withdrawal_handler_contract_id: "CWITHDRAW".to_string(),
+            reader_contract_id: "CREADER".to_string(),
+            keeper_private_key: SecretString::new(
+                "1111111111111111111111111111111111111111111111111111111111111111".to_string(),
+            ),
+            keeper_secret_key: SecretString::new("SSECRET".to_string()),
+            keeper_account_id: "GACCOUNT".to_string(),
+            keeper_index: 0,
+            admin_api_token: None,
+            min_keeper_balance_xlm: 0.0,
+            price_loop_interval: Duration::from_millis(50),
+            keeper_loop_interval: Duration::from_millis(50),
+            price_feed: PriceFeedConfig { tokens: vec![] },
+        };
+        Arc::new(AppState::new(Arc::new(config)))
+    }
+
+    #[tokio::test]
+    async fn run_price_loop_exits_promptly_on_shutdown() {
+        let state = shutdown_test_state();
+        let state2 = Arc::clone(&state);
+
+        let handle = tokio::spawn(run_price_loop(state2));
+
+        // Let the loop tick at least once.
+        tokio::time::sleep(Duration::from_millis(120)).await;
+
+        state.shutdown_token.cancel();
+
+        let completed = tokio::time::timeout(Duration::from_millis(500), handle).await;
+        assert!(
+            completed.is_ok(),
+            "run_price_loop must exit within 500 ms of shutdown_token cancellation"
+        );
     }
 
     #[tokio::test]
