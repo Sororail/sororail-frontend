@@ -44,6 +44,9 @@ pub fn build_price_message(
     payload
 }
 
+/// Sign a price update message using the ed25519 keeper key.
+
+//Fix size implementation for i128 and u64 to ensure correct byte representation
 pub fn sign_price(
     private_key_hex: &str,
     network_passphrase: &str,

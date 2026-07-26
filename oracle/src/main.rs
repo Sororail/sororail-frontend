@@ -41,12 +41,20 @@ async fn main() {
     );
 
     let shutdown_token = CancellationToken::new();
-    let server = axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal(shutdown_token.clone()))
-        .await;
+    let server_future = axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown_signal(shutdown_token.clone()));
+
+    let server_result = tokio::time::timeout(std::time::Duration::from_secs(30), server_future).await;
+
+    if server_result.is_err() {
+        tracing::warn!("server shutdown timed out after 30s, canceling background tasks");
+    }
 
     tracing::info!("shutdown initiated, draining...");
+    shutdown_token.cancel();
     state.shutdown_token.cancel();
+
+    let _ = tokio::join!(price_loop, keeper_loop);
 
     let _ = tokio::join!(price_loop, keeper_loop);
 
@@ -71,6 +79,7 @@ async fn shutdown_signal(shutdown_token: CancellationToken) {
     let ctrl_c = async {
         if let Err(error) = tokio::signal::ctrl_c().await {
             tracing::error!(%error, "failed to install SIGINT handler");
+            std::future::pending::<()>().await;
         }
     };
 
@@ -80,7 +89,10 @@ async fn shutdown_signal(shutdown_token: CancellationToken) {
             Ok(mut signal) => {
                 signal.recv().await;
             }
-            Err(error) => tracing::error!(%error, "failed to install SIGTERM handler"),
+            Err(error) => {
+                tracing::error!(%error, "failed to install SIGTERM handler");
+                std::future::pending::<()>().await;
+            }
         }
     };
 
