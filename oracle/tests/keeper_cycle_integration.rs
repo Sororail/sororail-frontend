@@ -507,3 +507,179 @@ async fn keeper_cycle_rejects_non_hex_order_key() {
     assert_eq!(summary.errors, 1, "should record 1 error for the non-hex key");
     assert_eq!(summary.orders_executed, 0, "should not execute any orders");
 }
+
+// ── #516: get_account_sequence error branches ─────────────────────────────────
+
+/// Helper: state with one cached price pointing at the mock RPC.
+fn state_with_price(rpc_url: &str) -> Arc<AppState> {
+    let config = test_config(rpc_url);
+    let state = Arc::new(AppState::new(config));
+    // Pre-populate the price cache so the cycle reaches get_account_sequence.
+    // We do this synchronously via a blocking write; tests are single-threaded
+    // at this point so the lock is uncontested.
+    let rt = tokio::runtime::Handle::current();
+    rt.block_on(async {
+        state
+            .price_cache
+            .write()
+            .await
+            .prices
+            .insert("TUSDC".to_string(), test_cached_price());
+    });
+    state
+}
+
+/// Returns a wiremock handler that answers simulateTransaction with count=0
+/// (no pending work) and delegates getAccount to the supplied closure.
+macro_rules! mount_with_get_account {
+    ($server:expr, $get_account_response:expr) => {{
+        let get_account_json = $get_account_response;
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .respond_with(move |req: &Request| {
+                let body: serde_json::Value = serde_json::from_slice(&req.body).unwrap();
+                match body["method"].as_str().unwrap_or("") {
+                    "simulateTransaction" => {
+                        // Return count=0 so we reach set_prices_on_chain → get_account_sequence.
+                        // But we need pending work to reach get_account_sequence, so return 1
+                        // for get_order_count and a valid key for get_order_keys.
+                        let op = body["params"]["transaction"]["operations"][0].clone();
+                        let method_name = op["method"].as_str().unwrap_or("");
+                        if method_name == "get_order_count" {
+                            ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                                "jsonrpc": "2.0", "id": 1, "result": 1
+                            }))
+                        } else if method_name == "get_order_keys" {
+                            ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                                "jsonrpc": "2.0", "id": 1,
+                                "result": {"vec": [{"bytes": "aabbccdd00112233aabbccdd00112233aabbccdd00112233aabbccdd00112233"}]}
+                            }))
+                        } else {
+                            ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                                "jsonrpc": "2.0", "id": 1, "result": 0
+                            }))
+                        }
+                    }
+                    "getAccount" => ResponseTemplate::new(200)
+                        .set_body_json(get_account_json.clone()),
+                    _ => ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                        "jsonrpc": "2.0", "id": 1,
+                        "error": {"code": -1, "message": "unexpected method"}
+                    })),
+                }
+            })
+            .mount(&$server)
+            .await;
+    }};
+}
+
+#[tokio::test]
+async fn get_account_sequence_rpc_error_field_propagates() {
+    let server = MockServer::start().await;
+    mount_with_get_account!(
+        server,
+        serde_json::json!({
+            "jsonrpc": "2.0", "id": 1,
+            "error": {"code": -32000, "message": "account not found"}
+        })
+    );
+
+    let state = state_with_price(&server.uri());
+    let result = oracle::keeper_loop::run_keeper_cycle(state).await;
+    assert!(result.is_err());
+    assert!(result.unwrap_err().contains("getAccount error"));
+}
+
+#[tokio::test]
+async fn get_account_sequence_missing_sequence_field_propagates() {
+    let server = MockServer::start().await;
+    mount_with_get_account!(
+        server,
+        serde_json::json!({
+            "jsonrpc": "2.0", "id": 1,
+            "result": {"id": "GACCOUNT"}
+            // "sequence" key intentionally absent
+        })
+    );
+
+    let state = state_with_price(&server.uri());
+    let result = oracle::keeper_loop::run_keeper_cycle(state).await;
+    assert!(result.is_err());
+    assert!(result.unwrap_err().contains("Missing sequence"));
+}
+
+#[tokio::test]
+async fn get_account_sequence_non_numeric_sequence_propagates() {
+    let server = MockServer::start().await;
+    mount_with_get_account!(
+        server,
+        serde_json::json!({
+            "jsonrpc": "2.0", "id": 1,
+            "result": {"id": "GACCOUNT", "sequence": "not-a-number"}
+        })
+    );
+
+    let state = state_with_price(&server.uri());
+    let result = oracle::keeper_loop::run_keeper_cycle(state).await;
+    assert!(result.is_err());
+    assert!(result.unwrap_err().contains("failed to parse sequence"));
+}
+
+// ── #516: simulate_contract_call error branches ───────────────────────────────
+
+/// Mount a mock that returns the given response for every simulateTransaction
+/// call (used to test the three failure shapes of simulate_contract_call).
+macro_rules! mount_simulate_error {
+    ($server:expr, $simulate_response:expr) => {{
+        let sim_json = $simulate_response;
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .respond_with(move |req: &Request| {
+                let body: serde_json::Value = serde_json::from_slice(&req.body).unwrap();
+                match body["method"].as_str().unwrap_or("") {
+                    "simulateTransaction" => {
+                        ResponseTemplate::new(200).set_body_json(sim_json.clone())
+                    }
+                    _ => ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                        "jsonrpc": "2.0", "id": 1,
+                        "error": {"code": -1, "message": "unexpected method"}
+                    })),
+                }
+            })
+            .mount(&$server)
+            .await;
+    }};
+}
+
+#[tokio::test]
+async fn simulate_contract_call_rpc_error_field_propagates() {
+    let server = MockServer::start().await;
+    mount_simulate_error!(
+        server,
+        serde_json::json!({
+            "jsonrpc": "2.0", "id": 1,
+            "error": {"code": -32600, "message": "contract execution failed"}
+        })
+    );
+
+    let state = state_with_price(&server.uri());
+    let result = oracle::keeper_loop::run_keeper_cycle(state).await;
+    assert!(result.is_err());
+    assert!(result.unwrap_err().contains("Simulation error"));
+}
+
+#[tokio::test]
+async fn simulate_contract_call_missing_result_field_propagates() {
+    let server = MockServer::start().await;
+    // A 200 response whose body has neither "result" nor "error".
+    mount_simulate_error!(
+        server,
+        serde_json::json!({
+            "jsonrpc": "2.0", "id": 1
+            // "result" key intentionally absent
+        })
+    );
+
+    let state = state_with_price(&server.uri());
+    let result = oracle::keeper_loop::run_keeper_cycle(state).await;
+    assert!(result.is_err());
+    assert!(result.unwrap_err().contains("Missing result"));
+}

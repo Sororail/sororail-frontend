@@ -582,4 +582,62 @@ mod tests {
         assert_eq!(parse_u32_from_result("42").unwrap(), 42);
         assert_eq!(parse_u32_from_result(r#"{"u32": 42}"#).unwrap(), 42);
     }
+
+    // ── #512: run_keeper_loop shutdown coverage ───────────────────────────────
+
+    use crate::config::{Config, Network, PriceFeedConfig, SecretString};
+    use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+    use std::time::Duration;
+
+    fn shutdown_test_state() -> Arc<AppState> {
+        let config = Arc::new(Config {
+            bind_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
+            network: Network::Testnet,
+            network_passphrase: "Test SDF Network ; September 2015".to_string(),
+            stellar_rpc_url: "http://127.0.0.1:1".to_string(), // unreachable — cycle will error
+            horizon_url: "http://127.0.0.1:1".to_string(),
+            oracle_contract_id: "CORACLE".to_string(),
+            role_store_contract_id: "CROLE".to_string(),
+            data_store_contract_id: "CDATA".to_string(),
+            order_handler_contract_id: "CORDER".to_string(),
+            deposit_handler_contract_id: "CDEPOSIT".to_string(),
+            withdrawal_handler_contract_id: "CWITHDRAW".to_string(),
+            reader_contract_id: "CREADER".to_string(),
+            keeper_private_key: SecretString::new(
+                "1111111111111111111111111111111111111111111111111111111111111111".to_string(),
+            ),
+            keeper_secret_key: SecretString::new(
+                "SAUHMCMUP5FZO5675W3ISZ6E6CNYJGXBUW5WANE2JR4TGAARYCTSCBKI".to_string(),
+            ),
+            keeper_account_id: "GAUHMCMUP5FZO5675W3ISZ6E6CNYJGXBUW5WANE2JR4TGAARYCTSCBKI"
+                .to_string(),
+            keeper_index: 0,
+            admin_api_token: None,
+            min_keeper_balance_xlm: 0.0,
+            price_loop_interval: Duration::from_millis(50),
+            keeper_loop_interval: Duration::from_millis(50),
+            price_feed: PriceFeedConfig { tokens: vec![] },
+        });
+        Arc::new(AppState::new(Arc::new(config)))
+    }
+
+    #[tokio::test]
+    async fn run_keeper_loop_exits_promptly_on_shutdown() {
+        let state = shutdown_test_state();
+        let state2 = Arc::clone(&state);
+
+        let handle = tokio::spawn(run_keeper_loop(state2));
+
+        // Let the loop tick at least once.
+        tokio::time::sleep(Duration::from_millis(120)).await;
+
+        state.shutdown_token.cancel();
+
+        let completed = tokio::time::timeout(Duration::from_millis(500), handle)
+            .await;
+        assert!(
+            completed.is_ok(),
+            "run_keeper_loop must exit within 500 ms of shutdown_token cancellation"
+        );
+    }
 }
