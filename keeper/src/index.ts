@@ -71,32 +71,45 @@ async function runKeeperCycle(env: Env): Promise<object> {
   );
   const server = new SorobanRpc.Server(env.RPC_URL, { allowHttp: false });
 
-  // 1. Fetch signed prices from oracle worker via service binding
-  log("Fetching prices from oracle service binding");
-  const pricesResp = await env.ORACLE_SERVICE.fetch("https://oracle.internal/prices");
-  if (!pricesResp.ok) {
-    throw new Error(`Oracle prices fetch failed: ${pricesResp.status} ${await pricesResp.text()}`);
-  }
-  const prices: CachedPrice[] = await pricesResp.json() as CachedPrice[];
-  if (prices.length === 0) throw new Error("Oracle returned empty price list");
-  log(`Got ${prices.length} prices: ${prices.map((p) => p.symbol).join(", ")}`);
-
-  // 2. Get all pending keys
+  // 1. Get all pending keys (independent of price-oracle health).
   const orderKeys    = await getOrderKeys(server, env, log);
   const depositKeys  = await getDepositKeys(server, env, log);
   const withdrawalKeys = await getWithdrawalKeys(server, env, log);
 
   log(`Found ${orderKeys.length} orders, ${depositKeys.length} deposits, ${withdrawalKeys.length} withdrawals`);
 
-  if (orderKeys.length === 0 && depositKeys.length === 0 && withdrawalKeys.length === 0) {
-    return { status: "no_work", pricesAvailable: prices.length, logs };
+  // 2. Fetch signed prices and submit set_prices — isolated in its own try/catch
+  // (issue #487) so an oracle outage or a flaky set_prices submission doesn't
+  // starve deposit/withdrawal processing, which never needed prices at all.
+  let pricesSet = 0;
+  let priceError: string | null = null;
+  try {
+    log("Fetching prices from oracle service binding");
+    const pricesResp = await env.ORACLE_SERVICE.fetch("https://oracle.internal/prices");
+    if (!pricesResp.ok) {
+      throw new Error(`Oracle prices fetch failed: ${pricesResp.status} ${await pricesResp.text()}`);
+    }
+    const prices: CachedPrice[] = await pricesResp.json() as CachedPrice[];
+    if (prices.length === 0) throw new Error("Oracle returned empty price list");
+    log(`Got ${prices.length} prices: ${prices.map((p) => p.symbol).join(", ")}`);
+
+    log("Submitting set_prices...");
+    await setPrices(server, keypair, prices, env, log);
+    log("set_prices confirmed. Waiting for temp-storage to propagate...");
+    await sleep(5000);
+    pricesSet = prices.length;
+  } catch (e: unknown) {
+    priceError = e instanceof Error ? e.message : String(e);
+    log(`Price fetch/set failed, continuing without prices this cycle: ${priceError}`);
   }
 
-  // 3. Set prices on-chain (tx 1)
-  log("Submitting set_prices...");
-  await setPrices(server, keypair, prices, env, log);
-  log("set_prices confirmed. Waiting for temp-storage to propagate...");
-  await sleep(5000);
+  if (
+    orderKeys.length === 0 &&
+    depositKeys.length === 0 &&
+    withdrawalKeys.length === 0
+  ) {
+    return { status: "no_work", pricesSet, priceError, logs };
+  }
 
   // 4. Execute pending orders
   const orderResults: string[] = [];
@@ -153,7 +166,8 @@ async function runKeeperCycle(env: Env): Promise<object> {
 
   return {
     status: "done",
-    pricesSet: prices.length,
+    pricesSet,
+    priceError,
     orders: orderResults,
     deposits: depositResults,
     withdrawals: withdrawalResults,

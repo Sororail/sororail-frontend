@@ -2,7 +2,6 @@ use std::sync::Arc;
 
 use oracle::{api, AppState, Config};
 use tokio::net::TcpListener;
-use tokio_util::sync::CancellationToken;
 use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
@@ -22,8 +21,8 @@ async fn main() {
     let bind_addr = config.bind_addr;
     let state = Arc::new(AppState::new(Arc::clone(&config)));
     let app = api::build_router(Arc::clone(&state));
-    let price_loop = tokio::spawn(oracle::price_loop::run_price_loop(Arc::clone(&state)));
-    let keeper_loop = tokio::spawn(oracle::keeper_loop::run_keeper_loop(Arc::clone(&state)));
+    let mut price_loop = tokio::spawn(oracle::price_loop::run_price_loop(Arc::clone(&state)));
+    let mut keeper_loop = tokio::spawn(oracle::keeper_loop::run_keeper_loop(Arc::clone(&state)));
 
     let listener = match TcpListener::bind(bind_addr).await {
         Ok(listener) => listener,
@@ -40,21 +39,70 @@ async fn main() {
         "oracle server listening"
     );
 
-    let shutdown_token = CancellationToken::new();
-    let server = axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal(shutdown_token.clone()))
-        .await;
+    let mut server_handle = tokio::spawn({
+        let state = Arc::clone(&state);
+        async move {
+            axum::serve(listener, app)
+                .with_graceful_shutdown({
+                    let token = state.shutdown_token.clone();
+                    async move {
+                        tokio::select! {
+                            _ = shutdown_signal() => {
+                                token.cancel();
+                            }
+                            _ = token.cancelled() => {}
+                        }
+                    }
+                })
+                .await
+        }
+    });
+
+    let loop_died_early = tokio::select! {
+        result = &mut server_handle => {
+            match result {
+                Ok(Ok(())) => false,
+                Ok(Err(error)) => {
+                    tracing::error!(%error, "server error");
+                    eprintln!("server error: {error}");
+                    std::process::exit(1);
+                }
+                Err(error) => {
+                    tracing::error!(%error, "server panicked");
+                    std::process::exit(1);
+                }
+            }
+        }
+        result = &mut price_loop => {
+            match result {
+                Ok(()) => tracing::error!("price_loop exited unexpectedly before shutdown"),
+                Err(error) => tracing::error!(%error, "price_loop panicked"),
+            }
+            true
+        }
+        result = &mut keeper_loop => {
+            match result {
+                Ok(()) => tracing::error!("keeper_loop exited unexpectedly before shutdown"),
+                Err(error) => tracing::error!(%error, "keeper_loop panicked"),
+            }
+            true
+        }
+    };
+
+    if loop_died_early {
+        state.shutdown_token.cancel();
+        if tokio::time::timeout(std::time::Duration::from_secs(30), &mut server_handle)
+            .await
+            .is_err()
+        {
+            tracing::warn!("server shutdown timed out after 30s");
+        }
+    }
 
     tracing::info!("shutdown initiated, draining...");
     state.shutdown_token.cancel();
 
     let _ = tokio::join!(price_loop, keeper_loop);
-
-    if let Err(error) = server {
-        tracing::error!(%error, "server error");
-        eprintln!("server error: {error}");
-        std::process::exit(1);
-    }
 }
 
 fn init_tracing() {
@@ -67,10 +115,11 @@ fn init_tracing() {
         .init();
 }
 
-async fn shutdown_signal(shutdown_token: CancellationToken) {
+async fn shutdown_signal() {
     let ctrl_c = async {
         if let Err(error) = tokio::signal::ctrl_c().await {
             tracing::error!(%error, "failed to install SIGINT handler");
+            std::future::pending::<()>().await;
         }
     };
 
@@ -80,7 +129,10 @@ async fn shutdown_signal(shutdown_token: CancellationToken) {
             Ok(mut signal) => {
                 signal.recv().await;
             }
-            Err(error) => tracing::error!(%error, "failed to install SIGTERM handler"),
+            Err(error) => {
+                tracing::error!(%error, "failed to install SIGTERM handler");
+                std::future::pending::<()>().await;
+            }
         }
     };
 
@@ -91,6 +143,4 @@ async fn shutdown_signal(shutdown_token: CancellationToken) {
         _ = ctrl_c => tracing::info!("received SIGINT"),
         _ = terminate => tracing::info!("received SIGTERM"),
     }
-
-    shutdown_token.cancel();
 }

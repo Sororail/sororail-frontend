@@ -77,6 +77,8 @@ pub struct Config {
     pub keeper_account_id: String,
     pub keeper_index: u32,
     pub admin_api_token: Option<SecretString>,
+    /// API key used to authenticate requests to the production Hermes endpoint.
+    pub pyth_api_key: Option<SecretString>,
     pub min_keeper_balance_xlm: f64,
     pub price_loop_interval: Duration,
     pub keeper_loop_interval: Duration,
@@ -87,7 +89,7 @@ pub struct Config {
 pub enum EnvError {
     MissingVar(&'static str),
     InvalidVar { var: &'static str, reason: String },
-    TokenConfig(String),
+    TokenConfig(ConfigError),
 }
 
 impl fmt::Display for EnvError {
@@ -95,7 +97,7 @@ impl fmt::Display for EnvError {
         match self {
             EnvError::MissingVar(var) => write!(f, "required env var '{var}' is not set"),
             EnvError::InvalidVar { var, reason } => write!(f, "invalid env var '{var}': {reason}"),
-            EnvError::TokenConfig(reason) => write!(f, "invalid PRICE_FEED_CONFIG: {reason}"),
+            EnvError::TokenConfig(error) => write!(f, "invalid PRICE_FEED_CONFIG: {error}"),
         }
     }
 }
@@ -104,7 +106,7 @@ impl std::error::Error for EnvError {}
 
 impl From<ConfigError> for EnvError {
     fn from(value: ConfigError) -> Self {
-        EnvError::TokenConfig(value.to_string())
+        EnvError::TokenConfig(value)
     }
 }
 
@@ -181,21 +183,56 @@ impl Config {
             admin_api_token: lookup("ADMIN_API_TOKEN")
                 .filter(|value| !value.trim().is_empty())
                 .map(SecretString::new),
-            min_keeper_balance_xlm: parse_or_default(
-                &mut lookup,
-                "MIN_KEEPER_BALANCE_XLM",
-                &DEFAULT_MIN_KEEPER_BALANCE_XLM.to_string(),
-            )?,
-            price_loop_interval: Duration::from_millis(parse_or_default(
-                &mut lookup,
-                "PRICE_LOOP_MS",
-                &DEFAULT_PRICE_LOOP_MS.to_string(),
-            )?),
-            keeper_loop_interval: Duration::from_millis(parse_or_default(
-                &mut lookup,
-                "KEEPER_LOOP_MS",
-                &DEFAULT_KEEPER_LOOP_MS.to_string(),
-            )?),
+            pyth_api_key: lookup("PYTH_API_KEY")
+                .filter(|value| !value.trim().is_empty())
+                .map(SecretString::new),
+            min_keeper_balance_xlm: {
+                let value: f64 = parse_or_default(
+                    &mut lookup,
+                    "MIN_KEEPER_BALANCE_XLM",
+                    &DEFAULT_MIN_KEEPER_BALANCE_XLM.to_string(),
+                )?;
+                // Issue #564: reject non-finite/negative values — a NaN threshold
+                // silently disables the low-balance check (NaN comparisons are
+                // always false); an infinite threshold makes the keeper consider
+                // itself perpetually below minimum.
+                if !value.is_finite() || value < 0.0 {
+                    return Err(EnvError::InvalidVar {
+                        var: "MIN_KEEPER_BALANCE_XLM",
+                        reason: format!("must be a finite, non-negative number, got {value}"),
+                    });
+                }
+                value
+            },
+            price_loop_interval: {
+                let ms: u64 = parse_or_default(
+                    &mut lookup,
+                    "PRICE_LOOP_MS",
+                    &DEFAULT_PRICE_LOOP_MS.to_string(),
+                )?;
+                // Issue #563: tokio::time::interval() panics on a zero period.
+                if ms == 0 {
+                    return Err(EnvError::InvalidVar {
+                        var: "PRICE_LOOP_MS",
+                        reason: "must be greater than 0".to_string(),
+                    });
+                }
+                Duration::from_millis(ms)
+            },
+            keeper_loop_interval: {
+                let ms: u64 = parse_or_default(
+                    &mut lookup,
+                    "KEEPER_LOOP_MS",
+                    &DEFAULT_KEEPER_LOOP_MS.to_string(),
+                )?;
+                if ms == 0 {
+                    return Err(EnvError::InvalidVar {
+                        var: "KEEPER_LOOP_MS",
+                        reason: "must be greater than 0".to_string(),
+                    });
+                }
+                Duration::from_millis(ms)
+            },
             price_feed,
         })
     }
@@ -503,9 +540,7 @@ mod tests {
     fn parse_token_configs_missing_stellar_address_returns_invalid_token() {
         let json = r#"[{"symbol":"BTC","stellar_address":"","sources":["binance"]}]"#;
         let err = parse_price_feed_config(json).unwrap_err();
-        assert!(
-            matches!(err, ConfigError::InvalidToken { ref symbol, .. } if symbol == "BTC")
-        );
+        assert!(matches!(err, ConfigError::InvalidToken { ref symbol, .. } if symbol == "BTC"));
     }
 
     #[test]
@@ -834,6 +869,29 @@ mod tests {
         }
 
         assert_eq!(err, EnvError::MissingVar("KEEPER_PRIVATE_KEY"));
+    }
 
+    #[test]
+    fn config_from_lookup_rejects_invalid_stellar_network() {
+        let mut env = valid_env();
+        env.insert("STELLAR_NETWORK", "staging".to_string());
+
+        let err = Config::from_lookup(|key| env.get(key).cloned()).unwrap_err();
+
+        match err {
+            EnvError::InvalidVar { var, reason } => {
+                assert_eq!(var, "STELLAR_NETWORK");
+                assert!(
+                    reason.contains("unknown network"),
+                    "error should mention unknown network, got: {}",
+                    reason
+                );
+                assert!(
+                    reason.contains("staging"),
+                    "error should mention the invalid value 'staging'"
+                );
+            }
+            other => panic!("expected InvalidVar error, got: {:?}", other),
+        }
     }
 }

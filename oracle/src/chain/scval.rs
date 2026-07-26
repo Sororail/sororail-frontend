@@ -178,6 +178,52 @@ mod tests {
     }
 
     #[test]
+    fn test_encode_signed_price_non_hex_signature() {
+        let price = CachedPrice {
+            token_address: "GAUHMCMUP5FZO5675W3ISZ6E6CNYJGXBUW5WANE2JR4TGAARYCTSCBKI".to_string(),
+            symbol: "TUSDC".to_string(),
+            display_symbol: "USDC".to_string(),
+            min: 1_000_000_000_000_000_000_000_000_000_000,
+            max: 1_000_000_000_000_000_000_000_000_000_000,
+            median: 1_000_000_000_000_000_000_000_000_000_000,
+            timestamp: 1718400000,
+            ledger_seq: 12345,
+            sources_used: vec!["fixed".to_string()],
+            signature: "not-valid-hex!!!".to_string(),
+        };
+
+        let err = encode_signed_price(&price).unwrap_err();
+        assert!(
+            err.contains("invalid signature hex"),
+            "expected hex decode error, got: {err}"
+        );
+    }
+
+    #[test]
+    fn test_encode_signed_price_wrong_length_signature() {
+        let price = CachedPrice {
+            token_address: "GAUHMCMUP5FZO5675W3ISZ6E6CNYJGXBUW5WANE2JR4TGAARYCTSCBKI".to_string(),
+            symbol: "TUSDC".to_string(),
+            display_symbol: "USDC".to_string(),
+            min: 1_000_000_000_000_000_000_000_000_000_000,
+            max: 1_000_000_000_000_000_000_000_000_000_000,
+            median: 1_000_000_000_000_000_000_000_000_000_000,
+            timestamp: 1718400000,
+            ledger_seq: 12345,
+            sources_used: vec!["fixed".to_string()],
+            // valid hex but only 32 bytes (64 hex chars), needs 128 hex chars
+            signature: "0000000000000000000000000000000000000000000000000000000000000000"
+                .to_string(),
+        };
+
+        let err = encode_signed_price(&price).unwrap_err();
+        assert!(
+            err.contains("signature must be 64 bytes"),
+            "expected length error, got: {err}"
+        );
+    }
+
+    #[test]
     fn test_encode_prices_vec() {
         let price = CachedPrice {
             token_address: "GAUHMCMUP5FZO5675W3ISZ6E6CNYJGXBUW5WANE2JR4TGAARYCTSCBKI".to_string(),

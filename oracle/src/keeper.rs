@@ -230,8 +230,7 @@ mod tests {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
             .respond_with(
-                ResponseTemplate::new(200)
-                    .set_body_string(r#"{"hash":"abc123","ledger":12345}"#),
+                ResponseTemplate::new(200).set_body_string(r#"{"hash":"abc123","ledger":12345}"#),
             )
             .mount(&server)
             .await;

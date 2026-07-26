@@ -8,7 +8,6 @@ pub enum SigningError {
     InvalidKeyLength,
 }
 
-
 impl std::fmt::Display for SigningError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -64,12 +63,18 @@ pub fn sign_price(
     let signing_key = SigningKey::from_bytes(&key_array);
 
     let payload = build_price_message(network_passphrase, ledger_seq, token_strkey, min, max, timestamp);
+    let payload = build_price_message(
+        network_passphrase,
+        ledger_seq,
+        token_strkey,
+        min,
+        max,
+        timestamp,
+    );
     let signature = signing_key.sign(&payload);
 
     Ok(signature)
 }
-
-
 
 #[cfg(test)]
 mod tests {
@@ -101,8 +106,14 @@ mod tests {
         )
         .expect("signing failed");
 
-        let expected_payload =
-            build_price_message(network_passphrase, ledger_seq, token_strkey, min, max, timestamp);
+        let expected_payload = build_price_message(
+            network_passphrase,
+            ledger_seq,
+            token_strkey,
+            min,
+            max,
+            timestamp,
+        );
 
         assert!(
             public_key.verify(&expected_payload, &signature).is_ok(),
@@ -185,10 +196,16 @@ mod tests {
         assert_eq!(&payload[offset..offset + 8], b"CBTCADDR");
 
         let offset = offset + 8;
-        assert_eq!(&payload[offset..offset + 16], &45000_0000000i128.to_be_bytes());
+        assert_eq!(
+            &payload[offset..offset + 16],
+            &45000_0000000i128.to_be_bytes()
+        );
 
         let offset = offset + 16;
-        assert_eq!(&payload[offset..offset + 16], &46000_0000000i128.to_be_bytes());
+        assert_eq!(
+            &payload[offset..offset + 16],
+            &46000_0000000i128.to_be_bytes()
+        );
 
         let offset = offset + 16;
         assert_eq!(&payload[offset..offset + 8], &1690000000u64.to_be_bytes());
