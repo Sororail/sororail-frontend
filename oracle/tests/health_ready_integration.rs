@@ -5,7 +5,7 @@ use axum::body::Body;
 use axum::http::Request;
 use tower::ServiceExt;
 use wiremock::matchers::method;
-use wiremock::{Mock, MockServer, Request as WireMockRequest, ResponseTemplate};
+use wiremock::{MockServer, Request as WireMockRequest, ResponseTemplate};
 
 use shared_config::TokenConfig;
 
@@ -43,6 +43,7 @@ fn test_config(rpc_url: &str, horizon_url: &str) -> Arc<Config> {
         keeper_account_id: "GAUHMCMUP5FZO5675W3ISZ6E6CNYJGXBUW5WANE2JR4TGAARYCTSCBKI".to_string(),
         keeper_index: 0,
         admin_api_token: Some(SecretString::new("test-admin-token".to_string())),
+        pyth_api_key: None,
         min_keeper_balance_xlm: 10.0,
         price_loop_interval: Duration::from_millis(1000),
         keeper_loop_interval: Duration::from_millis(1500),
@@ -297,7 +298,7 @@ async fn cold_start_reads_ready_after_price_and_keeper_loops() {
                         "data": {},
                         "balances": []
                     }
-                }))
+                })),
                 "sendTransaction" => ResponseTemplate::new(200).set_body_json(serde_json::json!({
                     "jsonrpc": "2.0",
                     "id": 1,
@@ -343,7 +344,7 @@ async fn cold_start_reads_ready_after_price_and_keeper_loops() {
             "CCA5HRHMG6E6BVYRICSLZ5CK5KNPAAKXQ7XWDM34WWVGNHWHA26GRVVE".to_string(),
         reader_contract_id: "CC6OZUHF3LVO6PNP3V2EB36ORB3YSVYSH3LWD3RFLO4NUO3BYCXSWSYC".to_string(),
         keeper_private_key: SecretString::new(
-            "1111111111111111111111111111111111111111111111111111111111111111111".to_string(),
+            "1111111111111111111111111111111111111111111111111111111111111111".to_string(),
         ),
         keeper_secret_key: SecretString::new(
             "1111111111111111111111111111111111111111111111111111111111111111".to_string(),
@@ -351,6 +352,7 @@ async fn cold_start_reads_ready_after_price_and_keeper_loops() {
         keeper_account_id: "GAUHMCMUP5FZO5675W3ISZ6E6CNYJGXBUW5WANE2JR4TGAARYCTSCBKI".to_string(),
         keeper_index: 0,
         admin_api_token: Some(SecretString::new("test-admin-token".to_string())),
+        pyth_api_key: None,
         min_keeper_balance_xlm: 10.0,
         price_loop_interval: Duration::from_millis(100),
         keeper_loop_interval: Duration::from_millis(100),
@@ -396,8 +398,8 @@ async fn cold_start_reads_ready_after_price_and_keeper_loops() {
 
     assert!(ready_ok.is_ok(), "ready did not become healthy in time");
 
-    let requests = rpc_mock.received_requests().await;
-    assert!(requests.iter().any(|req| {
+    let requests = rpc_mock.received_requests().await.unwrap_or_default();
+    assert!(requests.iter().any(|req: &wiremock::Request| {
         let body: serde_json::Value = serde_json::from_slice(&req.body).unwrap_or_default();
         body["method"] == "sendTransaction"
     }), "keeper did not submit a transaction");
