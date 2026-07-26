@@ -49,7 +49,7 @@ pub fn aggregate_prices(
     let filtered_sources = filter_result.filtered_sources;
 
     if filtered_prices.len() < min_sources {
-        let rejected_sources = filter_result
+        let _rejected_sources: Vec<RejectedSource> = filter_result
             .rejected
             .into_iter()
             .map(|(source, price, deviation)| RejectedSource {
