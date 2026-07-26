@@ -58,6 +58,33 @@ fn test_cached_price() -> CachedPrice {
 }
 
 #[tokio::test]
+async fn empty_price_cache_returns_error_and_no_rpc_calls() {
+    let mock_server = MockServer::start().await;
+    let rpc_url = mock_server.uri();
+
+    let config = test_config(&rpc_url);
+    let state = Arc::new(AppState::new(config));
+
+    // Don't populate the price cache — leave it empty.
+
+    let result = oracle::keeper_loop::run_keeper_cycle(state).await;
+
+    assert!(result.is_err(), "expected Err for empty price cache");
+    assert_eq!(
+        result.unwrap_err(),
+        "No prices available in cache",
+        "error must match the exact string in execute_keeper_cycle line 89"
+    );
+
+    // Verify no RPC calls were made — the function short-circuits before any network I/O.
+    let requests = mock_server.received_requests().await;
+    assert!(
+        requests.unwrap_or_default().is_empty(),
+        "no RPC calls should be made when cache is empty"
+    );
+}
+
+#[tokio::test]
 async fn mock_rpc_empty_cycle_skips_submission() {
     let mock_server = MockServer::start().await;
     let rpc_url = mock_server.uri();
