@@ -11,6 +11,19 @@ pub enum BinancePriceError {
     PriceParseError(String),
 }
 
+impl std::fmt::Display for BinancePriceError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NetworkError(error) => write!(f, "Binance network error: {error}"),
+            Self::HttpError(status) => write!(f, "Binance returned HTTP {status}"),
+            Self::JsonError(error) => write!(f, "invalid Binance response: {error}"),
+            Self::PriceParseError(error) => write!(f, "invalid Binance price: {error}"),
+        }
+    }
+}
+
+impl std::error::Error for BinancePriceError {}
+
 #[derive(Debug, Deserialize)]
 pub struct BinanceTickerEntry {
     pub symbol: String,
@@ -69,7 +82,11 @@ fn build_spot_price_url(symbols: &[String]) -> String {
     if symbols.len() == 1 {
         format!("{}?symbol={}", BINANCE_TICKER_PRICE_URL, symbols[0])
     } else {
-        format!("{}?symbols={}", BINANCE_TICKER_PRICE_URL, serde_json::to_string(symbols).unwrap())
+        format!(
+            "{}?symbols={}",
+            BINANCE_TICKER_PRICE_URL,
+            serde_json::to_string(symbols).unwrap()
+        )
     }
 }
 
