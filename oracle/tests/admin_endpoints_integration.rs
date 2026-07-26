@@ -40,6 +40,7 @@ fn test_config(rpc_url: &str, horizon_url: &str) -> Arc<Config> {
         keeper_account_id: "GAUHMCMUP5FZO5675W3ISZ6E6CNYJGXBUW5WANE2JR4TGAARYCTSCBKI".to_string(),
         keeper_index: 0,
         admin_api_token: Some(SecretString::new("test-admin-token".to_string())),
+        pyth_api_key: None,
         min_keeper_balance_xlm: 10.0,
         price_loop_interval: Duration::from_millis(1000),
         keeper_loop_interval: Duration::from_millis(1500),

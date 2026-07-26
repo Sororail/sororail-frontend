@@ -109,6 +109,7 @@ fn test_state(rpc_url: &str, tokens: Vec<TokenConfig>) -> Arc<AppState> {
         keeper_account_id: "GACCOUNT".to_string(),
         keeper_index: 0,
         admin_api_token: None,
+        pyth_api_key: None,
         min_keeper_balance_xlm: 0.0,
         price_loop_interval: Duration::from_millis(1000),
         keeper_loop_interval: Duration::from_millis(1000),
