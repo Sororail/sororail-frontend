@@ -634,8 +634,7 @@ mod tests {
 
         state.shutdown_token.cancel();
 
-        let completed = tokio::time::timeout(Duration::from_millis(500), handle)
-            .await;
+        let completed = tokio::time::timeout(Duration::from_millis(500), handle).await;
         assert!(
             completed.is_ok(),
             "run_keeper_loop must exit within 500 ms of shutdown_token cancellation"

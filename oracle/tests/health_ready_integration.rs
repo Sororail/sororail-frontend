@@ -11,8 +11,8 @@ use shared_config::TokenConfig;
 
 use oracle::api::build_router;
 use oracle::config::{Config, Network, PriceFeedConfig, SecretString};
-use oracle::price_loop::run_price_loop;
 use oracle::keeper_loop::run_keeper_loop;
+use oracle::price_loop::run_price_loop;
 use oracle::state::{AppState, CachedPrice};
 
 fn test_config(rpc_url: &str, horizon_url: &str) -> Arc<Config> {
@@ -138,7 +138,9 @@ async fn get_ready_returns_200_when_healthy() {
     // Populate price cache
     {
         let mut cache = state.price_cache.write().await;
-        cache.prices.insert("BTC".to_string(), sample_cached_price());
+        cache
+            .prices
+            .insert("BTC".to_string(), sample_cached_price());
     }
 
     // Set price cycle and keeper cycle as recent
@@ -194,7 +196,9 @@ async fn get_ready_returns_503_when_keeper_loop_stale() {
     // Populate price cache and make price loop recent
     {
         let mut cache = state.price_cache.write().await;
-        cache.prices.insert("BTC".to_string(), sample_cached_price());
+        cache
+            .prices
+            .insert("BTC".to_string(), sample_cached_price());
     }
     {
         let mut cycle = state.cycle_status.write().await;
@@ -333,15 +337,16 @@ async fn cold_start_reads_ready_after_price_and_keeper_loops() {
         stellar_rpc_url: rpc_mock.uri(),
         horizon_url: horizon_mock.uri(),
         oracle_contract_id: "CBEMTV23SIJJBIST3V5HTMWHR4MHYGHNBIG4M26U4LGUJTWZXTFSVQEY".to_string(),
-        role_store_contract_id:
-            "CBSUAIAMIFFS4AXQYZ7KR7FNO7IMKAPS5WF4DXANVXDTPKH2F7YUIN6Q".to_string(),
-        data_store_contract_id: "CCZ3VKBEDLNBO2JM3EXL3SNBDJOV5BTN52FVQPER7F6D5GCE53PITQ3J".to_string(),
-        order_handler_contract_id:
-            "CC35OFZVWUTAZPV3B6UKSDVAVORZEWUUMOMTHO33H4YR4C5FKPEFODKY".to_string(),
-        deposit_handler_contract_id:
-            "CDWOFIP4YQJGMCYAOWLSRBAWN2OTJUG2I5WOFC32O2TX2SRU56RWBE5C".to_string(),
-        withdrawal_handler_contract_id:
-            "CCA5HRHMG6E6BVYRICSLZ5CK5KNPAAKXQ7XWDM34WWVGNHWHA26GRVVE".to_string(),
+        role_store_contract_id: "CBSUAIAMIFFS4AXQYZ7KR7FNO7IMKAPS5WF4DXANVXDTPKH2F7YUIN6Q"
+            .to_string(),
+        data_store_contract_id: "CCZ3VKBEDLNBO2JM3EXL3SNBDJOV5BTN52FVQPER7F6D5GCE53PITQ3J"
+            .to_string(),
+        order_handler_contract_id: "CC35OFZVWUTAZPV3B6UKSDVAVORZEWUUMOMTHO33H4YR4C5FKPEFODKY"
+            .to_string(),
+        deposit_handler_contract_id: "CDWOFIP4YQJGMCYAOWLSRBAWN2OTJUG2I5WOFC32O2TX2SRU56RWBE5C"
+            .to_string(),
+        withdrawal_handler_contract_id: "CCA5HRHMG6E6BVYRICSLZ5CK5KNPAAKXQ7XWDM34WWVGNHWHA26GRVVE"
+            .to_string(),
         reader_contract_id: "CC6OZUHF3LVO6PNP3V2EB36ORB3YSVYSH3LWD3RFLO4NUO3BYCXSWSYC".to_string(),
         keeper_private_key: SecretString::new(
             "1111111111111111111111111111111111111111111111111111111111111111".to_string(),
@@ -399,10 +404,13 @@ async fn cold_start_reads_ready_after_price_and_keeper_loops() {
     assert!(ready_ok.is_ok(), "ready did not become healthy in time");
 
     let requests = rpc_mock.received_requests().await.unwrap_or_default();
-    assert!(requests.iter().any(|req: &wiremock::Request| {
-        let body: serde_json::Value = serde_json::from_slice(&req.body).unwrap_or_default();
-        body["method"] == "sendTransaction"
-    }), "keeper did not submit a transaction");
+    assert!(
+        requests.iter().any(|req: &wiremock::Request| {
+            let body: serde_json::Value = serde_json::from_slice(&req.body).unwrap_or_default();
+            body["method"] == "sendTransaction"
+        }),
+        "keeper did not submit a transaction"
+    );
 }
 
 // #340 — GET /ready returns 503 when RPC is unreachable
@@ -501,7 +509,9 @@ async fn get_ready_returns_503_when_price_loop_stale() {
     // Populate price cache (so empty check passes)
     {
         let mut cache = state.price_cache.write().await;
-        cache.prices.insert("BTC".to_string(), sample_cached_price());
+        cache
+            .prices
+            .insert("BTC".to_string(), sample_cached_price());
     }
 
     // Set last_price_cycle_at to 30 seconds ago (stale, since interval is 1s * 3 = 3s)

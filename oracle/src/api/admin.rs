@@ -66,9 +66,7 @@ pub async fn keeper_status(
     let keeper_status = state.keeper_status.read().await.clone();
     let cycle_status = state.cycle_status.read().await.clone();
 
-    let last_cycle_at = cycle_status
-        .last_keeper_cycle_at
-        .and_then(system_time_secs);
+    let last_cycle_at = cycle_status.last_keeper_cycle_at.and_then(system_time_secs);
     let last_cycle_latency_ms = cycle_status.last_keeper_cycle_latency_ms;
 
     let last_executions: Vec<_> = keeper_status
@@ -128,10 +126,7 @@ pub async fn keeper_balance(
                 is_funded: !response.below_minimum,
             }))
         }
-        Err(crate::stellar_rpc::RpcError::BalanceBelowMinimum {
-            balance_xlm,
-            ..
-        }) => {
+        Err(crate::stellar_rpc::RpcError::BalanceBelowMinimum { balance_xlm, .. }) => {
             let stroops = (balance_xlm * crate::keeper::XLM_IN_STROOPS as f64) as i64;
             Ok(Json(BalanceResponse {
                 account_id: state.config.keeper_account_id.clone(),

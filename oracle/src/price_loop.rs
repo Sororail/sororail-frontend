@@ -439,7 +439,9 @@ mod tests {
         };
 
         let state = test_state(token.clone());
-        let cached = build_cached_price(&state, &token, 123, &std::collections::HashMap::new()).await.unwrap();
+        let cached = build_cached_price(&state, &token, 123, &std::collections::HashMap::new())
+            .await
+            .unwrap();
 
         // Verify all fields are correct (closes #400)
         assert_eq!(
