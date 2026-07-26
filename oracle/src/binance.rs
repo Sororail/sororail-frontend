@@ -65,14 +65,18 @@ pub fn parse_ticker_http_result(
     parse_ticker_http_response(status_code, &body, symbols)
 }
 
+fn build_spot_price_url(symbols: &[String]) -> String {
+    if symbols.len() == 1 {
+        format!("{}?symbol={}", BINANCE_TICKER_PRICE_URL, symbols[0])
+    } else {
+        format!("{}?symbols={}", BINANCE_TICKER_PRICE_URL, serde_json::to_string(symbols).unwrap())
+    }
+}
+
 pub async fn fetch_spot_prices(
     symbols: &[String],
 ) -> Result<Vec<(String, i128)>, BinancePriceError> {
-    let url = if symbols.len() == 1 {
-        format!("{}?symbol={}", BINANCE_TICKER_PRICE_URL, symbols[0])
-    } else {
-        BINANCE_TICKER_PRICE_URL.to_string()
-    };
+    let url = build_spot_price_url(symbols);
     let response = crate::http::client()
         .get(&url)
         .send()
@@ -253,5 +257,13 @@ mod tests {
         let symbols = vec!["BTCUSDT".to_string()];
         let err = parse_ticker_http_result(Err("timeout".to_string()), &symbols).unwrap_err();
         assert_eq!(err, BinancePriceError::NetworkError("timeout".to_string()));
+    }
+
+    #[test]
+    fn build_spot_price_url_includes_symbols_parameter_for_multiple_symbols() {
+        let symbols = vec!["BTCUSDT".to_string(), "ETHUSDT".to_string()];
+        let url = build_spot_price_url(&symbols);
+        assert!(url.starts_with(BINANCE_TICKER_PRICE_URL));
+        assert!(url.contains("symbols=%5B%22BTCUSDT%22%2C%22ETHUSDT%22%5D"));
     }
 }
