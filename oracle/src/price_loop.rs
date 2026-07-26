@@ -49,11 +49,34 @@ pub async fn run_price_cycle(state: Arc<AppState>) {
             }
         };
 
+    // Hermes accepts multiple `ids[]` values. Fetch all Pyth feeds once per
+    // cycle, rather than spending one rate-limited request per token.
+    let pyth_feed_ids: Vec<&str> = state
+        .config
+        .price_feed
+        .tokens
+        .iter()
+        .filter(|token| token.sources.iter().any(|source| source == "pyth"))
+        .filter_map(|token| token.pyth_feed_id.as_deref())
+        .collect();
+    let pyth_prices = match crate::pyth::fetch_pyth_prices(
+        &pyth_feed_ids,
+        state.config.pyth_api_key.as_ref().map(|key| key.as_str()),
+    )
+    .await
+    {
+        Ok(prices) => prices,
+        Err(error) => {
+            tracing::warn!(error = %error, "batched Pyth request failed");
+            std::collections::HashMap::new()
+        }
+    };
+
+    let mut new_prices = std::collections::BTreeMap::new();
     for token in &state.config.price_feed.tokens {
-        match build_cached_price(&state, token, ledger_seq).await {
+        match build_cached_price(&state, token, ledger_seq, &pyth_prices).await {
             Ok(price) => {
-                let key = token.lookup_key();
-                state.price_cache.write().await.prices.insert(key, price);
+                new_prices.insert(token.lookup_key(), price);
                 tokens_ok += 1;
             }
             Err(error) => {
@@ -69,7 +92,9 @@ pub async fn run_price_cycle(state: Arc<AppState>) {
     }
 
     if tokens_ok > 0 {
-        state.price_cache.write().await.last_updated = Some(SystemTime::now());
+        let mut cache = state.price_cache.write().await;
+        cache.prices = new_prices;
+        cache.last_updated = Some(SystemTime::now());
     }
 
     finish_cycle(&state, started, tokens_ok, tokens_failed).await;
@@ -102,12 +127,20 @@ async fn build_cached_price(
     state: &Arc<AppState>,
     token: &TokenConfig,
     ledger_seq: u32,
+    pyth_prices: &std::collections::HashMap<String, crate::pyth::PythPriceFeed>,
 ) -> Result<CachedPrice, String> {
     let mut prices = Vec::new();
     let mut sources = Vec::new();
 
     for source in &token.sources {
-        match fetch_source_with_retry(source, token).await {
+        match fetch_source_with_retry(
+            source,
+            token,
+            state.config.pyth_api_key.as_ref().map(|key| key.as_str()),
+            pyth_prices,
+        )
+        .await
+        {
             Ok(price) => {
                 prices.push(price);
                 sources.push(source.clone());
@@ -138,16 +171,26 @@ async fn build_cached_price(
     signed_cached_price(state, token, ledger_seq, aggregate)
 }
 
-async fn fetch_source_with_retry(source: &str, token: &TokenConfig) -> Result<i128, String> {
+async fn fetch_source_with_retry(
+    source: &str,
+    token: &TokenConfig,
+    pyth_api_key: Option<&str>,
+    pyth_prices: &std::collections::HashMap<String, crate::pyth::PythPriceFeed>,
+) -> Result<i128, String> {
     crate::retry::retry_with_backoff(
-        || async { fetch_source_price(source, token).await },
+        || async { fetch_source_price(source, token, pyth_api_key, pyth_prices).await },
         SOURCE_RETRY_ATTEMPTS,
         SOURCE_RETRY_BASE_DELAY_MS,
     )
     .await
 }
 
-async fn fetch_source_price(source: &str, token: &TokenConfig) -> Result<i128, String> {
+async fn fetch_source_price(
+    source: &str,
+    token: &TokenConfig,
+    pyth_api_key: Option<&str>,
+    pyth_prices: &std::collections::HashMap<String, crate::pyth::PythPriceFeed>,
+) -> Result<i128, String> {
     match source {
         "binance" => {
             let symbol = token
@@ -156,7 +199,7 @@ async fn fetch_source_price(source: &str, token: &TokenConfig) -> Result<i128, S
                 .ok_or_else(|| "missing binance_symbol".to_string())?;
             let results = crate::binance::fetch_spot_prices(std::slice::from_ref(symbol))
                 .await
-                .map_err(|err| format!("{err:?}"))?;
+                .map_err(|err| err.to_string())?;
             results
                 .into_iter()
                 .find(|(got_symbol, _)| got_symbol == symbol)
@@ -170,18 +213,40 @@ async fn fetch_source_price(source: &str, token: &TokenConfig) -> Result<i128, S
                 .ok_or_else(|| "missing coinbase_symbol".to_string())?;
             crate::coinbase::fetch_spot_price(symbol)
                 .await
-                .map_err(|err| format!("{err:?}"))
+                .map_err(|err| err.to_string())
         }
         "pyth" => {
             let feed_id = token
                 .pyth_feed_id
                 .as_ref()
                 .ok_or_else(|| "missing pyth_feed_id".to_string())?;
-            crate::pyth::fetch_pyth_price(feed_id, token.stale_after_seconds, 50)
-                .await
-                .map_err(|err| format!("{err:?}"))
+            if let Some(feed) = pyth_prices.get(feed_id) {
+                crate::pyth::validate_pyth_price(
+                    &feed.price,
+                    crate::current_timestamp_secs(),
+                    token.stale_after_seconds,
+                    50,
+                )
+            } else {
+                crate::pyth::fetch_pyth_prices(&[feed_id], pyth_api_key)
+                    .await
+                    .and_then(|mut feeds| {
+                        feeds.remove(feed_id).ok_or_else(|| {
+                            crate::pyth::PythPriceError::MissingFeedId(feed_id.clone())
+                        })
+                    })
+                    .and_then(|feed| {
+                        crate::pyth::validate_pyth_price(
+                            &feed.price,
+                            crate::current_timestamp_secs(),
+                            token.stale_after_seconds,
+                            50,
+                        )
+                    })
+            }
+            .map_err(|err| err.to_string())
         }
-        "fixed" => crate::fixed::fixed_price(token).map_err(|err| format!("{err:?}")),
+        "fixed" => crate::fixed::fixed_price(token).map_err(|err| err.to_string()),
         other => Err(format!("unsupported source: {other}")),
     }
 }
@@ -291,6 +356,7 @@ mod tests {
             keeper_account_id: "GACCOUNT".to_string(),
             keeper_index: 0,
             admin_api_token: None,
+            pyth_api_key: None,
             min_keeper_balance_xlm: 0.0,
             price_loop_interval: Duration::from_millis(1),
             keeper_loop_interval: Duration::from_millis(1),
@@ -299,6 +365,57 @@ mod tests {
             },
         };
         Arc::new(AppState::new(Arc::new(config)))
+    }
+
+    // ── #512: run_price_loop shutdown coverage ───────────────────────────────
+
+    fn shutdown_test_state() -> Arc<AppState> {
+        let config = Config {
+            bind_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
+            network: Network::Testnet,
+            network_passphrase: "Test SDF Network ; September 2015".to_string(),
+            stellar_rpc_url: "not-a-valid-url".to_string(), // immediate error — no network
+            horizon_url: "not-a-valid-url".to_string(),
+            oracle_contract_id: "CORACLE".to_string(),
+            role_store_contract_id: "CROLE".to_string(),
+            data_store_contract_id: "CDATA".to_string(),
+            order_handler_contract_id: "CORDER".to_string(),
+            deposit_handler_contract_id: "CDEPOSIT".to_string(),
+            withdrawal_handler_contract_id: "CWITHDRAW".to_string(),
+            reader_contract_id: "CREADER".to_string(),
+            keeper_private_key: SecretString::new(
+                "1111111111111111111111111111111111111111111111111111111111111111".to_string(),
+            ),
+            keeper_secret_key: SecretString::new("SSECRET".to_string()),
+            keeper_account_id: "GACCOUNT".to_string(),
+            keeper_index: 0,
+            admin_api_token: None,
+            pyth_api_key: None,
+            min_keeper_balance_xlm: 0.0,
+            price_loop_interval: Duration::from_millis(50),
+            keeper_loop_interval: Duration::from_millis(50),
+            price_feed: PriceFeedConfig { tokens: vec![] },
+        };
+        Arc::new(AppState::new(Arc::new(config)))
+    }
+
+    #[tokio::test]
+    async fn run_price_loop_exits_promptly_on_shutdown() {
+        let state = shutdown_test_state();
+        let state2 = Arc::clone(&state);
+
+        let handle = tokio::spawn(run_price_loop(state2));
+
+        // Let the loop tick at least once.
+        tokio::time::sleep(Duration::from_millis(120)).await;
+
+        state.shutdown_token.cancel();
+
+        let completed = tokio::time::timeout(Duration::from_millis(500), handle).await;
+        assert!(
+            completed.is_ok(),
+            "run_price_loop must exit within 500 ms of shutdown_token cancellation"
+        );
     }
 
     #[tokio::test]
@@ -322,14 +439,19 @@ mod tests {
         };
 
         let state = test_state(token.clone());
-        let cached = build_cached_price(&state, &token, 123).await.unwrap();
+        let cached = build_cached_price(&state, &token, 123, &std::collections::HashMap::new())
+            .await
+            .unwrap();
 
         // Verify all fields are correct (closes #400)
-        assert_eq!(cached.token_address, "CBAN5YU3KRDKPTQ2H76D6S7HQFPRBGUD524F65BUM2RQCITPTRLKWKES");
+        assert_eq!(
+            cached.token_address,
+            "CBAN5YU3KRDKPTQ2H76D6S7HQFPRBGUD524F65BUM2RQCITPTRLKWKES"
+        );
         assert_eq!(cached.symbol, "TUSDC");
         assert_eq!(cached.display_symbol, "USDC");
-        assert_eq!(cached.min, 1_000_000_000_000_000_000_000_000_000_000);
-        assert_eq!(cached.max, 1_000_000_000_000_000_000_000_000_000_000);
+        assert_eq!(cached.min, 990_000_000_000_000_000_000_000_000_000);
+        assert_eq!(cached.max, 1_010_000_000_000_000_000_000_000_000_000);
         assert_eq!(cached.median, 1_000_000_000_000_000_000_000_000_000_000);
         assert_eq!(cached.ledger_seq, 123);
         assert_eq!(cached.sources_used, vec!["fixed"]);

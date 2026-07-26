@@ -11,6 +11,19 @@ pub enum BinancePriceError {
     PriceParseError(String),
 }
 
+impl std::fmt::Display for BinancePriceError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NetworkError(error) => write!(f, "Binance network error: {error}"),
+            Self::HttpError(status) => write!(f, "Binance returned HTTP {status}"),
+            Self::JsonError(error) => write!(f, "invalid Binance response: {error}"),
+            Self::PriceParseError(error) => write!(f, "invalid Binance price: {error}"),
+        }
+    }
+}
+
+impl std::error::Error for BinancePriceError {}
+
 #[derive(Debug, Deserialize)]
 pub struct BinanceTickerEntry {
     pub symbol: String,
@@ -65,14 +78,22 @@ pub fn parse_ticker_http_result(
     parse_ticker_http_response(status_code, &body, symbols)
 }
 
+fn build_spot_price_url(symbols: &[String]) -> String {
+    if symbols.len() == 1 {
+        format!("{}?symbol={}", BINANCE_TICKER_PRICE_URL, symbols[0])
+    } else {
+        format!(
+            "{}?symbols={}",
+            BINANCE_TICKER_PRICE_URL,
+            serde_json::to_string(symbols).unwrap()
+        )
+    }
+}
+
 pub async fn fetch_spot_prices(
     symbols: &[String],
 ) -> Result<Vec<(String, i128)>, BinancePriceError> {
-    let url = if symbols.len() == 1 {
-        format!("{}?symbol={}", BINANCE_TICKER_PRICE_URL, symbols[0])
-    } else {
-        BINANCE_TICKER_PRICE_URL.to_string()
-    };
+    let url = build_spot_price_url(symbols);
     let response = crate::http::client()
         .get(&url)
         .send()
@@ -142,8 +163,9 @@ pub fn parse_price_to_precision(raw: &str) -> Result<i128, BinancePriceError> {
 #[cfg(test)]
 mod tests {
     use super::{
-        parse_price_to_precision, parse_ticker_http_response, parse_ticker_http_result,
-        parse_ticker_response_body, BinancePriceError, FLOAT_PRECISION,
+        build_spot_price_url, parse_price_to_precision, parse_ticker_http_response,
+        parse_ticker_http_result, parse_ticker_response_body, BinancePriceError,
+        BINANCE_TICKER_PRICE_URL, FLOAT_PRECISION,
     };
 
     #[test]
@@ -253,5 +275,13 @@ mod tests {
         let symbols = vec!["BTCUSDT".to_string()];
         let err = parse_ticker_http_result(Err("timeout".to_string()), &symbols).unwrap_err();
         assert_eq!(err, BinancePriceError::NetworkError("timeout".to_string()));
+    }
+
+    #[test]
+    fn build_spot_price_url_includes_symbols_parameter_for_multiple_symbols() {
+        let symbols = vec!["BTCUSDT".to_string(), "ETHUSDT".to_string()];
+        let url = build_spot_price_url(&symbols);
+        assert!(url.starts_with(BINANCE_TICKER_PRICE_URL));
+        assert!(url.contains(r#"symbols=["BTCUSDT","ETHUSDT"]"#));
     }
 }
