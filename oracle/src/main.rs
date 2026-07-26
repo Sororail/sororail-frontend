@@ -11,9 +11,11 @@ async fn main() {
 
     let config = match Config::from_env() {
         Ok(config) => Arc::new(config),
-        Err(error) => {
-            tracing::error!(%error, "configuration failed");
-            eprintln!("configuration error: {error}");
+        Err(errors) => {
+            for error in &errors.0 {
+                tracing::error!(%error, "configuration failed");
+                eprintln!("configuration error: {error}");
+            }
             std::process::exit(1);
         }
     };
@@ -21,9 +23,8 @@ async fn main() {
     let bind_addr = config.bind_addr;
     let state = Arc::new(AppState::new(Arc::clone(&config)));
     let app = api::build_router(Arc::clone(&state));
-    let mut price_loop = tokio::spawn(oracle::price_loop::run_price_loop(Arc::clone(&state)));
-    let mut keeper_loop = tokio::spawn(oracle::keeper_loop::run_keeper_loop(Arc::clone(&state)));
 
+    #[allow(unused_mut)]
     let listener = match TcpListener::bind(bind_addr).await {
         Ok(listener) => listener,
         Err(error) => {
@@ -32,6 +33,9 @@ async fn main() {
             std::process::exit(1);
         }
     };
+
+    let mut price_loop = tokio::spawn(oracle::price_loop::run_price_loop(Arc::clone(&state)));
+    let mut keeper_loop = tokio::spawn(oracle::keeper_loop::run_keeper_loop(Arc::clone(&state)));
 
     tracing::info!(
         %bind_addr,
