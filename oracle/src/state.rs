@@ -16,6 +16,7 @@ pub struct CachedPrice {
     pub token_address: String,
     pub symbol: String,
     pub display_symbol: String,
+    pub keeper_index: u32,
     #[serde(serialize_with = "ser_i128_str")]
     pub min: i128,
     #[serde(serialize_with = "ser_i128_str")]
@@ -106,7 +107,10 @@ impl<T> RingBuffer<T> {
     }
 
     pub fn push(&mut self, item: T) {
-        if self.items.len() == self.capacity {
+        if self.capacity == 0 {
+            return;
+        }
+        while self.items.len() >= self.capacity {
             self.items.pop_front();
         }
         self.items.push_back(item);
@@ -164,5 +168,16 @@ mod tests {
 
         let items = buffer.iter().copied().collect::<Vec<_>>();
         assert_eq!(items, vec![2, 3]);
+    }
+
+    #[test]
+    fn ring_buffer_with_zero_capacity_never_grows() {
+        let mut buffer = RingBuffer::new(0);
+
+        buffer.push(1);
+        buffer.push(2);
+        buffer.push(3);
+
+        assert_eq!(buffer.iter().count(), 0);
     }
 }
