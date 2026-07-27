@@ -98,6 +98,7 @@ fn build_spot_price_url(symbols: &[String]) -> String {
             "{}?symbols={}",
             BINANCE_TICKER_PRICE_URL,
             percent_encode_query_value(&serde_json::to_string(symbols).unwrap())
+            serde_json::to_string(symbols).unwrap_or_default()
         )
     }
 }
@@ -132,14 +133,14 @@ pub(crate) async fn fetch_spot_prices_with_url(
     base_url: &str,
     symbols: &[String],
 ) -> Result<Vec<(String, i128)>, BinancePriceError> {
-    let url = if symbols.len() == 1 {
-        format!("{}?symbol={}", base_url, symbols[0])
+    let mut req = crate::http::client().get(base_url);
+    if symbols.len() == 1 {
+        req = req.query(&[("symbol", &symbols[0])]);
     } else {
-        base_url.to_string()
-    };
-    let url = build_spot_price_url(symbols);
-    let response = crate::http::client()
-        .get(&url)
+        let symbols_json = serde_json::to_string(symbols).unwrap_or_default();
+        req = req.query(&[("symbols", &symbols_json)]);
+    }
+    let response = req
         .send()
         .await
         .map_err(|err| BinancePriceError::NetworkError(err.to_string()))?;
