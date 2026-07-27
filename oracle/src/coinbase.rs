@@ -102,13 +102,23 @@ pub(crate) async fn fetch_spot_price_with_url(
         .filter(|stripped| !stripped.is_empty())
         .unwrap_or(symbol);
 
-    let url_str = format!("{}{}", base_url, base_currency);
+    let (clean_url, use_query) = if base_url.contains("currency=") || base_url.contains("exchange-rates") {
+        (base_url.trim_end_matches("?currency=").trim_end_matches("&currency="), true)
+    } else {
+        (base_url, false)
+    };
 
-    let response = crate::http::client()
-        .get(&url_str)
-        .send()
-        .await
-        .map_err(|err| CoinbasePriceError::NetworkError(err.to_string()))?;
+    let response = if use_query {
+        crate::http::client()
+            .get(clean_url)
+            .query(&[("currency", base_currency)])
+            .send()
+            .await
+    } else {
+        let url_str = format!("{}{}", clean_url, base_currency);
+        crate::http::client().get(&url_str).send().await
+    }
+    .map_err(|err| CoinbasePriceError::NetworkError(err.to_string()))?;
 
     let status = response.status().as_u16();
     let body = response
