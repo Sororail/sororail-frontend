@@ -1,6 +1,6 @@
 # Contributing to so4-oracle
 
-Thanks for helping build SO4 Markets. This guide covers how to set up, what to work on, and how to get your changes merged.
+Thanks for helping build SO4 Markets. This guide covers how to set up the project, where things live, and how to get your changes merged.
 
 ---
 
@@ -9,9 +9,7 @@ Thanks for helping build SO4 Markets. This guide covers how to set up, what to w
 **Prerequisites**
 
 - Rust stable (install via [rustup](https://rustup.rs))
-- `wrangler` CLI for the oracle worker: `npm i -g wrangler`
-- A Cloudflare account (only needed for deploying the worker, not for local dev)
-- Optional: Redis (for the APIs cache layer)
+- Optional: `cargo-watch` for hot-reloading during development (`cargo install cargo-watch`)
 
 **Clone and build**
 
@@ -19,31 +17,41 @@ Thanks for helping build SO4 Markets. This guide covers how to set up, what to w
 git clone git@github.com:SO4-Markets/so4-oracle.git
 cd so4-oracle
 
-# Build both crates
-cargo build
+# Build all workspace crates
+cargo build --workspace
 
-# Check without building
-cargo check
+# Type-check without building artifacts
+cargo check --workspace
 
-# Run tests
-cargo test
+# Run all tests
+cargo test --workspace
 ```
 
-**Run the APIs server locally**
+**Environment variables**
+
+Key variables (see `oracle/src/config.rs` for the full list):
+
+| Variable | Description |
+|---|---|
+| `PRICE_FEED_CONFIG` | JSON array of `TokenConfig` entries (see `config/tokens.json` for the schema) |
+| `STELLAR_RPC_URL` | Soroban RPC endpoint |
+| `HORIZON_URL` | Stellar Horizon endpoint |
+| `NETWORK_PASSPHRASE` | `Test SDF Network ; September 2015` (testnet) or mainnet equivalent |
+| `KEEPER_SECRET_KEY` | Stellar secret key for the keeper account |
+| `ORACLE_CONTRACT_ID` | Deployed oracle contract address |
+| `ADMIN_API_TOKEN` | Bearer token for admin routes (`/oracle/status`, `/metrics`, etc.) |
+
+**Run locally**
 
 ```bash
-cargo run -p apis
-# → listening on 0.0.0.0:3000
+cargo run -p oracle
+# → listening on 0.0.0.0:3000 (or whatever BIND_ADDR is set to)
 ```
 
-**Run the oracle worker locally**
+Watch mode (rebuilds on save):
 
 ```bash
-# Install worker-build once
-cargo install worker-build@^0.8
-
-# Start local dev server (hot-reloads on save)
-wrangler dev
+cargo watch -x "run -p oracle"
 ```
 
 ---
@@ -52,11 +60,47 @@ wrangler dev
 
 ```
 so4-oracle/
-├── oracle/src/lib.rs     Cloudflare Worker entry — HTTP handler, price submission
-└── apis/src/main.rs      Axum server entry — REST + WebSocket endpoints
+├── oracle/              Long-running Axum/Tokio binary — price loop, keeper loop, HTTP API
+│   └── src/
+│       ├── main.rs          Entry point: starts server, price loop, keeper loop
+│       ├── config.rs        Config loading from env vars
+│       ├── state.rs         AppState shared across all tasks
+│       ├── price_loop.rs    Periodic price fetching and on-chain submission
+│       ├── keeper_loop.rs   Periodic keeper task execution (orders, deposits, withdrawals)
+│       ├── metrics.rs       In-memory counters exposed at GET /metrics
+│       ├── api/
+│       │   ├── mod.rs       Router: /health, /ready, /prices, /metrics, /oracle/status, etc.
+│       │   ├── prices.rs    Public price feed and health/readiness handlers
+│       │   └── admin.rs     Admin-only status and metrics handlers
+│       ├── binance.rs       Binance price source
+│       ├── coinbase.rs      Coinbase price source
+│       ├── pyth.rs          Pyth price source
+│       └── fixed.rs         Fixed-price source (for stablecoins)
+├── shared/
+│   └── config/src/lib.rs    TokenConfig struct + parse_token_configs() — shared by oracle
+├── config/
+│   └── tokens.json          Example token config for local development
+└── tests/                   Integration tests
 ```
 
-When adding a feature to `oracle`, work in `oracle/src/`. When adding an API endpoint, work in `apis/src/`. Shared types (if needed) go in a new `crates/shared` workspace member — propose this in an issue before creating it.
+There is **no** Cloudflare Worker, `wrangler.toml`, or `apis/` crate in this repository. The oracle is a plain Axum binary deployed via Docker (see `Dockerfile`) on Fly.io / Railway (see `fly.toml`, `railway.json`).
+
+---
+
+## HTTP API
+
+Once running, the oracle exposes:
+
+| Route | Auth | Description |
+|---|---|---|
+| `GET /health` | None | Always returns `{"status":"ok"}` — liveness probe |
+| `GET /ready` | None | Returns 200 only when price cache is warm and loops are not stale |
+| `GET /prices` | None | Current cached prices for all configured tokens |
+| `GET /metrics` | Bearer | Cycle counts and latency gauges |
+| `GET /oracle/status` | Bearer | Price cache + cycle status |
+| `GET /keeper/status` | Bearer | Pending keeper operations + recent executions |
+| `GET /keeper/balance` | Bearer | Current keeper account XLM balance |
+| `GET /oracle/failed-submissions` | Bearer | Ring buffer of failed on-chain submissions |
 
 ---
 
@@ -67,12 +111,10 @@ All open issues are tracked on [GitHub Issues](https://github.com/SO4-Markets/so
 | Label | Meaning |
 |---|---|
 | `good first issue` | Self-contained, well-defined, good starting point |
-| `oracle-worker` | Work in the `oracle/` Cloudflare Worker crate |
-| `apis` | Work in the `apis/` Axum server crate |
-| `contracts` | Work in the [contracts repo](https://github.com/SO4-Markets/contracts) but referenced here |
-| `testing` | Adding or improving test coverage |
-| `infrastructure` | CI, deploy scripts, Docker, tooling |
+| `bug` | Something is broken |
 | `documentation` | Docs, comments, diagrams |
+| `enhancement` | New feature or improvement |
+| `infrastructure` | CI, Docker, deploy scripts, tooling |
 
 Before starting, leave a comment on the issue so no one duplicates effort.
 
@@ -87,7 +129,7 @@ Before starting, leave a comment on the issue so no one duplicates effort.
    ```bash
    cargo fmt --all
    cargo clippy --all-targets -- -D warnings
-   cargo test --all
+   cargo test --workspace
    ```
 5. Open a PR against `main`. Fill in the PR template.
 6. Request a review from a maintainer.
@@ -99,8 +141,8 @@ Before starting, leave a comment on the issue so no one duplicates effort.
 - **Title:** Start with a type prefix: `feat:`, `fix:`, `test:`, `docs:`, `chore:`.
 - **Description:** What does this do, and why? Link the relevant issue (`Closes #N`).
 - **Tests:** New functionality must include tests. Bug fixes should include a regression test.
-- **No partial implementations:** If a function is not yet complete, leave it as a stub with a `todo!()` rather than committing broken logic.
-- **No unnecessary refactors:** Keep PRs focused on the stated issue. Separate cleanup PRs are welcome but should be their own PR.
+- **No partial implementations:** If a function is not yet complete, leave it as a stub with `todo!()` rather than committing broken logic.
+- **No unnecessary refactors:** Keep PRs focused on the stated issue.
 
 ---
 
@@ -116,8 +158,7 @@ Before starting, leave a comment on the issue so no one duplicates effort.
 ## Testing
 
 - Unit tests go in the same file: `#[cfg(test)] mod tests { ... }`.
-- Integration tests (multi-contract) go in `tests/` at the crate root.
-- For Soroban contract tests, use the `soroban-sdk` test environment.
+- Integration tests go in `tests/` at the workspace root.
 - For HTTP endpoint tests, use `axum::test` or `reqwest` against a spawned server.
 
 ---
@@ -131,7 +172,7 @@ Optional body — explain the why, not the what.
 ```
 
 Types: `feat`, `fix`, `test`, `docs`, `chore`, `refactor`
-Scopes: `oracle`, `apis`, `workspace`
+Scopes: `oracle`, `shared`, `config`, `workspace`
 
 ---
 
