@@ -8,7 +8,7 @@ pub const FLOAT_PRECISION: i128 = 1_000_000_000_000_000_000_000_000_000_000;
 #[derive(Debug, Clone, PartialEq)]
 pub enum PythPriceError {
     NetworkError(String),
-    HttpError(u16),
+    HttpError { status: u16, body: String },
     JsonError(String),
     PriceParseError(String),
     MissingFeedId(String),
@@ -27,7 +27,13 @@ impl std::fmt::Display for PythPriceError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::NetworkError(error) => write!(f, "Pyth network error: {error}"),
-            Self::HttpError(status) => write!(f, "Pyth returned HTTP {status}"),
+            Self::HttpError { status, body } => {
+                if body.is_empty() {
+                    write!(f, "Pyth returned HTTP {status}")
+                } else {
+                    write!(f, "Pyth returned HTTP {status}: {body}")
+                }
+            }
             Self::JsonError(error) => write!(f, "invalid Pyth response: {error}"),
             Self::PriceParseError(error) => write!(f, "invalid Pyth price: {error}"),
             Self::MissingFeedId(id) => write!(f, "Pyth response is missing feed {id}"),
@@ -203,14 +209,17 @@ pub async fn fetch_pyth_prices(
         .map_err(|err| PythPriceError::NetworkError(err.to_string()))?;
 
     let status = response.status().as_u16();
-    if status != 200 {
-        return Err(PythPriceError::HttpError(status));
-    }
-
     let body = response
         .text()
         .await
         .map_err(|err| PythPriceError::NetworkError(err.to_string()))?;
+
+    if status != 200 {
+        return Err(PythPriceError::HttpError {
+            status,
+            body: crate::http::truncate_error_body(&body),
+        });
+    }
 
     let response: HermesResponse =
         serde_json::from_str(&body).map_err(|err| PythPriceError::JsonError(err.to_string()))?;
@@ -586,7 +595,10 @@ mod tests {
         let err = super::fetch_pyth_price_with_url(&server.uri(), "feed-1", 60, 50)
             .await
             .unwrap_err();
-        assert_eq!(err, PythPriceError::HttpError(404));
+        assert!(matches!(
+            err,
+            PythPriceError::HttpError { status: 404, .. }
+        ));
     }
 
     #[tokio::test]
@@ -604,7 +616,12 @@ mod tests {
         let err = super::fetch_pyth_price_with_url(&server.uri(), "feed-1", 60, 50)
             .await
             .unwrap_err();
-        assert_eq!(err, PythPriceError::HttpError(500));
+        assert!(matches!(
+            err,
+            PythPriceError::HttpError { status: 500, .. }
+        ));
+    }
+
     // #532 — array branch must match the requested feed_id, not blindly pop
     #[test]
     fn hermes_array_with_wrong_feed_id_returns_missing_feed_id_error() {

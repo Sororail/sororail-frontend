@@ -62,7 +62,6 @@ pub fn sign_price(
     let key_array: [u8; 32] = key_bytes.try_into().unwrap();
     let signing_key = SigningKey::from_bytes(&key_array);
 
-    let payload = build_price_message(network_passphrase, ledger_seq, token_strkey, min, max, timestamp);
     let payload = build_price_message(
         network_passphrase,
         ledger_seq,

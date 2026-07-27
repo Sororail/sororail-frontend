@@ -377,7 +377,10 @@ mod tests {
 
     #[test]
     fn submit_error_from_rpc_error() {
-        let rpc_err = RpcError::HttpError(503);
+        let rpc_err = RpcError::HttpError {
+            status: 503,
+            body: String::new(),
+        };
         let submit_err: SubmitError = rpc_err.clone().into();
         assert_eq!(submit_err, SubmitError::Rpc(rpc_err));
     }
