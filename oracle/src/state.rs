@@ -127,6 +127,12 @@ impl<T> Default for RingBuffer<T> {
     }
 }
 
+#[derive(Debug, Default, Clone)]
+pub struct ReadyCache {
+    pub last_checked: Option<std::time::Instant>,
+    pub last_error: Option<(axum::http::StatusCode, &'static str)>,
+}
+
 #[derive(Clone)]
 pub struct AppState {
     pub config: Arc<Config>,
@@ -135,6 +141,7 @@ pub struct AppState {
     pub cycle_status: Arc<RwLock<CycleStatus>>,
     pub failures: Arc<Mutex<RingBuffer<FailedSubmission>>>,
     pub keeper_status: Arc<RwLock<KeeperStatus>>,
+    pub ready_cache: Arc<RwLock<ReadyCache>>,
     pub metrics: Arc<Metrics>,
     pub shutdown_token: CancellationToken,
 }
@@ -148,6 +155,7 @@ impl AppState {
             cycle_status: Arc::new(RwLock::new(CycleStatus::default())),
             failures: Arc::new(Mutex::new(RingBuffer::default())),
             keeper_status: Arc::new(RwLock::new(KeeperStatus::default())),
+            ready_cache: Arc::new(RwLock::new(ReadyCache::default())),
             metrics: Metrics::new(),
             shutdown_token: CancellationToken::new(),
         }

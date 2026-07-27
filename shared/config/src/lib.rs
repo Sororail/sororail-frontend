@@ -147,7 +147,31 @@ pub fn parse_token_configs(raw: &str) -> Result<Vec<TokenConfig>, ConfigError> {
         // but required for the oracle path — the oracle validates separately.
         for source in &token.sources {
             match source.as_str() {
-                "binance" | "coinbase" | "pyth" | "fixed" => {}
+                "binance" => {
+                    if let Some(ref sym) = token.binance_symbol {
+                        if sym.is_empty()
+                            || !sym.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+                        {
+                            return Err(ConfigError::InvalidToken {
+                                symbol: token.symbol.clone(),
+                                reason: format!("invalid binance_symbol '{sym}': must contain only alphanumeric characters, dashes, or underscores"),
+                            });
+                        }
+                    }
+                }
+                "coinbase" => {
+                    if let Some(ref sym) = token.coinbase_symbol {
+                        if sym.is_empty()
+                            || !sym.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+                        {
+                            return Err(ConfigError::InvalidToken {
+                                symbol: token.symbol.clone(),
+                                reason: format!("invalid coinbase_symbol '{sym}': must contain only alphanumeric characters, dashes, or underscores"),
+                            });
+                        }
+                    }
+                }
+                "pyth" | "fixed" => {}
                 other => {
                     return Err(ConfigError::InvalidToken {
                         symbol: token.symbol.clone(),
