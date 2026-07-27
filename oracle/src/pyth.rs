@@ -52,6 +52,24 @@ impl std::fmt::Display for PythPriceError {
 
 impl std::error::Error for PythPriceError {}
 
+impl crate::retry::Retryable for PythPriceError {
+    fn is_retryable(&self) -> bool {
+        match self {
+            // Network errors and 5xx HTTP errors are transient
+            Self::NetworkError(_) => true,
+            Self::HttpError(status) => *status >= 500,
+            // Stale prices might become fresh on retry
+            Self::StalePrice { .. } => true,
+            // Parse/JSON/config/validation errors are permanent failures
+            Self::JsonError(_)
+            | Self::PriceParseError(_)
+            | Self::MissingFeedId(_)
+            | Self::ConfidenceTooWide { .. }
+            | Self::InvalidPublishTime(_) => false,
+        }
+    }
+}
+
 #[derive(Debug, Deserialize)]
 pub struct PythPrice {
     pub price: PythPriceData,

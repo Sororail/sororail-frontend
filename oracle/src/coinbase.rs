@@ -26,6 +26,18 @@ impl std::fmt::Display for CoinbasePriceError {
 
 impl std::error::Error for CoinbasePriceError {}
 
+impl crate::retry::Retryable for CoinbasePriceError {
+    fn is_retryable(&self) -> bool {
+        match self {
+            // Network errors and 5xx HTTP errors are transient
+            Self::NetworkError(_) => true,
+            Self::HttpError(status) => *status >= 500,
+            // Parse/JSON/config errors are permanent failures
+            Self::JsonError(_) | Self::PriceParseError(_) | Self::MissingUsdRate => false,
+        }
+    }
+}
+
 #[derive(Debug, Deserialize)]
 pub struct CoinbaseRates {
     pub rates: std::collections::HashMap<String, String>,

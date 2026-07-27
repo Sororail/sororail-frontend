@@ -149,7 +149,12 @@ pub struct OutlierFilterResult {
     pub rejected: Vec<(String, i128, f64)>, // source, price, deviation
 }
 
-/// Filter out prices that deviate more than 3 standard deviations from the median.
+/// Filter out prices that deviate too far from the median.
+///
+/// Primary rule: reject prices whose absolute deviation from the median exceeds
+/// 6x the median absolute deviation (MAD). If MAD is zero (a degenerate/flat
+/// cluster where at least half the inputs have identical deviation), fall back
+/// to rejecting prices more than 3 standard deviations from the median.
 pub fn filter_outliers(prices: &[i128], sources: &[String]) -> OutlierFilterResult {
     if prices.is_empty() {
         return OutlierFilterResult {

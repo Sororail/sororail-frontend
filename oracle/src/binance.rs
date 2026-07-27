@@ -24,6 +24,18 @@ impl std::fmt::Display for BinancePriceError {
 
 impl std::error::Error for BinancePriceError {}
 
+impl crate::retry::Retryable for BinancePriceError {
+    fn is_retryable(&self) -> bool {
+        match self {
+            // Network errors and 5xx HTTP errors are transient
+            Self::NetworkError(_) => true,
+            Self::HttpError(status) => *status >= 500,
+            // Parse/JSON errors are permanent failures
+            Self::JsonError(_) | Self::PriceParseError(_) => false,
+        }
+    }
+}
+
 #[derive(Debug, Deserialize)]
 pub struct BinanceTickerEntry {
     pub symbol: String,
