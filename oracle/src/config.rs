@@ -531,6 +531,38 @@ pub fn parse_price_feed_config(raw: &str) -> Result<PriceFeedConfig, ConfigError
 }
 
 #[cfg(test)]
+impl Config {
+    /// Minimal Config with dummy values — for unit tests that need an AppState
+    /// but don't exercise any network or crypto paths.
+    pub fn default_for_tests() -> Self {
+        Self {
+            bind_addr: "127.0.0.1:0".parse().unwrap(),
+            network: Network::Testnet,
+            network_passphrase: "Test SDF Network ; September 2015".to_string(),
+            stellar_rpc_url: "http://localhost:8000".to_string(),
+            horizon_url: "http://localhost:8001".to_string(),
+            oracle_contract_id: String::new(),
+            role_store_contract_id: String::new(),
+            data_store_contract_id: String::new(),
+            order_handler_contract_id: String::new(),
+            deposit_handler_contract_id: String::new(),
+            withdrawal_handler_contract_id: String::new(),
+            reader_contract_id: String::new(),
+            keeper_private_key: SecretString::new(String::new()),
+            keeper_secret_key: SecretString::new(String::new()),
+            keeper_account_id: String::new(),
+            keeper_index: 0,
+            admin_api_token: None,
+            pyth_api_key: None,
+            min_keeper_balance_xlm: 1.0,
+            price_loop_interval: std::time::Duration::from_secs(10),
+            keeper_loop_interval: std::time::Duration::from_secs(10),
+            price_feed: PriceFeedConfig { tokens: vec![] },
+        }
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use std::collections::HashMap;
