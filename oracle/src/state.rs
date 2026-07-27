@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::sync::Arc;
 use std::time::SystemTime;
 
@@ -133,6 +133,10 @@ pub struct ReadyCache {
     pub last_error: Option<(axum::http::StatusCode, String)>,
 }
 
+/// Number of consecutive `freeze_order` failures before a key is permanently
+/// skipped and a loud alert is emitted (#498).
+pub const MAX_CONSECUTIVE_FREEZE_FAILURES: u32 = 3;
+
 #[derive(Clone)]
 pub struct AppState {
     pub config: Arc<Config>,
@@ -144,6 +148,13 @@ pub struct AppState {
     pub ready_cache: Arc<RwLock<ReadyCache>>,
     pub metrics: Arc<Metrics>,
     pub shutdown_token: CancellationToken,
+    /// Per-order-key count of consecutive `freeze_order` failures.
+    /// Once a key reaches MAX_CONSECUTIVE_FREEZE_FAILURES it is added to
+    /// `frozen_order_blacklist` and never retried again (#498).
+    pub freeze_failure_counts: Arc<Mutex<HashMap<String, u32>>>,
+    /// Order keys that have been permanently abandoned after too many
+    /// consecutive freeze failures (#498).
+    pub frozen_order_blacklist: Arc<Mutex<HashMap<String, u32>>>,
 }
 
 impl AppState {
@@ -158,6 +169,8 @@ impl AppState {
             ready_cache: Arc::new(RwLock::new(ReadyCache::default())),
             metrics: Metrics::new(),
             shutdown_token: CancellationToken::new(),
+            freeze_failure_counts: Arc::new(Mutex::new(HashMap::new())),
+            frozen_order_blacklist: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 }

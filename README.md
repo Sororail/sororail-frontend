@@ -46,40 +46,48 @@ RPC_URL=https://soroban-testnet.stellar.org
 
 ## Required Environment Variables
 
+The names below are the exact names the binary reads at startup via
+`Config::from_env()`. Using any other name (e.g. `ORDER_HANDLER_CONTRACT_ID`)
+will silently be ignored and the process will exit with a "required env var
+not set" error (#499).
+
 ```bash
 # Network configuration
-STELLAR_NETWORK=testnet
-STELLAR_RPC_URL=https://soroban-testnet.stellar.org
-HORIZON_URL=https://horizon-testnet.stellar.org
-NETWORK_PASSPHRASE="Test SDF Network ; September 2015"
+STELLAR_NETWORK=testnet           # "testnet" (default) or "mainnet"
+STELLAR_RPC_URL=https://soroban-testnet.stellar.org  # required on mainnet; optional on testnet
+HORIZON_URL=https://horizon-testnet.stellar.org      # optional; defaults to network default
 
-# Contract IDs
+# Contract IDs — use the short names exactly as shown
 ORACLE_CONTRACT_ID=CBEMTV23SIJJBIST3V5HTMWHR4MHYGHNBIG4M26U4LGUJTWZXTFSVQEY
-ORDER_HANDLER_CONTRACT_ID=CC35OFZVWUTAZPV3B6UKSDVAVORZEWUUMOMTHO33H4YR4C5FKPEFODKY
-DEPOSIT_HANDLER_CONTRACT_ID=CDWOFIP4YQJGMCYAOWLSRBAWN2OTJUG2I5WOFC32O2TX2SRU56RWBE5C
-WITHDRAWAL_HANDLER_CONTRACT_ID=CCA5HRHMG6E6BVYRICSLZ5CK5KNPAAKXQ7XWDM34WWVGNHWHA26GRVVE
-READER_CONTRACT_ID=CC6OZUHF3LVO6PNP3V2EB36ORB3YSVYSH3LWD3RFLO4NUO3BYCXSWSYC
-DATA_STORE_CONTRACT_ID=CCZ3VKBEDLNBO2JM3EXL3SNBDJOV5BTN52FVQPER7F6D5GCE53PITQ3J
-ROLE_STORE_CONTRACT_ID=CBSUAIAMIFFS4AXQYZ7KR7FNO7IMKAPS5WF4DXANVXDTPKH2F7YUIN6Q
+ORDER_HANDLER=CC35OFZVWUTAZPV3B6UKSDVAVORZEWUUMOMTHO33H4YR4C5FKPEFODKY
+DEPOSIT_HANDLER=CDWOFIP4YQJGMCYAOWLSRBAWN2OTJUG2I5WOFC32O2TX2SRU56RWBE5C
+WITHDRAWAL_HANDLER=CCA5HRHMG6E6BVYRICSLZ5CK5KNPAAKXQ7XWDM34WWVGNHWHA26GRVVE
+READER=CC6OZUHF3LVO6PNP3V2EB36ORB3YSVYSH3LWD3RFLO4NUO3BYCXSWSYC
+DATA_STORE=CCZ3VKBEDLNBO2JM3EXL3SNBDJOV5BTN52FVQPER7F6D5GCE53PITQ3J
+ROLE_STORE=CBSUAIAMIFFS4AXQYZ7KR7FNO7IMKAPS5WF4DXANVXDTPKH2F7YUIN6Q
 
 # Keeper configuration
-KEEPER_PRIVATE_KEY=<hex-encoded-ed25519-private-key>
-KEEPER_SECRET_KEY=<S...-strkey-seed>
-KEEPER_ACCOUNT_ID=<G...-public-key>
+KEEPER_PRIVATE_KEY=<64-hex-char ed25519 private key>
+KEEPER_SECRET_KEY=<S...-strkey seed>
+KEEPER_ACCOUNT_ID=<G...-public key>
 KEEPER_INDEX=0
 MIN_KEEPER_BALANCE_XLM=10
 
 # API configuration
 BIND_ADDR=0.0.0.0:8080
-ADMIN_API_TOKEN=<optional-admin-token>
+ADMIN_API_TOKEN=<optional admin token>
 
 # Loop intervals (milliseconds)
 PRICE_LOOP_MS=1000
 KEEPER_LOOP_MS=1500
 
-# Price feed configuration
+# Price feed configuration (optional; falls back to embedded config/tokens.json)
 PRICE_FEED_CONFIG=/path/to/tokens.json
 ```
+
+> **Note:** `NETWORK_PASSPHRASE` is not read by the binary — the correct
+> passphrase is selected automatically based on `STELLAR_NETWORK`. You do
+> not need to set it.
 
 ## Development
 
