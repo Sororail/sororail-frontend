@@ -10,6 +10,43 @@ use crate::state::{AppState, CachedPrice, FailedSubmission};
 const SOURCE_RETRY_ATTEMPTS: u32 = 3;
 const SOURCE_RETRY_BASE_DELAY_MS: u64 = 100;
 
+/// Unified error type for all price sources, preserving structure through retries.
+#[derive(Debug, Clone)]
+pub enum PriceSourceError {
+    Binance(crate::binance::BinancePriceError),
+    Coinbase(crate::coinbase::CoinbasePriceError),
+    Pyth(crate::pyth::PythPriceError),
+    Fixed(crate::fixed::FixedPriceError),
+    Config(String),
+    Unsupported(String),
+}
+
+impl std::fmt::Display for PriceSourceError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Binance(e) => write!(f, "{}", e),
+            Self::Coinbase(e) => write!(f, "{}", e),
+            Self::Pyth(e) => write!(f, "{}", e),
+            Self::Fixed(e) => write!(f, "{}", e),
+            Self::Config(msg) => write!(f, "config error: {}", msg),
+            Self::Unsupported(source) => write!(f, "unsupported source: {}", source),
+        }
+    }
+}
+
+impl crate::retry::Retryable for PriceSourceError {
+    fn is_retryable(&self) -> bool {
+        match self {
+            Self::Binance(e) => e.is_retryable(),
+            Self::Coinbase(e) => e.is_retryable(),
+            Self::Pyth(e) => e.is_retryable(),
+            Self::Fixed(e) => e.is_retryable(),
+            // Config and unsupported errors are permanent
+            Self::Config(_) | Self::Unsupported(_) => false,
+        }
+    }
+}
+
 pub async fn run_price_loop(state: Arc<AppState>) {
     let mut ticker = interval(state.config.price_loop_interval);
     ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
@@ -43,6 +80,11 @@ pub async fn run_price_cycle(state: Arc<AppState>) {
         match crate::stellar_rpc::get_latest_ledger_sequence(&state.config.stellar_rpc_url).await {
             Ok(ledger_seq) => ledger_seq,
             Err(error) => {
+                tracing::error!(
+                    error = %error,
+                    rpc_url = %state.config.stellar_rpc_url,
+                    "price cycle aborted: failed to fetch latest ledger sequence from RPC"
+                );
                 record_error(&state, "get_latest_ledger", error.to_string()).await;
                 finish_cycle(&state, started, tokens_ok, tokens_failed).await;
                 return;
@@ -158,11 +200,11 @@ async fn build_cached_price(
                 record_error_with_context(
                     state,
                     format!("source:{}:{}", token.symbol, source),
-                    error.clone(),
+                    error_str.clone(),
                     ctx,
                 )
                 .await;
-                tracing::warn!(symbol = %token.symbol, source = %source, error = %error, "price source failed");
+                tracing::warn!(symbol = %token.symbol, source = %source, error = %error_str, "price source failed");
             }
         }
     }
@@ -181,7 +223,7 @@ async fn fetch_source_with_retry(
     token: &TokenConfig,
     pyth_api_key: Option<&str>,
     pyth_prices: &std::collections::HashMap<String, crate::pyth::PythPriceFeed>,
-) -> Result<i128, String> {
+) -> Result<i128, PriceSourceError> {
     crate::retry::retry_with_backoff(
         || async { fetch_source_price(source, token, pyth_api_key, pyth_prices).await },
         SOURCE_RETRY_ATTEMPTS,
@@ -195,36 +237,38 @@ async fn fetch_source_price(
     token: &TokenConfig,
     pyth_api_key: Option<&str>,
     pyth_prices: &std::collections::HashMap<String, crate::pyth::PythPriceFeed>,
-) -> Result<i128, String> {
+) -> Result<i128, PriceSourceError> {
     match source {
         "binance" => {
             let symbol = token
                 .binance_symbol
                 .as_ref()
-                .ok_or_else(|| "missing binance_symbol".to_string())?;
+                .ok_or_else(|| PriceSourceError::Config("missing binance_symbol".to_string()))?;
             let results = crate::binance::fetch_spot_prices(std::slice::from_ref(symbol))
                 .await
-                .map_err(|err| err.to_string())?;
+                .map_err(PriceSourceError::Binance)?;
             results
                 .into_iter()
                 .find(|(got_symbol, _)| got_symbol == symbol)
                 .map(|(_, price)| price)
-                .ok_or_else(|| format!("binance symbol not returned: {symbol}"))
+                .ok_or_else(|| {
+                    PriceSourceError::Config(format!("binance symbol not returned: {symbol}"))
+                })
         }
         "coinbase" => {
             let symbol = token
                 .coinbase_symbol
                 .as_ref()
-                .ok_or_else(|| "missing coinbase_symbol".to_string())?;
+                .ok_or_else(|| PriceSourceError::Config("missing coinbase_symbol".to_string()))?;
             crate::coinbase::fetch_spot_price(symbol)
                 .await
-                .map_err(|err| err.to_string())
+                .map_err(PriceSourceError::Coinbase)
         }
         "pyth" => {
             let feed_id = token
                 .pyth_feed_id
                 .as_ref()
-                .ok_or_else(|| "missing pyth_feed_id".to_string())?;
+                .ok_or_else(|| PriceSourceError::Config("missing pyth_feed_id".to_string()))?;
             if let Some(feed) = pyth_prices.get(feed_id) {
                 crate::pyth::validate_pyth_price(
                     &feed.price,
@@ -249,10 +293,10 @@ async fn fetch_source_price(
                         )
                     })
             }
-            .map_err(|err| err.to_string())
+            .map_err(PriceSourceError::Pyth)
         }
-        "fixed" => crate::fixed::fixed_price(token).map_err(|err| err.to_string()),
-        other => Err(format!("unsupported source: {other}")),
+        "fixed" => crate::fixed::fixed_price(token).map_err(PriceSourceError::Fixed),
+        other => Err(PriceSourceError::Unsupported(other.to_string())),
     }
 }
 
@@ -280,6 +324,7 @@ fn signed_cached_price(
         token_address: token.stellar_address.clone(),
         symbol: token.symbol.clone(),
         display_symbol: token.display_symbol().to_string(),
+        keeper_index: state.config.keeper_index,
         min: aggregate.min,
         max: aggregate.max,
         median: aggregate.median,
@@ -361,6 +406,7 @@ mod tests {
             keeper_account_id: "GACCOUNT".to_string(),
             keeper_index: 0,
             admin_api_token: None,
+            pyth_api_key: None,
             min_keeper_balance_xlm: 0.0,
             price_loop_interval: Duration::from_millis(1),
             keeper_loop_interval: Duration::from_millis(1),
@@ -378,8 +424,8 @@ mod tests {
             bind_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
             network: Network::Testnet,
             network_passphrase: "Test SDF Network ; September 2015".to_string(),
-            stellar_rpc_url: "http://127.0.0.1:1".to_string(), // unreachable — cycle will error
-            horizon_url: "http://127.0.0.1:1".to_string(),
+            stellar_rpc_url: "not-a-valid-url".to_string(), // immediate error — no network
+            horizon_url: "not-a-valid-url".to_string(),
             oracle_contract_id: "CORACLE".to_string(),
             role_store_contract_id: "CROLE".to_string(),
             data_store_contract_id: "CDATA".to_string(),
@@ -394,6 +440,7 @@ mod tests {
             keeper_account_id: "GACCOUNT".to_string(),
             keeper_index: 0,
             admin_api_token: None,
+            pyth_api_key: None,
             min_keeper_balance_xlm: 0.0,
             price_loop_interval: Duration::from_millis(50),
             keeper_loop_interval: Duration::from_millis(50),

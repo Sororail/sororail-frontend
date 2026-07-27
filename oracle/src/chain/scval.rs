@@ -18,7 +18,7 @@ pub fn encode_signed_price(price: &CachedPrice) -> Result<ScVal, String> {
     let max_parts = i128_to_int128_parts(price.max);
 
     let entries = vec![
-        sc_map_entry("keeper_index", ScVal::U32(0)),
+        sc_map_entry("keeper_index", ScVal::U32(price.keeper_index)),
         sc_map_entry("ledger_seq", ScVal::U32(price.ledger_seq)),
         sc_map_entry("max_price", ScVal::I128(max_parts)),
         sc_map_entry("min_price", ScVal::I128(min_parts)),
@@ -148,6 +148,7 @@ mod tests {
             token_address: "GAUHMCMUP5FZO5675W3ISZ6E6CNYJGXBUW5WANE2JR4TGAARYCTSCBKI".to_string(),
             symbol: "TUSDC".to_string(),
             display_symbol: "USDC".to_string(),
+            keeper_index: 0,
             min: 1_000_000_000_000_000_000_000_000_000_000,
             max: 1_000_000_000_000_000_000_000_000_000_000,
             median: 1_000_000_000_000_000_000_000_000_000_000,
@@ -183,6 +184,7 @@ mod tests {
             token_address: "GAUHMCMUP5FZO5675W3ISZ6E6CNYJGXBUW5WANE2JR4TGAARYCTSCBKI".to_string(),
             symbol: "TUSDC".to_string(),
             display_symbol: "USDC".to_string(),
+            keeper_index: 0,
             min: 1_000_000_000_000_000_000_000_000_000_000,
             max: 1_000_000_000_000_000_000_000_000_000_000,
             median: 1_000_000_000_000_000_000_000_000_000_000,
@@ -205,6 +207,7 @@ mod tests {
             token_address: "GAUHMCMUP5FZO5675W3ISZ6E6CNYJGXBUW5WANE2JR4TGAARYCTSCBKI".to_string(),
             symbol: "TUSDC".to_string(),
             display_symbol: "USDC".to_string(),
+            keeper_index: 0,
             min: 1_000_000_000_000_000_000_000_000_000_000,
             max: 1_000_000_000_000_000_000_000_000_000_000,
             median: 1_000_000_000_000_000_000_000_000_000_000,
@@ -229,6 +232,7 @@ mod tests {
             token_address: "GAUHMCMUP5FZO5675W3ISZ6E6CNYJGXBUW5WANE2JR4TGAARYCTSCBKI".to_string(),
             symbol: "TUSDC".to_string(),
             display_symbol: "USDC".to_string(),
+            keeper_index: 0,
             min: 1_000_000_000_000_000_000_000_000_000_000,
             max: 1_000_000_000_000_000_000_000_000_000_000,
             median: 1_000_000_000_000_000_000_000_000_000_000,
@@ -244,6 +248,39 @@ mod tests {
                 assert_eq!(vec.0.len(), 1);
             }
             _ => panic!("expected ScVal::Vec"),
+        }
+    }
+
+    #[test]
+    fn test_encode_signed_price_uses_configured_keeper_index() {
+        let price = CachedPrice {
+            token_address: "GAUHMCMUP5FZO5675W3ISZ6E6CNYJGXBUW5WANE2JR4TGAARYCTSCBKI".to_string(),
+            symbol: "TUSDC".to_string(),
+            display_symbol: "USDC".to_string(),
+            keeper_index: 7,
+            min: 1_000_000_000_000_000_000_000_000_000_000,
+            max: 1_000_000_000_000_000_000_000_000_000_000,
+            median: 1_000_000_000_000_000_000_000_000_000_000,
+            timestamp: 1718400000,
+            ledger_seq: 12345,
+            sources_used: vec!["fixed".to_string()],
+            signature: "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000".to_string(),
+        };
+
+        let scval = encode_signed_price(&price).unwrap();
+        match scval {
+            ScVal::Map(Some(map)) => {
+                let keeper_index_entry = map
+                    .0
+                    .iter()
+                    .find(|e| match &e.key {
+                        ScVal::Symbol(s) => String::from_utf8_lossy(s.as_ref()) == "keeper_index",
+                        _ => false,
+                    })
+                    .expect("keeper_index entry present");
+                assert_eq!(keeper_index_entry.val, ScVal::U32(7));
+            }
+            _ => panic!("expected ScVal::Map"),
         }
     }
 }

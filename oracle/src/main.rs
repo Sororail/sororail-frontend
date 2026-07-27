@@ -2,7 +2,6 @@ use std::sync::Arc;
 
 use oracle::{api, AppState, Config};
 use tokio::net::TcpListener;
-use tokio_util::sync::CancellationToken;
 use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
@@ -12,9 +11,11 @@ async fn main() {
 
     let config = match Config::from_env() {
         Ok(config) => Arc::new(config),
-        Err(error) => {
-            tracing::error!(%error, "configuration failed");
-            eprintln!("configuration error: {error}");
+        Err(errors) => {
+            for error in &errors.0 {
+                tracing::error!(%error, "configuration failed");
+                eprintln!("configuration error: {error}");
+            }
             std::process::exit(1);
         }
     };
@@ -22,9 +23,8 @@ async fn main() {
     let bind_addr = config.bind_addr;
     let state = Arc::new(AppState::new(Arc::clone(&config)));
     let app = api::build_router(Arc::clone(&state));
-    let price_loop = tokio::spawn(oracle::price_loop::run_price_loop(Arc::clone(&state)));
-    let keeper_loop = tokio::spawn(oracle::keeper_loop::run_keeper_loop(Arc::clone(&state)));
 
+    #[allow(unused_mut)]
     let listener = match TcpListener::bind(bind_addr).await {
         Ok(listener) => listener,
         Err(error) => {
@@ -33,6 +33,9 @@ async fn main() {
             std::process::exit(1);
         }
     };
+
+    let mut price_loop = tokio::spawn(oracle::price_loop::run_price_loop(Arc::clone(&state)));
+    let mut keeper_loop = tokio::spawn(oracle::keeper_loop::run_keeper_loop(Arc::clone(&state)));
 
     tracing::info!(
         %bind_addr,
@@ -60,7 +63,6 @@ async fn main() {
     }
 
     tracing::info!("shutdown initiated, draining...");
-    shutdown_token.cancel();
     state.shutdown_token.cancel();
 
     let _ = tokio::join!(price_loop, keeper_loop);
@@ -76,7 +78,7 @@ fn init_tracing() {
         .init();
 }
 
-async fn shutdown_signal(shutdown_token: CancellationToken) {
+async fn shutdown_signal() {
     let ctrl_c = async {
         if let Err(error) = tokio::signal::ctrl_c().await {
             tracing::error!(%error, "failed to install SIGINT handler");
@@ -104,6 +106,4 @@ async fn shutdown_signal(shutdown_token: CancellationToken) {
         _ = ctrl_c => tracing::info!("received SIGINT"),
         _ = terminate => tracing::info!("received SIGTERM"),
     }
-
-    shutdown_token.cancel();
 }

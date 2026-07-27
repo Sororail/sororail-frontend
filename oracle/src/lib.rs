@@ -26,7 +26,7 @@ pub mod tx_builder;
 
 pub mod api;
 
-pub use config::Config;
+pub use config::{Config, EnvErrors};
 pub use state::AppState;
 
 use std::time::{SystemTime, UNIX_EPOCH};

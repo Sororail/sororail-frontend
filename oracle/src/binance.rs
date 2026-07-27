@@ -24,6 +24,18 @@ impl std::fmt::Display for BinancePriceError {
 
 impl std::error::Error for BinancePriceError {}
 
+impl crate::retry::Retryable for BinancePriceError {
+    fn is_retryable(&self) -> bool {
+        match self {
+            // Network errors and 5xx HTTP errors are transient
+            Self::NetworkError(_) => true,
+            Self::HttpError(status) => *status >= 500,
+            // Parse/JSON errors are permanent failures
+            Self::JsonError(_) | Self::PriceParseError(_) => false,
+        }
+    }
+}
+
 #[derive(Debug, Deserialize)]
 pub struct BinanceTickerEntry {
     pub symbol: String,
@@ -113,6 +125,18 @@ fn percent_encode_query_value(value: &str) -> String {
 pub async fn fetch_spot_prices(
     symbols: &[String],
 ) -> Result<Vec<(String, i128)>, BinancePriceError> {
+    fetch_spot_prices_with_url(BINANCE_TICKER_PRICE_URL, symbols).await
+}
+
+pub(crate) async fn fetch_spot_prices_with_url(
+    base_url: &str,
+    symbols: &[String],
+) -> Result<Vec<(String, i128)>, BinancePriceError> {
+    let url = if symbols.len() == 1 {
+        format!("{}?symbol={}", base_url, symbols[0])
+    } else {
+        base_url.to_string()
+    };
     let url = build_spot_price_url(symbols);
     let response = crate::http::client()
         .get(&url)
@@ -297,11 +321,95 @@ mod tests {
         assert_eq!(err, BinancePriceError::NetworkError("timeout".to_string()));
     }
 
+    // ── HTTP-level wiremock tests ─────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn fetch_spot_prices_single_symbol_success() {
+        use wiremock::matchers::{method, query_param};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let body = r#"{"symbol":"BTCUSDT","price":"60733.99"}"#;
+
+        Mock::given(method("GET"))
+            .and(query_param("symbol", "BTCUSDT"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json"))
+            .mount(&server)
+            .await;
+
+        let symbols = vec!["BTCUSDT".to_string()];
+        let result = super::fetch_spot_prices_with_url(&server.uri(), &symbols)
+            .await
+            .unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].0, "BTCUSDT");
+    }
+
+    #[tokio::test]
+    async fn fetch_spot_prices_multi_symbol_success() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let body = r#"[
+            {"symbol":"BTCUSDT","price":"60733.99"},
+            {"symbol":"ETHUSDT","price":"3500.50"}
+        ]"#;
+
+        Mock::given(method("GET"))
+            .and(path("/"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json"))
+            .mount(&server)
+            .await;
+
+        let symbols = vec!["BTCUSDT".to_string(), "ETHUSDT".to_string()];
+        let result = super::fetch_spot_prices_with_url(&server.uri(), &symbols)
+            .await
+            .unwrap();
+        assert_eq!(result.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn fetch_spot_prices_404_returns_http_error() {
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(404))
+            .mount(&server)
+            .await;
+
+        let symbols = vec!["BTCUSDT".to_string()];
+        let err = super::fetch_spot_prices_with_url(&server.uri(), &symbols)
+            .await
+            .unwrap_err();
+        assert_eq!(err, BinancePriceError::HttpError(404));
+    }
+
+    #[tokio::test]
+    async fn fetch_spot_prices_500_returns_http_error() {
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(500))
+            .mount(&server)
+            .await;
+
+        let symbols = vec!["BTCUSDT".to_string()];
+        let err = super::fetch_spot_prices_with_url(&server.uri(), &symbols)
+            .await
+            .unwrap_err();
+        assert_eq!(err, BinancePriceError::HttpError(500));
     #[test]
     fn build_spot_price_url_includes_symbols_parameter_for_multiple_symbols() {
         let symbols = vec!["BTCUSDT".to_string(), "ETHUSDT".to_string()];
         let url = build_spot_price_url(&symbols);
         assert!(url.starts_with(BINANCE_TICKER_PRICE_URL));
-        assert!(url.contains("symbols=%5B%22BTCUSDT%22%2C%22ETHUSDT%22%5D"));
+        assert!(url.contains(r#"symbols=["BTCUSDT","ETHUSDT"]"#));
     }
 }
