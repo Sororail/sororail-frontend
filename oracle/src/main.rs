@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use oracle::{api, AppState, Config};
 use tokio::net::TcpListener;
+use tokio_util::sync::CancellationToken;
 use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
@@ -43,7 +44,7 @@ async fn main() {
         "oracle server listening"
     );
 
-    let shutdown_token = CancellationToken::new();
+    let shutdown_token = state.shutdown_token.clone();
     let server_future =
         axum::serve(listener, app).with_graceful_shutdown(shutdown_signal(shutdown_token.clone()));
 
@@ -78,7 +79,7 @@ fn init_tracing() {
         .init();
 }
 
-async fn shutdown_signal() {
+async fn shutdown_signal(token: CancellationToken) {
     let ctrl_c = async {
         if let Err(error) = tokio::signal::ctrl_c().await {
             tracing::error!(%error, "failed to install SIGINT handler");
@@ -106,4 +107,6 @@ async fn shutdown_signal() {
         _ = ctrl_c => tracing::info!("received SIGINT"),
         _ = terminate => tracing::info!("received SIGTERM"),
     }
+
+    token.cancel();
 }

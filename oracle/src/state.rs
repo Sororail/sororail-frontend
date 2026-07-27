@@ -130,7 +130,7 @@ impl<T> Default for RingBuffer<T> {
 #[derive(Debug, Default, Clone)]
 pub struct ReadyCache {
     pub last_checked: Option<std::time::Instant>,
-    pub last_error: Option<(axum::http::StatusCode, &'static str)>,
+    pub last_error: Option<(axum::http::StatusCode, String)>,
 }
 
 #[derive(Clone)]
