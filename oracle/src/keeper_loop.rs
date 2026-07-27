@@ -314,7 +314,23 @@ async fn get_pending_keys(
     )
     .await?;
 
-    parse_bytes_vec_from_result(&keys_result)
+    let keys = parse_bytes_vec_from_result(&keys_result)?;
+    
+    // Cross-check parsed length against reported count to detect RPC/ABI drift
+    if keys.len() != count as usize {
+        tracing::warn!(
+            expected = count,
+            actual = keys.len(),
+            method = keys_method,
+            "parsed key count mismatch — RPC/ABI drift or malformed response"
+        );
+        return Err(format!(
+            "expected {count} keys from {keys_method}, got {}",
+            keys.len()
+        ));
+    }
+    
+    Ok(keys)
 }
 
 async fn set_prices_on_chain(
@@ -518,11 +534,14 @@ fn parse_bytes_vec_from_result(result: &str) -> Result<Vec<String>, String> {
         serde_json::Value::Array(arr) => {
             let mut keys = Vec::new();
             for item in arr {
-                if let Some(bytes) = item.get("bytes").or_else(|| item.get("Bytes")) {
-                    if let Some(hex_str) = bytes.as_str() {
-                        keys.push(hex_str.to_string());
-                    }
-                }
+                let bytes = item
+                    .get("bytes")
+                    .or_else(|| item.get("Bytes"))
+                    .ok_or_else(|| format!("vector entry missing 'bytes' field: {item}"))?;
+                let hex_str = bytes
+                    .as_str()
+                    .ok_or_else(|| format!("'bytes' field is not a string: {item}"))?;
+                keys.push(hex_str.to_string());
             }
             Ok(keys)
         }

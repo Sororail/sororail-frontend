@@ -17,6 +17,13 @@ impl std::fmt::Display for FixedPriceError {
 
 impl std::error::Error for FixedPriceError {}
 
+impl crate::retry::Retryable for FixedPriceError {
+    fn is_retryable(&self) -> bool {
+        // Config/parse errors are permanent failures
+        false
+    }
+}
+
 pub fn fixed_price(token: &TokenConfig) -> Result<i128, FixedPriceError> {
     let raw = token
         .fixed_price
