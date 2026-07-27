@@ -91,10 +91,27 @@ async fn execute_keeper_cycle(state: Arc<AppState>) -> Result<CycleSummary, Stri
         return Err("No prices available in cache".to_string());
     }
 
-    let order_keys = get_pending_keys(&state, "get_order_count", "get_order_keys").await?;
-    let deposit_keys = get_pending_keys(&state, "get_deposit_count", "get_deposit_keys").await?;
+    let order_keys =
+        get_pending_keys(&state, "get_order_count", "get_order_keys")
+            .await
+            .unwrap_or_else(|e| {
+                warn!(error = %e, "get_pending_keys(orders) failed, skipping orders this cycle");
+                Vec::new()
+            });
+    let deposit_keys =
+        get_pending_keys(&state, "get_deposit_count", "get_deposit_keys")
+            .await
+            .unwrap_or_else(|e| {
+                warn!(error = %e, "get_pending_keys(deposits) failed, skipping deposits this cycle");
+                Vec::new()
+            });
     let withdrawal_keys =
-        get_pending_keys(&state, "get_withdrawal_count", "get_withdrawal_keys").await?;
+        get_pending_keys(&state, "get_withdrawal_count", "get_withdrawal_keys")
+            .await
+            .unwrap_or_else(|e| {
+                warn!(error = %e, "get_pending_keys(withdrawals) failed, skipping withdrawals this cycle");
+                Vec::new()
+            });
 
     {
         let mut keeper_status = state.keeper_status.write().await;
