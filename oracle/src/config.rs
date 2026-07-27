@@ -525,6 +525,18 @@ pub fn parse_price_feed_config(raw: &str) -> Result<PriceFeedConfig, ConfigError
                 ),
             });
         }
+        // Warn when min_sources is too low to enable meaningful cross-source
+        // deviation checks: a single responding source passes any price through
+        // with no outlier protection (#503).
+        if token.sources.len() >= 2 && token.min_sources * 2 <= token.sources.len() {
+            tracing::warn!(
+                symbol = %token.symbol,
+                min_sources = token.min_sources,
+                sources = token.sources.len(),
+                "min_sources is less than half the configured sources — \
+                 a single source can push a price without cross-source validation"
+            );
+        }
     }
 
     Ok(PriceFeedConfig { tokens })

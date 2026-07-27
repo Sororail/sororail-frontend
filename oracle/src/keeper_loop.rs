@@ -7,7 +7,7 @@ use tracing::{error, info, warn};
 
 use crate::chain::scval;
 use crate::chain::tx_builder;
-use crate::state::{AppState, CachedPrice, FailedSubmission, KeeperExecution};
+use crate::state::{AppState, CachedPrice, FailedSubmission, KeeperExecution, MAX_CONSECUTIVE_FREEZE_FAILURES};
 
 const KEEPER_TX_FEE: u32 = 2_000_000;
 const ACCOUNT_SEQUENCE_RETRY_ATTEMPTS: u32 = 3;
@@ -132,6 +132,21 @@ async fn execute_keeper_cycle(state: Arc<AppState>) -> Result<CycleSummary, Stri
     };
 
     for order_key in &order_keys {
+        // Skip keys that have been permanently abandoned after repeated
+        // freeze failures — retrying would burn fee attempts forever (#498).
+        {
+            let blacklist = state.frozen_order_blacklist.lock().await;
+            if blacklist.contains_key(order_key.as_str()) {
+                error!(
+                    key = %order_key,
+                    "order_key permanently blacklisted after repeated freeze failures; \
+                     manual intervention required to clear"
+                );
+                summary.errors += 1;
+                continue;
+            }
+        }
+
         match execute_handler(
             &state,
             &state.config.order_handler_contract_id,
@@ -142,6 +157,8 @@ async fn execute_keeper_cycle(state: Arc<AppState>) -> Result<CycleSummary, Stri
         {
             Ok(tx_hash) => {
                 summary.orders_executed += 1;
+                // Clear any accumulated freeze-failure count on success.
+                state.freeze_failure_counts.lock().await.remove(order_key.as_str());
                 record_execution(
                     &state,
                     "execute_order",
@@ -166,11 +183,44 @@ async fn execute_keeper_cycle(state: Arc<AppState>) -> Result<CycleSummary, Stri
                     )
                     .await
                     {
-                        Ok(_) => info!(key = %order_key, "order_frozen_budget_exceeded"),
+                        Ok(_) => {
+                            info!(key = %order_key, "order_frozen_budget_exceeded");
+                            state.freeze_failure_counts.lock().await.remove(order_key.as_str());
+                        }
                         Err(freeze_error) => {
-                            error!(key = %order_key, %freeze_error, "freeze_order_failed");
+                            let consecutive = {
+                                let mut counts = state.freeze_failure_counts.lock().await;
+                                let count = counts.entry(order_key.clone()).or_insert(0);
+                                *count += 1;
+                                *count
+                            };
+
+                            error!(
+                                key = %order_key,
+                                %freeze_error,
+                                consecutive_failures = consecutive,
+                                max = MAX_CONSECUTIVE_FREEZE_FAILURES,
+                                "freeze_order_failed"
+                            );
                             freeze_error_msg = Some(freeze_error.clone());
                             record_error(&state, "freeze_order", &freeze_error, None).await;
+
+                            if consecutive >= MAX_CONSECUTIVE_FREEZE_FAILURES {
+                                // Permanently blacklist this key and stop
+                                // burning fee attempts on it (#498).
+                                state
+                                    .frozen_order_blacklist
+                                    .lock()
+                                    .await
+                                    .insert(order_key.clone(), consecutive);
+                                error!(
+                                    key = %order_key,
+                                    consecutive_failures = consecutive,
+                                    "ALERT: order_key blacklisted after {} consecutive \
+                                     freeze failures — manual intervention required",
+                                    MAX_CONSECUTIVE_FREEZE_FAILURES
+                                );
+                            }
                         }
                     }
                 }
