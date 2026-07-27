@@ -84,12 +84,12 @@ Implemented in `position_utils::is_adl_triggered`.
 |---|---|
 | `pool_value` | 1,000,000 |
 | `max_pnl_factor` | 500,000 (= 50%) |
-| Boundary PnL | 500 |
+| Boundary PnL | 500,000 |
 
 ```
-Boundary: 500 * 1,000,000 >= 1,000,000 * 500,000  →  500,000,000 >= 500,000,000  TRIGGERS ✓
-Below:    499 * 1,000,000 >= 1,000,000 * 500,000  →  499,000,000 >= 500,000,000  NO ✓
-Above:    501 * 1,000,000 >= 1,000,000 * 500,000  →  501,000,000 >= 500,000,000  TRIGGERS ✓
+Boundary: 500,000 * 1,000,000 >= 1,000,000 * 500,000  →  500,000,000,000 >= 500,000,000,000  TRIGGERS ✓
+Below:    499,999 * 1,000,000 >= 1,000,000 * 500,000  →  499,999,000,000 >= 500,000,000,000  NO ✓
+Above:    500,001 * 1,000,000 >= 1,000,000 * 500,000  →  500,001,000,000 >= 500,000,000,000  TRIGGERS ✓
 ```
 
 **Net PnL** accounts for both sides: `total_pnl = long_pnl - short_losses`. ADL fires only when this net value is positive and meets the threshold.
