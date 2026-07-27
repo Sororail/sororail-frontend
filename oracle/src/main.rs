@@ -43,63 +43,22 @@ async fn main() {
         "oracle server listening"
     );
 
-    let mut server_handle = tokio::spawn({
-        let state = Arc::clone(&state);
-        async move {
-            axum::serve(listener, app)
-                .with_graceful_shutdown({
-                    let token = state.shutdown_token.clone();
-                    async move {
-                        tokio::select! {
-                            _ = shutdown_signal() => {
-                                token.cancel();
-                            }
-                            _ = token.cancelled() => {}
-                        }
-                    }
-                })
-                .await
-        }
-    });
+    let shutdown_token = CancellationToken::new();
+    let server_future =
+        axum::serve(listener, app).with_graceful_shutdown(shutdown_signal(shutdown_token.clone()));
 
-    let loop_died_early = tokio::select! {
-        result = &mut server_handle => {
-            match result {
-                Ok(Ok(())) => false,
-                Ok(Err(error)) => {
-                    tracing::error!(%error, "server error");
-                    eprintln!("server error: {error}");
-                    std::process::exit(1);
-                }
-                Err(error) => {
-                    tracing::error!(%error, "server panicked");
-                    std::process::exit(1);
-                }
-            }
-        }
-        result = &mut price_loop => {
-            match result {
-                Ok(()) => tracing::error!("price_loop exited unexpectedly before shutdown"),
-                Err(error) => tracing::error!(%error, "price_loop panicked"),
-            }
-            true
-        }
-        result = &mut keeper_loop => {
-            match result {
-                Ok(()) => tracing::error!("keeper_loop exited unexpectedly before shutdown"),
-                Err(error) => tracing::error!(%error, "keeper_loop panicked"),
-            }
-            true
-        }
-    };
+    let server_result =
+        tokio::time::timeout(std::time::Duration::from_secs(30), server_future).await;
 
-    if loop_died_early {
-        state.shutdown_token.cancel();
-        if tokio::time::timeout(std::time::Duration::from_secs(30), &mut server_handle)
-            .await
-            .is_err()
-        {
-            tracing::warn!("server shutdown timed out after 30s");
+    match server_result {
+        Ok(Ok(())) => {}
+        Ok(Err(error)) => {
+            tracing::error!(%error, "server error");
+            eprintln!("server error: {error}");
+            std::process::exit(1);
+        }
+        Err(_) => {
+            tracing::warn!("server shutdown timed out after 30s, canceling background tasks");
         }
     }
 
