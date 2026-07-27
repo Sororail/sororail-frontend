@@ -6,7 +6,7 @@ pub const FLOAT_PRECISION: i128 = 1_000_000_000_000_000_000_000_000_000_000;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BinancePriceError {
     NetworkError(String),
-    HttpError(u16),
+    HttpError { status: u16, body: String },
     JsonError(String),
     PriceParseError(String),
 }
@@ -15,7 +15,13 @@ impl std::fmt::Display for BinancePriceError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::NetworkError(error) => write!(f, "Binance network error: {error}"),
-            Self::HttpError(status) => write!(f, "Binance returned HTTP {status}"),
+            Self::HttpError { status, body } => {
+                if body.is_empty() {
+                    write!(f, "Binance returned HTTP {status}")
+                } else {
+                    write!(f, "Binance returned HTTP {status}: {body}")
+                }
+            }
             Self::JsonError(error) => write!(f, "invalid Binance response: {error}"),
             Self::PriceParseError(error) => write!(f, "invalid Binance price: {error}"),
         }
@@ -65,7 +71,10 @@ pub fn parse_ticker_http_response(
     symbols: &[String],
 ) -> Result<Vec<(String, i128)>, BinancePriceError> {
     if status_code != 200 {
-        return Err(BinancePriceError::HttpError(status_code));
+        return Err(BinancePriceError::HttpError {
+            status: status_code,
+            body: crate::http::truncate_error_body(body),
+        });
     }
     parse_ticker_response_body(body, symbols)
 }
@@ -79,12 +88,16 @@ pub fn parse_ticker_http_result(
 }
 
 fn build_spot_price_url(symbols: &[String]) -> String {
+    build_spot_price_url_for(BINANCE_TICKER_PRICE_URL, symbols)
+}
+
+fn build_spot_price_url_for(base_url: &str, symbols: &[String]) -> String {
     if symbols.len() == 1 {
-        format!("{}?symbol={}", BINANCE_TICKER_PRICE_URL, symbols[0])
+        format!("{}?symbol={}", base_url, symbols[0])
     } else {
         format!(
             "{}?symbols={}",
-            BINANCE_TICKER_PRICE_URL,
+            base_url,
             serde_json::to_string(symbols).unwrap()
         )
     }
@@ -100,12 +113,7 @@ pub(crate) async fn fetch_spot_prices_with_url(
     base_url: &str,
     symbols: &[String],
 ) -> Result<Vec<(String, i128)>, BinancePriceError> {
-    let url = if symbols.len() == 1 {
-        format!("{}?symbol={}", base_url, symbols[0])
-    } else {
-        base_url.to_string()
-    };
-    let url = build_spot_price_url(symbols);
+    let url = build_spot_price_url_for(base_url, symbols);
     let response = crate::http::client()
         .get(&url)
         .send()
@@ -279,7 +287,10 @@ mod tests {
     fn parse_ticker_http_response_non_200_returns_error() {
         let symbols = vec!["BTCUSDT".to_string()];
         let err = parse_ticker_http_response(503, "[]", &symbols).unwrap_err();
-        assert_eq!(err, BinancePriceError::HttpError(503));
+        assert!(matches!(
+            err,
+            BinancePriceError::HttpError { status: 503, .. }
+        ));
     }
 
     #[test]
@@ -353,7 +364,10 @@ mod tests {
         let err = super::fetch_spot_prices_with_url(&server.uri(), &symbols)
             .await
             .unwrap_err();
-        assert_eq!(err, BinancePriceError::HttpError(404));
+        assert!(matches!(
+            err,
+            BinancePriceError::HttpError { status: 404, .. }
+        ));
     }
 
     #[tokio::test]
@@ -372,7 +386,12 @@ mod tests {
         let err = super::fetch_spot_prices_with_url(&server.uri(), &symbols)
             .await
             .unwrap_err();
-        assert_eq!(err, BinancePriceError::HttpError(500));
+        assert!(matches!(
+            err,
+            BinancePriceError::HttpError { status: 500, .. }
+        ));
+    }
+
     #[test]
     fn build_spot_price_url_includes_symbols_parameter_for_multiple_symbols() {
         let symbols = vec!["BTCUSDT".to_string(), "ETHUSDT".to_string()];

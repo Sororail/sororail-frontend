@@ -9,8 +9,6 @@ use crate::chain::scval;
 use crate::chain::tx_builder;
 use crate::state::{AppState, CachedPrice, FailedSubmission, KeeperExecution};
 
-const KEEPER_TX_FEE: u32 = 2_000_000;
-
 pub async fn run_keeper_loop(state: Arc<AppState>) {
     let mut ticker = interval(state.config.keeper_loop_interval);
     ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
@@ -331,7 +329,7 @@ async fn set_prices_on_chain(
         &state.config.oracle_contract_id,
         "set_prices",
         vec![prices_scval],
-        1_000_000,
+        state.config.set_prices_tx_fee,
         sequence,
     )?;
 
@@ -374,7 +372,7 @@ async fn execute_handler(
             )?),
             key_scval,
         ],
-        KEEPER_TX_FEE,
+        state.config.keeper_tx_fee,
         sequence,
     )?;
 

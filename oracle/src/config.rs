@@ -13,6 +13,10 @@ pub const DEFAULT_TESTNET_HORIZON_URL: &str = "https://horizon-testnet.stellar.o
 pub const DEFAULT_MAINNET_HORIZON_URL: &str = "https://horizon.stellar.org";
 pub const DEFAULT_PRICE_LOOP_MS: u64 = 1_000;
 pub const DEFAULT_KEEPER_LOOP_MS: u64 = 1_500;
+/// Default inclusion fee (stroops) for `set_prices` transactions.
+pub const DEFAULT_SET_PRICES_TX_FEE: u32 = 1_000_000;
+/// Default inclusion fee (stroops) for keeper handler transactions.
+pub const DEFAULT_KEEPER_TX_FEE: u32 = 2_000_000;
 
 /// Oracle-specific view of a token feed config.
 /// Re-exports fields from `TokenConfig` for backward compatibility with
@@ -80,6 +84,10 @@ pub struct Config {
     /// API key used to authenticate requests to the production Hermes endpoint.
     pub pyth_api_key: Option<SecretString>,
     pub min_keeper_balance_xlm: f64,
+    /// Inclusion fee (stroops) for oracle `set_prices` transactions.
+    pub set_prices_tx_fee: u32,
+    /// Inclusion fee (stroops) for keeper handler execute/freeze transactions.
+    pub keeper_tx_fee: u32,
     pub price_loop_interval: Duration,
     pub keeper_loop_interval: Duration,
     pub price_feed: PriceFeedConfig,
@@ -198,7 +206,7 @@ impl Config {
         };
 
         let price_feed = collect_or_default!(
-            load_price_feed_config(lookup("PRICE_FEED_CONFIG").as_deref()),
+            load_price_feed_config(lookup("PRICE_FEED_CONFIG").as_deref()).map_err(EnvError::from),
             PriceFeedConfig { tokens: vec![] }
         );
 
@@ -279,7 +287,7 @@ impl Config {
             .map(SecretString::new);
 
         let min_keeper_balance_xlm: f64 = collect_or_default!(
-            {
+            (|| {
                 let value: f64 = parse_or_default(
                     &mut lookup,
                     "MIN_KEEPER_BALANCE_XLM",
@@ -292,12 +300,48 @@ impl Config {
                     });
                 }
                 Ok(value)
-            },
+            })(),
             DEFAULT_MIN_KEEPER_BALANCE_XLM
         );
 
+        let set_prices_tx_fee: u32 = collect_or_default!(
+            (|| {
+                let fee: u32 = parse_or_default(
+                    &mut lookup,
+                    "SET_PRICES_TX_FEE",
+                    &DEFAULT_SET_PRICES_TX_FEE.to_string(),
+                )?;
+                if fee == 0 {
+                    return Err(EnvError::InvalidVar {
+                        var: "SET_PRICES_TX_FEE",
+                        reason: "must be greater than 0".to_string(),
+                    });
+                }
+                Ok(fee)
+            })(),
+            DEFAULT_SET_PRICES_TX_FEE
+        );
+
+        let keeper_tx_fee: u32 = collect_or_default!(
+            (|| {
+                let fee: u32 = parse_or_default(
+                    &mut lookup,
+                    "KEEPER_TX_FEE",
+                    &DEFAULT_KEEPER_TX_FEE.to_string(),
+                )?;
+                if fee == 0 {
+                    return Err(EnvError::InvalidVar {
+                        var: "KEEPER_TX_FEE",
+                        reason: "must be greater than 0".to_string(),
+                    });
+                }
+                Ok(fee)
+            })(),
+            DEFAULT_KEEPER_TX_FEE
+        );
+
         let price_loop_interval = collect_or_default!(
-            {
+            (|| {
                 let ms: u64 = parse_or_default(
                     &mut lookup,
                     "PRICE_LOOP_MS",
@@ -310,12 +354,12 @@ impl Config {
                     });
                 }
                 Ok(Duration::from_millis(ms))
-            },
+            })(),
             Duration::from_millis(DEFAULT_PRICE_LOOP_MS)
         );
 
         let keeper_loop_interval = collect_or_default!(
-            {
+            (|| {
                 let ms: u64 = parse_or_default(
                     &mut lookup,
                     "KEEPER_LOOP_MS",
@@ -328,7 +372,7 @@ impl Config {
                     });
                 }
                 Ok(Duration::from_millis(ms))
-            },
+            })(),
             Duration::from_millis(DEFAULT_KEEPER_LOOP_MS)
         );
 
@@ -356,6 +400,8 @@ impl Config {
             admin_api_token,
             pyth_api_key,
             min_keeper_balance_xlm,
+            set_prices_tx_fee,
+            keeper_tx_fee,
             price_loop_interval,
             keeper_loop_interval,
             price_feed,

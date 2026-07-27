@@ -6,7 +6,7 @@ pub const COINBASE_EXCHANGE_RATES_URL: &str =
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CoinbasePriceError {
     NetworkError(String),
-    HttpError(u16),
+    HttpError { status: u16, body: String },
     JsonError(String),
     PriceParseError(String),
     MissingUsdRate,
@@ -16,7 +16,13 @@ impl std::fmt::Display for CoinbasePriceError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::NetworkError(error) => write!(f, "Coinbase network error: {error}"),
-            Self::HttpError(status) => write!(f, "Coinbase returned HTTP {status}"),
+            Self::HttpError { status, body } => {
+                if body.is_empty() {
+                    write!(f, "Coinbase returned HTTP {status}")
+                } else {
+                    write!(f, "Coinbase returned HTTP {status}: {body}")
+                }
+            }
             Self::JsonError(error) => write!(f, "invalid Coinbase response: {error}"),
             Self::PriceParseError(error) => write!(f, "invalid Coinbase price: {error}"),
             Self::MissingUsdRate => f.write_str("Coinbase response has no USD rate"),
@@ -60,7 +66,10 @@ pub fn parse_coinbase_http_response(
     body: &str,
 ) -> Result<i128, CoinbasePriceError> {
     if status_code != 200 {
-        return Err(CoinbasePriceError::HttpError(status_code));
+        return Err(CoinbasePriceError::HttpError {
+            status: status_code,
+            body: crate::http::truncate_error_body(body),
+        });
     }
     parse_coinbase_response_body(body)
 }
@@ -152,7 +161,10 @@ mod tests {
     #[test]
     fn test_parse_coinbase_http_response_non_200() {
         let err = parse_coinbase_http_response(404, "{}").unwrap_err();
-        assert_eq!(err, CoinbasePriceError::HttpError(404));
+        assert!(matches!(
+            err,
+            CoinbasePriceError::HttpError { status: 404, .. }
+        ));
     }
 
     #[test]
@@ -376,7 +388,10 @@ mod tests {
         let err = super::fetch_spot_price_with_url(&base_url, "BTC")
             .await
             .unwrap_err();
-        assert_eq!(err, CoinbasePriceError::HttpError(404));
+        assert!(matches!(
+            err,
+            CoinbasePriceError::HttpError { status: 404, .. }
+        ));
     }
 
     #[tokio::test]
@@ -395,6 +410,9 @@ mod tests {
         let err = super::fetch_spot_price_with_url(&base_url, "BTC")
             .await
             .unwrap_err();
-        assert_eq!(err, CoinbasePriceError::HttpError(500));
+        assert!(matches!(
+            err,
+            CoinbasePriceError::HttpError { status: 500, .. }
+        ));
     }
 }

@@ -1,3 +1,5 @@
+use std::sync::atomic::{AtomicBool, Ordering};
+
 use crate::stellar_rpc::{get_account_balance_stroops, RpcError};
 
 /// 1 XLM expressed in stroops.
@@ -5,6 +7,10 @@ pub const XLM_IN_STROOPS: i64 = 10_000_000;
 
 /// Default minimum keeper balance: 10 XLM.
 pub const DEFAULT_MIN_KEEPER_BALANCE_XLM: f64 = 10.0;
+
+/// Tracks whether the keeper was already below the minimum so `/ready` probes
+/// do not re-emit `error!` on every poll for a sustained low-balance condition.
+static KEEPER_BALANCE_BELOW_MIN: AtomicBool = AtomicBool::new(false);
 
 pub struct KeeperBalanceConfig {
     pub horizon_url: String,
@@ -15,30 +21,49 @@ pub struct KeeperBalanceConfig {
 
 /// Check the keeper balance.  Returns the current balance in stroops.
 ///
-/// Logs a critical warning and optionally returns the balance even when below
-/// threshold so the caller can decide whether to skip submission.
+/// Logs `error!` only on the transition into the low-balance state (and
+/// `info!` on recovery). Subsequent checks while the balance remains low
+/// use `debug!` so readiness probes do not flood logs.
 pub async fn check_keeper_balance(cfg: &KeeperBalanceConfig) -> Result<i64, RpcError> {
     let stroops = get_account_balance_stroops(&cfg.horizon_url, &cfg.account_id).await?;
 
     let xlm = stroops as f64 / XLM_IN_STROOPS as f64;
     if xlm < cfg.min_balance_xlm {
-        tracing::error!(
-            balance_xlm = xlm,
-            min_balance_xlm = cfg.min_balance_xlm,
-            account_id = cfg.account_id,
-            "keeper balance below minimum"
-        );
+        let was_below = KEEPER_BALANCE_BELOW_MIN.swap(true, Ordering::Relaxed);
+        if was_below {
+            tracing::debug!(
+                balance_xlm = xlm,
+                min_balance_xlm = cfg.min_balance_xlm,
+                account_id = cfg.account_id,
+                "keeper balance still below minimum"
+            );
+        } else {
+            tracing::error!(
+                balance_xlm = xlm,
+                min_balance_xlm = cfg.min_balance_xlm,
+                account_id = cfg.account_id,
+                "keeper balance below minimum"
+            );
+        }
         return Err(RpcError::BalanceBelowMinimum {
             balance_xlm: xlm,
             min_xlm: cfg.min_balance_xlm,
         });
     }
 
-    tracing::info!(
-        balance_xlm = xlm,
-        min_balance_xlm = cfg.min_balance_xlm,
-        "keeper balance ok"
-    );
+    if KEEPER_BALANCE_BELOW_MIN.swap(false, Ordering::Relaxed) {
+        tracing::info!(
+            balance_xlm = xlm,
+            min_balance_xlm = cfg.min_balance_xlm,
+            "keeper balance recovered above minimum"
+        );
+    } else {
+        tracing::debug!(
+            balance_xlm = xlm,
+            min_balance_xlm = cfg.min_balance_xlm,
+            "keeper balance ok"
+        );
+    }
 
     Ok(stroops)
 }
