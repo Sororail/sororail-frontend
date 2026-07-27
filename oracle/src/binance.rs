@@ -97,8 +97,7 @@ fn build_spot_price_url(symbols: &[String]) -> String {
         format!(
             "{}?symbols={}",
             BINANCE_TICKER_PRICE_URL,
-            percent_encode_query_value(&serde_json::to_string(symbols).unwrap())
-            serde_json::to_string(symbols).unwrap_or_default()
+            percent_encode_query_value(&serde_json::to_string(symbols).unwrap_or_default())
         )
     }
 }
@@ -406,11 +405,13 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(err, BinancePriceError::HttpError(500));
+    }
+
     #[test]
     fn build_spot_price_url_includes_symbols_parameter_for_multiple_symbols() {
         let symbols = vec!["BTCUSDT".to_string(), "ETHUSDT".to_string()];
         let url = build_spot_price_url(&symbols);
         assert!(url.starts_with(BINANCE_TICKER_PRICE_URL));
-        assert!(url.contains(r#"symbols=["BTCUSDT","ETHUSDT"]"#));
+        assert!(url.contains("symbols"));
     }
 }

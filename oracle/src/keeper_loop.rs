@@ -415,6 +415,7 @@ async fn get_account_sequence(state: &Arc<AppState>) -> Result<u64, String> {
         || async { get_account_sequence_once(state).await },
         ACCOUNT_SEQUENCE_RETRY_ATTEMPTS,
         ACCOUNT_SEQUENCE_RETRY_BASE_DELAY_MS,
+        30_000,
     )
     .await
 }

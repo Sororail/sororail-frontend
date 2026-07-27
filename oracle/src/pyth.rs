@@ -194,6 +194,49 @@ pub async fn fetch_pyth_price(
     )
 }
 
+pub(crate) async fn fetch_pyth_price_with_url(
+    base_url: &str,
+    feed_id: &str,
+    stale_after_seconds: u64,
+    max_confidence_bps: u32,
+) -> Result<i128, PythPriceError> {
+    let query = format!("ids[]={feed_id}");
+    let url_string = format!("{base_url}?{query}");
+
+    let response = crate::http::client()
+        .get(&url_string)
+        .send()
+        .await
+        .map_err(|err| PythPriceError::NetworkError(err.to_string()))?;
+
+    let status = response.status().as_u16();
+    if status != 200 {
+        return Err(PythPriceError::HttpError(status));
+    }
+
+    let body = response
+        .text()
+        .await
+        .map_err(|err| PythPriceError::NetworkError(err.to_string()))?;
+
+    let hermes_response: HermesResponse =
+        serde_json::from_str(&body).map_err(|err| PythPriceError::JsonError(err.to_string()))?;
+    let feeds = match hermes_response {
+        HermesResponse::Array(feeds) => feeds,
+        HermesResponse::Wrapped(wrapped) => vec![wrapped.data],
+    };
+    let feed = feeds
+        .into_iter()
+        .find(|f| f.id == feed_id)
+        .ok_or_else(|| PythPriceError::MissingFeedId(feed_id.to_string()))?;
+    validate_pyth_price(
+        &feed.price,
+        crate::current_timestamp_secs(),
+        stale_after_seconds,
+        max_confidence_bps,
+    )
+}
+
 /// Fetches all requested feeds in a single Hermes request. The bearer token is
 /// optional during the migration period, but production deployments should set
 /// `PYTH_API_KEY` before authentication becomes mandatory.
@@ -623,6 +666,8 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(err, PythPriceError::HttpError(500));
+    }
+
     // #532 — array branch must match the requested feed_id, not blindly pop
     #[test]
     fn hermes_array_with_wrong_feed_id_returns_missing_feed_id_error() {
