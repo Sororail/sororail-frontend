@@ -170,7 +170,7 @@ async fn poll_until_confirmed(rpc_url: &str, hash: &str) -> Result<u32, SubmitEr
             }
             "FAILED" => {
                 let events = result.diagnostic_events_xdr.unwrap_or_default();
-                tracing::error!(hash, ?events, "transaction failed");
+                tracing::warn!(hash, ?events, "transaction failed");
                 return Err(SubmitError::TransactionFailed { events });
             }
             "PENDING" | "NOT_FOUND" => {

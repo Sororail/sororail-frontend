@@ -13,6 +13,26 @@ const KEEPER_TX_FEE: u32 = 2_000_000;
 const ACCOUNT_SEQUENCE_RETRY_ATTEMPTS: u32 = 3;
 const ACCOUNT_SEQUENCE_RETRY_BASE_DELAY_MS: u64 = 100;
 
+#[derive(Debug)]
+enum SequenceFetchError {
+    Network(String),
+    MissingOrInvalid(String),
+}
+
+impl std::fmt::Display for SequenceFetchError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Network(msg) | Self::MissingOrInvalid(msg) => write!(f, "{msg}"),
+        }
+    }
+}
+
+impl crate::retry::Retryable for SequenceFetchError {
+    fn is_retryable(&self) -> bool {
+        matches!(self, Self::Network(_))
+    }
+}
+
 pub async fn run_keeper_loop(state: Arc<AppState>) {
     let mut ticker = interval(state.config.keeper_loop_interval);
     ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
@@ -342,7 +362,7 @@ async fn set_prices_on_chain(
     let prices_vec: Vec<&CachedPrice> = prices.values().collect();
     let prices_scval = scval::encode_prices_vec(&prices_vec)?;
 
-    let sequence = get_account_sequence(state).await?;
+    let sequence = get_account_sequence(state).await.map_err(|e| e.to_string())?;
 
     let tx = tx_builder::build_invoke_tx(
         &state.config.keeper_account_id,
@@ -380,7 +400,7 @@ async fn execute_handler(
             .map_err(|e| format!("key bytes conversion failed: {e}"))?,
     ));
 
-    let sequence = get_account_sequence(state).await?;
+    let sequence = get_account_sequence(state).await.map_err(|e| e.to_string())?;
 
     let tx = tx_builder::build_invoke_tx(
         &state.config.keeper_account_id,
@@ -410,7 +430,7 @@ async fn execute_handler(
     Ok(format!("confirmed on ledger {ledger}"))
 }
 
-async fn get_account_sequence(state: &Arc<AppState>) -> Result<u64, String> {
+async fn get_account_sequence(state: &Arc<AppState>) -> Result<u64, SequenceFetchError> {
     crate::retry::retry_with_backoff(
         || async { get_account_sequence_once(state).await },
         ACCOUNT_SEQUENCE_RETRY_ATTEMPTS,
@@ -420,7 +440,7 @@ async fn get_account_sequence(state: &Arc<AppState>) -> Result<u64, String> {
     .await
 }
 
-async fn get_account_sequence_once(state: &Arc<AppState>) -> Result<u64, String> {
+async fn get_account_sequence_once(state: &Arc<AppState>) -> Result<u64, SequenceFetchError> {
     let rpc_url = &state.config.stellar_rpc_url;
     let account_id = &state.config.keeper_account_id;
 
@@ -437,26 +457,27 @@ async fn get_account_sequence_once(state: &Arc<AppState>) -> Result<u64, String>
         .json(&payload)
         .send()
         .await
-        .map_err(|e| format!("getAccount request failed: {e}"))?;
+        .map_err(|e| SequenceFetchError::Network(format!("getAccount request failed: {e}")))?;
 
     let response_json: serde_json::Value = response
         .json()
         .await
-        .map_err(|e| format!("Failed to parse getAccount response: {e}"))?;
+        .map_err(|e| SequenceFetchError::Network(format!("Failed to parse getAccount response: {e}")))?;
 
     if let Some(error) = response_json.get("error") {
-        return Err(format!("getAccount error: {error}"));
+        return Err(SequenceFetchError::Network(format!("getAccount error: {error}")));
     }
 
     let seq_str = response_json
         .get("result")
         .and_then(|r| r.get("sequence"))
         .and_then(|s| s.as_str())
-        .ok_or_else(|| "Missing sequence in getAccount response".to_string())?;
+        .ok_or_else(|| SequenceFetchError::MissingOrInvalid("Missing sequence in getAccount response".to_string()))?;
 
     seq_str
         .parse::<u64>()
-        .map_err(|e| format!("failed to parse sequence '{seq_str}': {e}"))
+        .map(|seq| seq + 1)
+        .map_err(|e| SequenceFetchError::MissingOrInvalid(format!("failed to parse sequence '{seq_str}': {e}")))
 }
 
 async fn simulate_contract_call(
