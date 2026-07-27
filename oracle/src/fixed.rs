@@ -131,6 +131,28 @@ mod tests {
         );
     }
 
+    // #571 — non-numeric parse failure must surface the raw input in the error
+    // message, not a synthetic "0" that would imply the value was a valid
+    // zero-price rather than an unparseable string.
+    #[test]
+    fn non_numeric_parse_error_display_names_raw_input_not_zero() {
+        let token = token_with_fixed_price(Some("not-a-number"));
+        let err = fixed_price(&token).unwrap_err();
+        assert!(
+            !matches!(err, FixedPriceError::MissingFixedPrice),
+            "non-numeric input must not produce MissingFixedPrice"
+        );
+        let msg = err.to_string();
+        assert!(
+            msg.contains("not-a-number"),
+            "error display must name the raw input; got: {msg}"
+        );
+        assert!(
+            !msg.contains(": 0"),
+            "error must not mislabel a non-numeric input as a zero-price; got: {msg}"
+        );
+    }
+
     // #370 — fixed_price parses the configured i128 string and returns it exactly
     #[test]
     fn issue_370_fixed_source_returns_configured_value() {

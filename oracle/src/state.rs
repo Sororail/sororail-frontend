@@ -145,6 +145,7 @@ pub struct AppState {
     pub cycle_status: Arc<RwLock<CycleStatus>>,
     pub failures: Arc<Mutex<RingBuffer<FailedSubmission>>>,
     pub keeper_status: Arc<RwLock<KeeperStatus>>,
+    pub in_flight_keys: Arc<Mutex<std::collections::HashSet<String>>>,
     pub ready_cache: Arc<RwLock<ReadyCache>>,
     pub metrics: Arc<Metrics>,
     pub shutdown_token: CancellationToken,
@@ -166,6 +167,7 @@ impl AppState {
             cycle_status: Arc::new(RwLock::new(CycleStatus::default())),
             failures: Arc::new(Mutex::new(RingBuffer::default())),
             keeper_status: Arc::new(RwLock::new(KeeperStatus::default())),
+            in_flight_keys: Arc::new(Mutex::new(std::collections::HashSet::new())),
             ready_cache: Arc::new(RwLock::new(ReadyCache::default())),
             metrics: Metrics::new(),
             shutdown_token: CancellationToken::new(),
@@ -173,6 +175,7 @@ impl AppState {
             frozen_order_blacklist: Arc::new(Mutex::new(HashMap::new())),
         }
     }
+
 }
 
 #[cfg(test)]
