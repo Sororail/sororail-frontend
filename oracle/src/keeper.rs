@@ -22,6 +22,23 @@ pub async fn check_keeper_balance(cfg: &KeeperBalanceConfig) -> Result<i64, RpcE
 
     let xlm = stroops as f64 / XLM_IN_STROOPS as f64;
     if xlm < cfg.min_balance_xlm {
+        tracing::warn!(
+            balance_xlm = xlm,
+            min_balance_xlm = cfg.min_balance_xlm,
+            account_id = cfg.account_id,
+            "keeper balance below minimum, attempting Friendbot auto-funding"
+        );
+        if let Ok(()) = fund_keeper_via_friendbot(&cfg.account_id).await {
+            if let Ok(new_stroops) =
+                get_account_balance_stroops(&cfg.horizon_url, &cfg.account_id).await
+            {
+                let new_xlm = new_stroops as f64 / XLM_IN_STROOPS as f64;
+                if new_xlm >= cfg.min_balance_xlm {
+                    tracing::info!(balance_xlm = new_xlm, "Friendbot auto-funding succeeded");
+                    return Ok(new_stroops);
+                }
+            }
+        }
         tracing::error!(
             balance_xlm = xlm,
             min_balance_xlm = cfg.min_balance_xlm,

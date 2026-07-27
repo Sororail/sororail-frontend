@@ -73,6 +73,38 @@ pub async fn ready(State(state): State<Arc<AppState>>) -> Result<Json<HealthResp
         }
     }
 
+    // Check cached external RPC and keeper balance readiness result (3s TTL)
+    {
+        let cache = state.ready_cache.read().await;
+        if let Some(last) = cache.last_checked {
+            if last.elapsed() < std::time::Duration::from_secs(3) {
+                if let Some((status, msg)) = cache.last_error {
+                    return Err(ApiError::new(status, msg));
+                }
+                return Ok(Json(HealthResponse { status: "ok" }));
+            }
+        }
+    }
+
+    let check_res = perform_external_ready_checks(&state).await;
+    {
+        let mut cache = state.ready_cache.write().await;
+        cache.last_checked = Some(std::time::Instant::now());
+        match check_res {
+            Ok(()) => {
+                cache.last_error = None;
+            }
+            Err(err) => {
+                cache.last_error = Some((err.status, err.message));
+                return Err(err);
+            }
+        }
+    }
+
+    Ok(Json(HealthResponse { status: "ok" }))
+}
+
+async fn perform_external_ready_checks(state: &AppState) -> Result<(), ApiError> {
     // Check RPC reachability
     let rpc_url = &state.config.stellar_rpc_url;
     let response = state
@@ -97,23 +129,19 @@ pub async fn ready(State(state): State<Arc<AppState>>) -> Result<Json<HealthResp
     };
 
     match crate::keeper::check_keeper_balance(&keeper_cfg).await {
-        Ok(_) => {}
-        Err(crate::stellar_rpc::RpcError::BalanceBelowMinimum { .. }) => {
-            return Err(ApiError::new(
-                StatusCode::SERVICE_UNAVAILABLE,
-                "keeper_balance_low",
-            ));
-        }
+        Ok(_) => Ok(()),
+        Err(crate::stellar_rpc::RpcError::BalanceBelowMinimum { .. }) => Err(ApiError::new(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "keeper_balance_low",
+        )),
         Err(error) => {
             tracing::warn!(error = %error, "keeper balance check failed");
-            return Err(ApiError::new(
+            Err(ApiError::new(
                 StatusCode::SERVICE_UNAVAILABLE,
                 "keeper_balance_check_failed",
-            ));
+            ))
         }
     }
-
-    Ok(Json(HealthResponse { status: "ok" }))
 }
 
 pub async fn prices(
