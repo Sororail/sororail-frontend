@@ -3,6 +3,9 @@
 /// Doubles the delay after every failure, starting at `base_delay_ms`.
 /// Returns `Ok(T)` on the first success, or the last `Err(E)` after all
 /// attempts are exhausted.
+///
+/// If `E` implements `Retryable` and returns `false` for `is_retryable()`,
+/// the error is returned immediately without further attempts.
 pub async fn retry_with_backoff<F, Fut, T, E>(
     mut f: F,
     max_attempts: u32,
@@ -11,7 +14,7 @@ pub async fn retry_with_backoff<F, Fut, T, E>(
 where
     F: FnMut() -> Fut,
     Fut: std::future::Future<Output = Result<T, E>>,
-    E: std::fmt::Debug,
+    E: std::fmt::Debug + Retryable,
 {
     assert!(
         max_attempts > 0,
@@ -24,7 +27,14 @@ where
         match f().await {
             Ok(val) => return Ok(val),
             Err(e) => {
-                log_retry_failure(attempt, max_attempts, &e);
+                let retryable = e.is_retryable();
+                log_retry_failure(attempt, max_attempts, &e, retryable);
+                
+                if !retryable {
+                    tracing::info!("non-retryable error encountered, aborting retry loop");
+                    return Err(e);
+                }
+                
                 last_err = Some(e);
                 if attempt < max_attempts {
                     sleep_ms(delay_ms).await;
@@ -37,8 +47,29 @@ where
     Err(last_err.expect("loop exhausted with max_attempts >= 1"))
 }
 
-fn log_retry_failure<E: std::fmt::Debug>(attempt: u32, max_attempts: u32, error: &E) {
-    tracing::warn!(attempt, max_attempts, error = ?error, "retry attempt failed");
+/// Trait to determine if an error should be retried.
+pub trait Retryable {
+    /// Returns true if this error represents a transient condition that may succeed on retry.
+    /// Returns false for permanent failures like config errors or parse errors.
+    fn is_retryable(&self) -> bool {
+        true // Default: all errors are retryable
+    }
+}
+
+// String errors are always retryable (legacy behavior)
+impl Retryable for String {}
+
+// str errors are always retryable (legacy behavior)
+impl Retryable for &str {}
+
+fn log_retry_failure<E: std::fmt::Debug>(attempt: u32, max_attempts: u32, error: &E, retryable: bool) {
+    tracing::warn!(
+        attempt,
+        max_attempts,
+        retryable,
+        error = ?error,
+        "retry attempt failed"
+    );
 }
 
 /// Async sleep for native tokio runtime.
