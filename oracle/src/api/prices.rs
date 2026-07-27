@@ -82,7 +82,7 @@ pub async fn ready(State(state): State<Arc<AppState>>) -> Result<Json<HealthResp
         let cache = state.ready_cache.read().await;
         if let Some(last) = cache.last_checked {
             if last.elapsed() < std::time::Duration::from_secs(3) {
-                if let Some((status, msg)) = cache.last_error {
+                if let Some((status, msg)) = cache.last_error.clone() {
                     return Err(ApiError::new(status, msg));
                 }
                 return Ok(Json(HealthResponse { status: "ok" }));
@@ -99,7 +99,7 @@ pub async fn ready(State(state): State<Arc<AppState>>) -> Result<Json<HealthResp
                 cache.last_error = None;
             }
             Err(err) => {
-                cache.last_error = Some((err.status, err.message));
+                cache.last_error = Some((err.status, err.message.clone()));
                 return Err(err);
             }
         }
@@ -140,20 +140,15 @@ async fn perform_external_ready_checks(state: &AppState) -> Result<(), ApiError>
                 "keeper_balance_low",
             ));
         }
-    match crate::keeper::check_keeper_balance(&keeper_cfg).await {
-        Ok(_) => Ok(()),
-        Err(crate::stellar_rpc::RpcError::BalanceBelowMinimum { .. }) => Err(ApiError::new(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "keeper_balance_low",
-        )),
         Err(error) => {
             tracing::warn!(error = %error, "keeper balance check failed");
-            Err(ApiError::new(
+            return Err(ApiError::new(
                 StatusCode::SERVICE_UNAVAILABLE,
                 "keeper_balance_check_failed",
-            ))
+            ));
         }
     }
+    Ok(())
 }
 
 async fn check_keeper_balance_for_ready(

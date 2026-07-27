@@ -145,7 +145,7 @@ impl Config {
                 match $expr {
                     Ok(val) => val,
                     Err(e) => {
-                        errors.push(e);
+                        errors.push(e.into());
                         $default
                     }
                 }
@@ -279,7 +279,7 @@ impl Config {
             .map(SecretString::new);
 
         let min_keeper_balance_xlm: f64 = collect_or_default!(
-            {
+            (|| {
                 let value: f64 = parse_or_default(
                     &mut lookup,
                     "MIN_KEEPER_BALANCE_XLM",
@@ -292,12 +292,12 @@ impl Config {
                     });
                 }
                 Ok(value)
-            },
+            })(),
             DEFAULT_MIN_KEEPER_BALANCE_XLM
         );
 
         let price_loop_interval = collect_or_default!(
-            {
+            (|| {
                 let ms: u64 = parse_or_default(
                     &mut lookup,
                     "PRICE_LOOP_MS",
@@ -310,12 +310,12 @@ impl Config {
                     });
                 }
                 Ok(Duration::from_millis(ms))
-            },
+            })(),
             Duration::from_millis(DEFAULT_PRICE_LOOP_MS)
         );
 
         let keeper_loop_interval = collect_or_default!(
-            {
+            (|| {
                 let ms: u64 = parse_or_default(
                     &mut lookup,
                     "KEEPER_LOOP_MS",
@@ -328,7 +328,7 @@ impl Config {
                     });
                 }
                 Ok(Duration::from_millis(ms))
-            },
+            })(),
             Duration::from_millis(DEFAULT_KEEPER_LOOP_MS)
         );
 
