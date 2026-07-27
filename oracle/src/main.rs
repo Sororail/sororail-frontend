@@ -15,7 +15,6 @@ async fn main() {
         Err(errors) => {
             for error in &errors.0 {
                 tracing::error!(%error, "configuration failed");
-                eprintln!("configuration error: {error}");
             }
             std::process::exit(1);
         }
@@ -30,7 +29,6 @@ async fn main() {
         Ok(listener) => listener,
         Err(error) => {
             tracing::error!(%error, %bind_addr, "failed to bind listener");
-            eprintln!("failed to bind {bind_addr}: {error}");
             std::process::exit(1);
         }
     };
@@ -55,7 +53,6 @@ async fn main() {
         Ok(Ok(())) => {}
         Ok(Err(error)) => {
             tracing::error!(%error, "server error");
-            eprintln!("server error: {error}");
             std::process::exit(1);
         }
         Err(_) => {
