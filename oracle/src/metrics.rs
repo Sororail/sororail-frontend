@@ -1,24 +1,38 @@
 use std::collections::BTreeMap;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
 
+/// All price-cycle and keeper-cycle counters, held behind a single mutex.
+///
+/// These fields used to be independent `AtomicU64`s, each updated with its
+/// own `Relaxed` store/fetch_add. A recording call touching several of them
+/// (e.g. `record_price_cycle` bumping the cycle count, latency, and both
+/// token-fetch totals) was therefore not atomic as a group: a concurrent
+/// reader could observe some fields from the new cycle and some from the
+/// old one. Grouping them behind one mutex makes every `record_*` call a
+/// single critical section, so readers always see one consistent
+/// generation (resolves #599).
+#[derive(Debug, Default)]
+struct Counters {
+    price_cycle_count: u64,
+    price_cycle_latency_ms: u64,
+    token_fetch_ok: u64,
+    token_fetch_failures: u64,
+    keeper_cycle_count: u64,
+    keeper_cycle_latency_ms: u64,
+    orders_executed: u64,
+    deposits_executed: u64,
+    withdrawals_executed: u64,
+    submit_failures: u64,
+    last_metrics_update: u64,
+}
+
 #[derive(Debug, Default)]
 pub struct Metrics {
-    pub price_cycle_count: AtomicU64,
-    pub price_cycle_latency_ms: AtomicU64,
-    pub token_fetch_ok: AtomicU64,
-    pub token_fetch_failures: AtomicU64,
-    pub keeper_cycle_count: AtomicU64,
-    pub keeper_cycle_latency_ms: AtomicU64,
-    pub orders_executed: AtomicU64,
-    pub deposits_executed: AtomicU64,
-    pub withdrawals_executed: AtomicU64,
-    pub submit_failures: AtomicU64,
-    pub last_metrics_update: AtomicU64,
+    counters: Mutex<Counters>,
     pub token_source_fetch_failures: Mutex<BTreeMap<TokenSourceLabels, u64>>,
 }
 
@@ -50,14 +64,12 @@ impl Metrics {
     }
 
     pub fn record_price_cycle(&self, latency_ms: u64, tokens_ok: usize, tokens_failed: usize) {
-        self.price_cycle_count.fetch_add(1, Ordering::Relaxed);
-        self.price_cycle_latency_ms
-            .store(latency_ms, Ordering::Relaxed);
-        self.token_fetch_ok
-            .fetch_add(tokens_ok as u64, Ordering::Relaxed);
-        self.token_fetch_failures
-            .fetch_add(tokens_failed as u64, Ordering::Relaxed);
-        self.update_timestamp();
+        let mut c = self.counters.lock().unwrap_or_else(|p| p.into_inner());
+        c.price_cycle_count += 1;
+        c.price_cycle_latency_ms = latency_ms;
+        c.token_fetch_ok += tokens_ok as u64;
+        c.token_fetch_failures += tokens_failed as u64;
+        Self::stamp(&mut c);
     }
 
     pub fn record_keeper_cycle(
@@ -68,23 +80,20 @@ impl Metrics {
         withdrawals: usize,
         errors: usize,
     ) {
-        self.keeper_cycle_count.fetch_add(1, Ordering::Relaxed);
-        self.keeper_cycle_latency_ms
-            .store(latency_ms, Ordering::Relaxed);
-        self.orders_executed
-            .fetch_add(orders as u64, Ordering::Relaxed);
-        self.deposits_executed
-            .fetch_add(deposits as u64, Ordering::Relaxed);
-        self.withdrawals_executed
-            .fetch_add(withdrawals as u64, Ordering::Relaxed);
-        self.submit_failures
-            .fetch_add(errors as u64, Ordering::Relaxed);
-        self.update_timestamp();
+        let mut c = self.counters.lock().unwrap_or_else(|p| p.into_inner());
+        c.keeper_cycle_count += 1;
+        c.keeper_cycle_latency_ms = latency_ms;
+        c.orders_executed += orders as u64;
+        c.deposits_executed += deposits as u64;
+        c.withdrawals_executed += withdrawals as u64;
+        c.submit_failures += errors as u64;
+        Self::stamp(&mut c);
     }
 
     pub fn record_submit_failure(&self) {
-        self.submit_failures.fetch_add(1, Ordering::Relaxed);
-        self.update_timestamp();
+        let mut c = self.counters.lock().unwrap_or_else(|p| p.into_inner());
+        c.submit_failures += 1;
+        Self::stamp(&mut c);
     }
 
     pub fn record_token_source_fetch_failure(&self, symbol: &str, token: &str, source: &str) {
@@ -99,41 +108,46 @@ impl Metrics {
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         *failures.entry(labels).or_insert(0) += 1;
         drop(failures);
-        self.update_timestamp();
+        let mut c = self.counters.lock().unwrap_or_else(|p| p.into_inner());
+        Self::stamp(&mut c);
     }
 
-    fn update_timestamp(&self) {
-        let timestamp = SystemTime::now()
+    /// Stamp the last-update time as part of the same locked critical
+    /// section as the counters it accompanies, instead of a separate
+    /// unsynchronized atomic store.
+    fn stamp(c: &mut Counters) {
+        c.last_metrics_update = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_secs())
             .unwrap_or(0);
-        self.last_metrics_update.store(timestamp, Ordering::Relaxed);
     }
 
     pub fn to_response(&self) -> MetricsResponse {
+        let c = self.counters.lock().unwrap_or_else(|p| p.into_inner());
         MetricsResponse {
-            price_cycle_count: self.price_cycle_count.load(Ordering::Relaxed),
-            price_cycle_latency_ms: self.price_cycle_latency_ms.load(Ordering::Relaxed),
-            token_fetch_ok: self.token_fetch_ok.load(Ordering::Relaxed),
-            token_fetch_failures: self.token_fetch_failures.load(Ordering::Relaxed),
-            keeper_cycle_count: self.keeper_cycle_count.load(Ordering::Relaxed),
-            keeper_cycle_latency_ms: self.keeper_cycle_latency_ms.load(Ordering::Relaxed),
-            orders_executed: self.orders_executed.load(Ordering::Relaxed),
-            deposits_executed: self.deposits_executed.load(Ordering::Relaxed),
-            withdrawals_executed: self.withdrawals_executed.load(Ordering::Relaxed),
-            submit_failures: self.submit_failures.load(Ordering::Relaxed),
-            last_metrics_update: self.last_metrics_update.load(Ordering::Relaxed),
+            price_cycle_count: c.price_cycle_count,
+            price_cycle_latency_ms: c.price_cycle_latency_ms,
+            token_fetch_ok: c.token_fetch_ok,
+            token_fetch_failures: c.token_fetch_failures,
+            keeper_cycle_count: c.keeper_cycle_count,
+            keeper_cycle_latency_ms: c.keeper_cycle_latency_ms,
+            orders_executed: c.orders_executed,
+            deposits_executed: c.deposits_executed,
+            withdrawals_executed: c.withdrawals_executed,
+            submit_failures: c.submit_failures,
+            last_metrics_update: c.last_metrics_update,
         }
     }
 
     pub fn to_prometheus(&self) -> String {
+        let c = self.counters.lock().unwrap_or_else(|p| p.into_inner());
         let mut output = String::new();
 
         output.push_str("# HELP oracle_price_cycle_count Total number of price cycles\n");
         output.push_str("# TYPE oracle_price_cycle_count counter\n");
         output.push_str(&format!(
             "oracle_price_cycle_count {}\n",
-            self.price_cycle_count.load(Ordering::Relaxed)
+            c.price_cycle_count
         ));
 
         output.push_str(
@@ -142,14 +156,14 @@ impl Metrics {
         output.push_str("# TYPE oracle_price_cycle_latency_ms gauge\n");
         output.push_str(&format!(
             "oracle_price_cycle_latency_ms {}\n",
-            self.price_cycle_latency_ms.load(Ordering::Relaxed)
+            c.price_cycle_latency_ms
         ));
 
         output.push_str("# HELP oracle_keeper_cycle_count Total number of keeper cycles\n");
         output.push_str("# TYPE oracle_keeper_cycle_count counter\n");
         output.push_str(&format!(
             "oracle_keeper_cycle_count {}\n",
-            self.keeper_cycle_count.load(Ordering::Relaxed)
+            c.keeper_cycle_count
         ));
 
         output.push_str(
@@ -158,21 +172,21 @@ impl Metrics {
         output.push_str("# TYPE oracle_keeper_cycle_latency_ms gauge\n");
         output.push_str(&format!(
             "oracle_keeper_cycle_latency_ms {}\n",
-            self.keeper_cycle_latency_ms.load(Ordering::Relaxed)
+            c.keeper_cycle_latency_ms
         ));
 
         output.push_str("# HELP oracle_orders_executed Total number of orders executed\n");
         output.push_str("# TYPE oracle_orders_executed counter\n");
         output.push_str(&format!(
             "oracle_orders_executed {}\n",
-            self.orders_executed.load(Ordering::Relaxed)
+            c.orders_executed
         ));
 
         output.push_str("# HELP oracle_deposits_executed Total number of deposits executed\n");
         output.push_str("# TYPE oracle_deposits_executed counter\n");
         output.push_str(&format!(
             "oracle_deposits_executed {}\n",
-            self.deposits_executed.load(Ordering::Relaxed)
+            c.deposits_executed
         ));
 
         output
@@ -180,21 +194,21 @@ impl Metrics {
         output.push_str("# TYPE oracle_withdrawals_executed counter\n");
         output.push_str(&format!(
             "oracle_withdrawals_executed {}\n",
-            self.withdrawals_executed.load(Ordering::Relaxed)
+            c.withdrawals_executed
         ));
 
         output.push_str("# HELP oracle_token_fetch_ok_total Total individual token fetch successes across all price cycles\n");
         output.push_str("# TYPE oracle_token_fetch_ok_total counter\n");
         output.push_str(&format!(
             "oracle_token_fetch_ok_total {}\n",
-            self.token_fetch_ok.load(Ordering::Relaxed)
+            c.token_fetch_ok
         ));
 
         output.push_str("# HELP oracle_token_fetch_failures_total Total individual token fetch failures across all price cycles\n");
         output.push_str("# TYPE oracle_token_fetch_failures_total counter\n");
         output.push_str(&format!(
             "oracle_token_fetch_failures_total {}\n",
-            self.token_fetch_failures.load(Ordering::Relaxed)
+            c.token_fetch_failures
         ));
 
         output.push_str("# HELP oracle_token_source_fetch_failures_total Total source fetch failures by configured token and source\n");
@@ -218,14 +232,14 @@ impl Metrics {
         output.push_str("# TYPE oracle_submit_failures counter\n");
         output.push_str(&format!(
             "oracle_submit_failures {}\n",
-            self.submit_failures.load(Ordering::Relaxed)
+            c.submit_failures
         ));
 
         output.push_str("# HELP oracle_last_metrics_update Timestamp of last metrics update\n");
         output.push_str("# TYPE oracle_last_metrics_update gauge\n");
         output.push_str(&format!(
             "oracle_last_metrics_update {}\n",
-            self.last_metrics_update.load(Ordering::Relaxed)
+            c.last_metrics_update
         ));
 
         output
