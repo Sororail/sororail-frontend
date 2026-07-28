@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use crate::retry::Retryable;
 
 use crate::stellar_rpc::{rpc_post, RpcError};
 
@@ -158,9 +159,35 @@ async fn poll_until_confirmed(rpc_url: &str, hash: &str) -> Result<u32, SubmitEr
         })
         .map_err(|e| SubmitError::JsonError(e.to_string()))?;
 
-        let body = rpc_post(rpc_url, payload).await.map_err(SubmitError::Rpc)?;
+        // Call RPC and parse response, but route transient RPC/network errors
+        // through the same backoff/retry path used for PENDING/NOT_FOUND so
+        // a single transient blip doesn't abort the whole poll.
+        let body = match rpc_post(rpc_url, payload).await {
+            Ok(b) => b,
+            Err(rpc_err) => {
+                // Map to SubmitError for logging/returning when non-retryable.
+                if rpc_err.is_retryable() {
+                    tracing::warn!(hash, ?rpc_err, attempt, "transient RPC/network error; will retry");
+                    sleep_ms(backoff_ms).await;
+                    backoff_ms = (backoff_ms * 2).min(30_000);
+                    continue;
+                } else {
+                    return Err(SubmitError::Rpc(rpc_err));
+                }
+            }
+        };
 
-        let result = parse_get_transaction_response(&body)?;
+        let result = match parse_get_transaction_response(&body) {
+            Ok(r) => r,
+            Err(e) => match e {
+                // Propagate non-retryable parse/RPC faults immediately.
+                SubmitError::Rpc(rpc_err) => return Err(SubmitError::Rpc(rpc_err)),
+                SubmitError::JsonError(_) => return Err(e),
+                // Any other SubmitError variants shouldn't occur here, but
+                // treat them as non-retryable and return.
+                _ => return Err(e),
+            },
+        };
 
         match result.status.as_str() {
             "SUCCESS" => {

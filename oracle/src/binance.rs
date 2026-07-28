@@ -173,16 +173,25 @@ pub fn parse_price_to_precision(raw: &str) -> Result<i128, BinancePriceError> {
         )));
     }
 
+    // Validate that whole and fractional parts contain only ASCII digits.
+    if !whole.chars().all(|c| c.is_ascii_digit()) {
+        return Err(BinancePriceError::PriceParseError(format!("invalid whole part: {text}")));
+    }
+    if !frac.chars().all(|c| c.is_ascii_digit()) && !frac.is_empty() {
+        return Err(BinancePriceError::PriceParseError(format!("invalid fractional part: {text}")));
+    }
+
     let whole_val = whole
         .parse::<i128>()
         .map_err(|_| BinancePriceError::PriceParseError(format!("invalid whole part: {text}")))?;
 
     let scale_digits = 30usize;
-    let normalized_frac = if frac.len() >= scale_digits {
-        frac[..scale_digits].to_string()
+    // Use UTF-8-safe char iteration to take at most `scale_digits` digits.
+    let normalized_frac = if frac.chars().count() >= scale_digits {
+        frac.chars().take(scale_digits).collect::<String>()
     } else {
         let mut padded = frac.to_string();
-        while padded.len() < scale_digits {
+        while padded.chars().count() < scale_digits {
             padded.push('0');
         }
         padded
