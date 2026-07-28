@@ -221,19 +221,15 @@ async fn two_consecutive_good_cycles_both_update_last_updated() {
     let state = test_state(&mock.uri(), vec![fixed_token("USDC", USDC_ADDR)]);
 
     run_price_cycle(Arc::clone(&state)).await;
-    let first = state.price_cache.read().await.last_updated;
+    let first = state.price_cache.read().await.last_updated.expect("first timestamp must be set");
 
     // Small yield so SystemTime::now() can advance.
     tokio::time::sleep(Duration::from_millis(5)).await;
 
     run_price_cycle(Arc::clone(&state)).await;
-    let second = state.price_cache.read().await.last_updated;
+    let second = state.price_cache.read().await.last_updated.expect("second timestamp must be set");
 
-    assert!(first.is_some() && second.is_some());
-    assert!(
-        second >= first,
-        "last_updated from the second cycle must be >= the first"
-    );
+    assert!(second > first, "last_updated from the second cycle must be strictly greater than the first");
 }
 
 #[tokio::test]
