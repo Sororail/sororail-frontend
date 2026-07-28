@@ -3,8 +3,9 @@ use sha2::{Digest, Sha256};
 use stellar_xdr::{
     DecoratedSignature, InvokeContractArgs, InvokeHostFunctionOp, Limits, Memo, Operation,
     OperationBody, Preconditions, ScSymbol, ScVal, SequenceNumber, Signature, SignatureHint,
-    Transaction, TransactionEnvelope, TransactionExt, TransactionSignaturePayload,
-    TransactionSignaturePayloadTaggedTransaction, TransactionV1Envelope, VecM, WriteXdr,
+    SorobanTransactionData, Transaction, TransactionEnvelope, TransactionExt,
+    TransactionSignaturePayload, TransactionSignaturePayloadTaggedTransaction,
+    TransactionV1Envelope, VecM, WriteXdr,
 };
 
 use crate::chain::scval::{account_strkey_to_muxed, strkey_to_sc_address};
@@ -16,6 +17,7 @@ pub fn build_invoke_tx(
     args: Vec<ScVal>,
     fee: u32,
     sequence: u64,
+    soroban_data: Option<SorobanTransactionData>,
 ) -> Result<Transaction, String> {
     let source_muxed = account_strkey_to_muxed(source_account)?;
     let contract_addr = strkey_to_sc_address(contract_id)?;
@@ -46,6 +48,11 @@ pub fn build_invoke_tx(
         .try_into()
         .map_err(|e| format!("failed to build operations VecM: {e}"))?;
 
+    let ext = match soroban_data {
+        Some(data) => TransactionExt::V1(data),
+        None => TransactionExt::V0,
+    };
+
     Ok(Transaction {
         source_account: source_muxed,
         fee,
@@ -53,7 +60,7 @@ pub fn build_invoke_tx(
         cond: Preconditions::None,
         memo: Memo::None,
         operations,
-        ext: TransactionExt::V0,
+        ext,
     })
 }
 
@@ -163,6 +170,7 @@ mod tests {
             vec![ScVal::Void],
             100,
             1,
+            None,
         )
         .unwrap();
 
@@ -182,6 +190,7 @@ mod tests {
             vec![ScVal::Void],
             100,
             1,
+            None,
         )
         .unwrap();
 
@@ -208,6 +217,7 @@ mod tests {
             vec![ScVal::Void],
             100,
             1,
+            None,
         );
         assert!(err.is_err());
     }
