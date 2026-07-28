@@ -537,6 +537,7 @@ async fn set_prices_on_chain(
         vec![prices_scval],
         1_000_000,
         sequence,
+        None,
     )?;
 
     let signed_xdr = tx_builder::sign_transaction(
@@ -580,6 +581,7 @@ async fn execute_handler(
         ],
         KEEPER_TX_FEE,
         sequence,
+        None,
     )?;
 
     let signed_xdr = tx_builder::sign_transaction(
@@ -693,7 +695,14 @@ async fn simulate_contract_call(
         .map_err(|e| format!("Failed to parse RPC response: {e}"))?;
 
     if let Some(error) = response_json.get("error") {
-        return Err(format!("Simulation error: {error}"));
+        let error_str = error.to_string();
+        // Truncate large RPC error bodies to prevent log-pipeline back-pressure.
+        let preview = if error_str.len() > 512 {
+            format!("{}…", &error_str[..512])
+        } else {
+            error_str
+        };
+        return Err(format!("Simulation error: {preview}"));
     }
 
     let result = response_json

@@ -53,14 +53,16 @@ pub async fn health(State(state): State<Arc<AppState>>) -> Json<HealthResponse> 
         .and_then(|t| t.elapsed().ok())
         .map(|d| d.as_secs());
 
+    let metrics_snapshot = metrics.to_response();
+
     Json(HealthResponse {
         status: "ok",
         last_price_cycle_secs_ago,
         last_keeper_cycle_secs_ago,
-        price_cycle_count: metrics.price_cycle_count.load(std::sync::atomic::Ordering::Relaxed),
-        keeper_cycle_count: metrics.keeper_cycle_count.load(std::sync::atomic::Ordering::Relaxed),
-        token_fetch_failures: metrics.token_fetch_failures.load(std::sync::atomic::Ordering::Relaxed),
-        submit_failures: metrics.submit_failures.load(std::sync::atomic::Ordering::Relaxed),
+        price_cycle_count: metrics_snapshot.price_cycle_count,
+        keeper_cycle_count: metrics_snapshot.keeper_cycle_count,
+        token_fetch_failures: metrics_snapshot.token_fetch_failures,
+        submit_failures: metrics_snapshot.submit_failures,
     })
 }
 
@@ -116,7 +118,16 @@ pub async fn ready(State(state): State<Arc<AppState>>) -> Result<Json<HealthResp
                 if let Some((status, msg)) = cache.last_error.clone() {
                     return Err(ApiError::new(status, msg));
                 }
-                return Ok(Json(HealthResponse { status: "ok" }));
+                let snapshot = state.metrics.to_response();
+                return Ok(Json(HealthResponse {
+                    status: "ok",
+                    last_price_cycle_secs_ago: None,
+                    last_keeper_cycle_secs_ago: None,
+                    price_cycle_count: snapshot.price_cycle_count,
+                    keeper_cycle_count: snapshot.keeper_cycle_count,
+                    token_fetch_failures: snapshot.token_fetch_failures,
+                    submit_failures: snapshot.submit_failures,
+                }));
             }
         }
     }
@@ -136,7 +147,16 @@ pub async fn ready(State(state): State<Arc<AppState>>) -> Result<Json<HealthResp
         }
     }
 
-    Ok(Json(HealthResponse { status: "ok" }))
+    let snapshot = state.metrics.to_response();
+    Ok(Json(HealthResponse {
+        status: "ok",
+        last_price_cycle_secs_ago: None,
+        last_keeper_cycle_secs_ago: None,
+        price_cycle_count: snapshot.price_cycle_count,
+        keeper_cycle_count: snapshot.keeper_cycle_count,
+        token_fetch_failures: snapshot.token_fetch_failures,
+        submit_failures: snapshot.submit_failures,
+    }))
 }
 
 async fn perform_external_ready_checks(state: &AppState) -> Result<(), ApiError> {

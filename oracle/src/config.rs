@@ -392,7 +392,14 @@ where
     T: std::str::FromStr,
     T::Err: fmt::Display,
 {
-    let raw = lookup(var).unwrap_or_else(|| default.to_string());
+    // Treat a set-but-empty (or whitespace-only) value the same as absent,
+    // consistent with required() and required_any(). This prevents a
+    // config-management tool that renders unset template variables as KEY=
+    // from producing a confusing parse error instead of falling back to
+    // the default.
+    let raw = lookup(var)
+        .filter(|v| !v.trim().is_empty())
+        .unwrap_or_else(|| default.to_string());
     raw.parse::<T>().map_err(|err| EnvError::InvalidVar {
         var,
         reason: err.to_string(),
@@ -615,6 +622,27 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    /// Closes #562: empty-string env var should fall back to default,
+    /// consistent with required()/required_any() treating empty as unset.
+    #[test]
+    fn parse_or_default_uses_default_when_empty_string() {
+        let mut env = HashMap::new();
+        env.insert("TEST_VAR".to_string(), "".to_string());
+        let result =
+            parse_or_default::<u64>(&mut |key| env.get(key).cloned(), "TEST_VAR", "10").unwrap();
+        assert_eq!(result, 10);
+    }
+
+    /// Closes #562: whitespace-only env var should also fall back to default.
+    #[test]
+    fn parse_or_default_uses_default_when_whitespace_only() {
+        let mut env = HashMap::new();
+        env.insert("TEST_VAR".to_string(), "   ".to_string());
+        let result =
+            parse_or_default::<u64>(&mut |key| env.get(key).cloned(), "TEST_VAR", "10").unwrap();
+        assert_eq!(result, 10);
     }
 
     #[test]
