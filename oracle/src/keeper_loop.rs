@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 
-use tokio::time::{interval, MissedTickBehavior};
+use tokio::time::{interval, timeout, MissedTickBehavior};
 use tracing::{error, info, warn};
 
 use crate::chain::scval;
@@ -12,6 +12,8 @@ use crate::state::{AppState, CachedPrice, FailedSubmission, KeeperExecution, MAX
 const KEEPER_TX_FEE: u32 = 2_000_000;
 const ACCOUNT_SEQUENCE_RETRY_ATTEMPTS: u32 = 3;
 const ACCOUNT_SEQUENCE_RETRY_BASE_DELAY_MS: u64 = 100;
+/// Hard cap on a single keeper cycle — closes #490.
+const KEEPER_CYCLE_TIMEOUT_SECS: u64 = 50;
 
 pub async fn run_keeper_loop(state: Arc<AppState>) {
     let mut ticker = interval(state.config.keeper_loop_interval);
@@ -36,7 +38,16 @@ pub async fn run_keeper_cycle(state: Arc<AppState>) -> Result<CycleSummary, Stri
         status.keeper_cycle_running = true;
     }
 
-    let result = execute_keeper_cycle(Arc::clone(&state)).await;
+    let result = timeout(
+        Duration::from_secs(KEEPER_CYCLE_TIMEOUT_SECS),
+        execute_keeper_cycle(Arc::clone(&state)),
+    )
+    .await
+    .unwrap_or_else(|_| {
+        Err(format!(
+            "keeper cycle exceeded {KEEPER_CYCLE_TIMEOUT_SECS}s budget"
+        ))
+    });
 
     {
         let mut status = state.cycle_status.write().await;
@@ -149,8 +160,7 @@ async fn execute_keeper_cycle(state: Arc<AppState>) -> Result<CycleSummary, Stri
     };
 
     for order_key in &order_keys {
-        // Skip keys that have been permanently abandoned after repeated
-        // freeze failures — retrying would burn fee attempts forever (#498).
+        // Skip permanently blacklisted orders — retrying burns fee attempts (#498).
         {
             let blacklist = state.frozen_order_blacklist.lock().await;
             if blacklist.contains_key(order_key.as_str()) {
@@ -163,6 +173,12 @@ async fn execute_keeper_cycle(state: Arc<AppState>) -> Result<CycleSummary, Stri
                 continue;
             }
         }
+        // Skip keys whose prior submission is still in-flight — closes #491
+        if state.in_flight_keys.lock().await.contains(order_key) {
+            info!(key = %order_key, "skipping_in_flight_order_key");
+            continue;
+        }
+        state.in_flight_keys.lock().await.insert(order_key.clone());
 
         match execute_handler(
             &state,
@@ -173,6 +189,7 @@ async fn execute_keeper_cycle(state: Arc<AppState>) -> Result<CycleSummary, Stri
         .await
         {
             Ok(tx_hash) => {
+                state.in_flight_keys.lock().await.remove(order_key);
                 summary.orders_executed += 1;
                 // Clear any accumulated freeze-failure count on success.
                 state.freeze_failure_counts.lock().await.remove(order_key.as_str());
@@ -186,7 +203,29 @@ async fn execute_keeper_cycle(state: Arc<AppState>) -> Result<CycleSummary, Stri
                 )
                 .await;
             }
+            Err(ref error) if is_poll_timeout(error) => {
+                // Tx may still confirm on-chain; retain in-flight to prevent re-submission.
+                warn!(key = %order_key, %error, "order_poll_timeout_key_remains_in_flight");
+                summary.errors += 1;
+                record_error(
+                    &state,
+                    &format!("execute_order:{}", order_key),
+                    error,
+                    None,
+                )
+                .await;
+                record_execution(
+                    &state,
+                    "execute_order",
+                    order_key,
+                    None,
+                    false,
+                    Some(error.clone()),
+                )
+                .await;
+            }
             Err(error) => {
+                state.in_flight_keys.lock().await.remove(order_key);
                 summary.errors += 1;
                 warn!(key = %order_key, %error, "order_execution_failed");
 
@@ -263,6 +302,12 @@ async fn execute_keeper_cycle(state: Arc<AppState>) -> Result<CycleSummary, Stri
     }
 
     for deposit_key in &deposit_keys {
+        if state.in_flight_keys.lock().await.contains(deposit_key) {
+            info!(key = %deposit_key, "skipping_in_flight_deposit_key");
+            continue;
+        }
+        state.in_flight_keys.lock().await.insert(deposit_key.clone());
+
         match execute_handler(
             &state,
             &state.config.deposit_handler_contract_id,
@@ -272,6 +317,7 @@ async fn execute_keeper_cycle(state: Arc<AppState>) -> Result<CycleSummary, Stri
         .await
         {
             Ok(tx_hash) => {
+                state.in_flight_keys.lock().await.remove(deposit_key);
                 summary.deposits_executed += 1;
                 record_execution(
                     &state,
@@ -283,7 +329,28 @@ async fn execute_keeper_cycle(state: Arc<AppState>) -> Result<CycleSummary, Stri
                 )
                 .await;
             }
+            Err(ref error) if is_poll_timeout(error) => {
+                warn!(key = %deposit_key, %error, "deposit_poll_timeout_key_remains_in_flight");
+                summary.errors += 1;
+                record_error(
+                    &state,
+                    &format!("execute_deposit:{}", deposit_key),
+                    error,
+                    None,
+                )
+                .await;
+                record_execution(
+                    &state,
+                    "execute_deposit",
+                    deposit_key,
+                    None,
+                    false,
+                    Some(error.clone()),
+                )
+                .await;
+            }
             Err(error) => {
+                state.in_flight_keys.lock().await.remove(deposit_key);
                 summary.errors += 1;
                 warn!(key = %deposit_key, %error, "deposit_execution_failed");
                 record_error(
@@ -307,6 +374,12 @@ async fn execute_keeper_cycle(state: Arc<AppState>) -> Result<CycleSummary, Stri
     }
 
     for withdrawal_key in &withdrawal_keys {
+        if state.in_flight_keys.lock().await.contains(withdrawal_key) {
+            info!(key = %withdrawal_key, "skipping_in_flight_withdrawal_key");
+            continue;
+        }
+        state.in_flight_keys.lock().await.insert(withdrawal_key.clone());
+
         match execute_handler(
             &state,
             &state.config.withdrawal_handler_contract_id,
@@ -316,6 +389,7 @@ async fn execute_keeper_cycle(state: Arc<AppState>) -> Result<CycleSummary, Stri
         .await
         {
             Ok(tx_hash) => {
+                state.in_flight_keys.lock().await.remove(withdrawal_key);
                 summary.withdrawals_executed += 1;
                 record_execution(
                     &state,
@@ -327,7 +401,28 @@ async fn execute_keeper_cycle(state: Arc<AppState>) -> Result<CycleSummary, Stri
                 )
                 .await;
             }
+            Err(ref error) if is_poll_timeout(error) => {
+                warn!(key = %withdrawal_key, %error, "withdrawal_poll_timeout_key_remains_in_flight");
+                summary.errors += 1;
+                record_error(
+                    &state,
+                    &format!("execute_withdrawal:{}", withdrawal_key),
+                    error,
+                    None,
+                )
+                .await;
+                record_execution(
+                    &state,
+                    "execute_withdrawal",
+                    withdrawal_key,
+                    None,
+                    false,
+                    Some(error.clone()),
+                )
+                .await;
+            }
             Err(error) => {
+                state.in_flight_keys.lock().await.remove(withdrawal_key);
                 summary.errors += 1;
                 warn!(key = %withdrawal_key, %error, "withdrawal_execution_failed");
                 record_error(
@@ -351,6 +446,10 @@ async fn execute_keeper_cycle(state: Arc<AppState>) -> Result<CycleSummary, Stri
     }
 
     Ok(summary)
+}
+
+fn is_poll_timeout(error: &str) -> bool {
+    error.contains("not confirmed after")
 }
 
 async fn get_pending_keys(
