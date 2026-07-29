@@ -145,7 +145,7 @@ impl Config {
                 match $expr {
                     Ok(val) => val,
                     Err(e) => {
-                        errors.push(e);
+                        errors.push(e.into());
                         $default
                     }
                 }
@@ -279,7 +279,7 @@ impl Config {
             .map(SecretString::new);
 
         let min_keeper_balance_xlm: f64 = collect_or_default!(
-            {
+            (|| {
                 let value: f64 = parse_or_default(
                     &mut lookup,
                     "MIN_KEEPER_BALANCE_XLM",
@@ -292,12 +292,12 @@ impl Config {
                     });
                 }
                 Ok(value)
-            },
+            })(),
             DEFAULT_MIN_KEEPER_BALANCE_XLM
         );
 
         let price_loop_interval = collect_or_default!(
-            {
+            (|| {
                 let ms: u64 = parse_or_default(
                     &mut lookup,
                     "PRICE_LOOP_MS",
@@ -310,12 +310,12 @@ impl Config {
                     });
                 }
                 Ok(Duration::from_millis(ms))
-            },
+            })(),
             Duration::from_millis(DEFAULT_PRICE_LOOP_MS)
         );
 
         let keeper_loop_interval = collect_or_default!(
-            {
+            (|| {
                 let ms: u64 = parse_or_default(
                     &mut lookup,
                     "KEEPER_LOOP_MS",
@@ -328,7 +328,7 @@ impl Config {
                     });
                 }
                 Ok(Duration::from_millis(ms))
-            },
+            })(),
             Duration::from_millis(DEFAULT_KEEPER_LOOP_MS)
         );
 
@@ -392,7 +392,14 @@ where
     T: std::str::FromStr,
     T::Err: fmt::Display,
 {
-    let raw = lookup(var).unwrap_or_else(|| default.to_string());
+    // Treat a set-but-empty (or whitespace-only) value the same as absent,
+    // consistent with required() and required_any(). This prevents a
+    // config-management tool that renders unset template variables as KEY=
+    // from producing a confusing parse error instead of falling back to
+    // the default.
+    let raw = lookup(var)
+        .filter(|v| !v.trim().is_empty())
+        .unwrap_or_else(|| default.to_string());
     raw.parse::<T>().map_err(|err| EnvError::InvalidVar {
         var,
         reason: err.to_string(),
@@ -525,9 +532,53 @@ pub fn parse_price_feed_config(raw: &str) -> Result<PriceFeedConfig, ConfigError
                 ),
             });
         }
+        // Warn when min_sources is too low to enable meaningful cross-source
+        // deviation checks: a single responding source passes any price through
+        // with no outlier protection (#503).
+        if token.sources.len() >= 2 && token.min_sources * 2 <= token.sources.len() {
+            tracing::warn!(
+                symbol = %token.symbol,
+                min_sources = token.min_sources,
+                sources = token.sources.len(),
+                "min_sources is less than half the configured sources — \
+                 a single source can push a price without cross-source validation"
+            );
+        }
     }
 
     Ok(PriceFeedConfig { tokens })
+}
+
+#[cfg(test)]
+impl Config {
+    /// Minimal Config with dummy values — for unit tests that need an AppState
+    /// but don't exercise any network or crypto paths.
+    pub fn default_for_tests() -> Self {
+        Self {
+            bind_addr: "127.0.0.1:0".parse().unwrap(),
+            network: Network::Testnet,
+            network_passphrase: "Test SDF Network ; September 2015".to_string(),
+            stellar_rpc_url: "http://localhost:8000".to_string(),
+            horizon_url: "http://localhost:8001".to_string(),
+            oracle_contract_id: String::new(),
+            role_store_contract_id: String::new(),
+            data_store_contract_id: String::new(),
+            order_handler_contract_id: String::new(),
+            deposit_handler_contract_id: String::new(),
+            withdrawal_handler_contract_id: String::new(),
+            reader_contract_id: String::new(),
+            keeper_private_key: SecretString::new(String::new()),
+            keeper_secret_key: SecretString::new(String::new()),
+            keeper_account_id: String::new(),
+            keeper_index: 0,
+            admin_api_token: None,
+            pyth_api_key: None,
+            min_keeper_balance_xlm: 1.0,
+            price_loop_interval: std::time::Duration::from_secs(10),
+            keeper_loop_interval: std::time::Duration::from_secs(10),
+            price_feed: PriceFeedConfig { tokens: vec![] },
+        }
+    }
 }
 
 #[cfg(test)]
@@ -571,6 +622,27 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    /// Closes #562: empty-string env var should fall back to default,
+    /// consistent with required()/required_any() treating empty as unset.
+    #[test]
+    fn parse_or_default_uses_default_when_empty_string() {
+        let mut env = HashMap::new();
+        env.insert("TEST_VAR".to_string(), "".to_string());
+        let result =
+            parse_or_default::<u64>(&mut |key| env.get(key).cloned(), "TEST_VAR", "10").unwrap();
+        assert_eq!(result, 10);
+    }
+
+    /// Closes #562: whitespace-only env var should also fall back to default.
+    #[test]
+    fn parse_or_default_uses_default_when_whitespace_only() {
+        let mut env = HashMap::new();
+        env.insert("TEST_VAR".to_string(), "   ".to_string());
+        let result =
+            parse_or_default::<u64>(&mut |key| env.get(key).cloned(), "TEST_VAR", "10").unwrap();
+        assert_eq!(result, 10);
     }
 
     #[test]

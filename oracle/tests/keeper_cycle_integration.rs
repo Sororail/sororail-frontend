@@ -29,7 +29,7 @@ async fn empty_price_cache_returns_error_and_no_rpc_calls() {
     let mock_server = MockServer::start().await;
     let rpc_url = mock_server.uri();
 
-    let config = test_config(&rpc_url);
+    let config = test_config(&rpc_url, "http://127.0.0.1:9");
     let state = Arc::new(AppState::new(config));
 
     // Don't populate the price cache — leave it empty.
@@ -622,7 +622,7 @@ async fn keeper_cycle_rejects_non_hex_order_key() {
 
 /// Helper: state with one cached price pointing at the mock RPC.
 fn state_with_price(rpc_url: &str) -> Arc<AppState> {
-    let config = test_config(rpc_url);
+    let config = test_config(rpc_url, "http://127.0.0.1:9");
     let state = Arc::new(AppState::new(config));
     // Pre-populate the price cache so the cycle reaches get_account_sequence.
     // We do this synchronously via a blocking write; tests are single-threaded

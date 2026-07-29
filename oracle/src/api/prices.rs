@@ -18,9 +18,19 @@ pub struct FailedSubmissionsQuery {
     pub limit: Option<usize>,
 }
 
+// #497 — extended health response exposes last-cycle timestamps and failure
+// counts so staleness or failure streaks are detectable without grepping logs.
 #[derive(Debug, Serialize)]
 pub struct HealthResponse {
     pub status: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_price_cycle_secs_ago: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_keeper_cycle_secs_ago: Option<u64>,
+    pub price_cycle_count: u64,
+    pub keeper_cycle_count: u64,
+    pub token_fetch_failures: u64,
+    pub submit_failures: u64,
 }
 
 #[derive(Debug, Serialize)]
@@ -29,8 +39,29 @@ pub struct FailuresResponse {
     pub total_count: usize,
 }
 
-pub async fn health() -> Json<HealthResponse> {
-    Json(HealthResponse { status: "ok" })
+pub async fn health(State(state): State<Arc<AppState>>) -> Json<HealthResponse> {
+    let cycle = state.cycle_status.read().await;
+    let metrics = state.metrics.to_response();
+
+    let last_price_cycle_secs_ago = cycle
+        .last_price_cycle_at
+        .and_then(|t| t.elapsed().ok())
+        .map(|d| d.as_secs());
+
+    let last_keeper_cycle_secs_ago = cycle
+        .last_keeper_cycle_at
+        .and_then(|t| t.elapsed().ok())
+        .map(|d| d.as_secs());
+
+    Json(HealthResponse {
+        status: "ok",
+        last_price_cycle_secs_ago,
+        last_keeper_cycle_secs_ago,
+        price_cycle_count: metrics.price_cycle_count,
+        keeper_cycle_count: metrics.keeper_cycle_count,
+        token_fetch_failures: metrics.token_fetch_failures,
+        submit_failures: metrics.submit_failures,
+    })
 }
 
 pub async fn ready(State(state): State<Arc<AppState>>) -> Result<Json<HealthResponse>, ApiError> {
@@ -78,14 +109,23 @@ pub async fn ready(State(state): State<Arc<AppState>>) -> Result<Json<HealthResp
     }
 
     // Check cached external RPC and keeper balance readiness result (3s TTL)
+    let metrics = state.metrics.to_response();
     {
         let cache = state.ready_cache.read().await;
         if let Some(last) = cache.last_checked {
             if last.elapsed() < std::time::Duration::from_secs(3) {
-                if let Some((status, msg)) = cache.last_error {
+                if let Some((status, msg)) = cache.last_error.clone() {
                     return Err(ApiError::new(status, msg));
                 }
-                return Ok(Json(HealthResponse { status: "ok" }));
+                return Ok(Json(HealthResponse {
+                    status: "ok",
+                    last_price_cycle_secs_ago: None,
+                    last_keeper_cycle_secs_ago: None,
+                    price_cycle_count: metrics.price_cycle_count,
+                    keeper_cycle_count: metrics.keeper_cycle_count,
+                    token_fetch_failures: metrics.token_fetch_failures,
+                    submit_failures: metrics.submit_failures,
+                }));
             }
         }
     }
@@ -99,13 +139,22 @@ pub async fn ready(State(state): State<Arc<AppState>>) -> Result<Json<HealthResp
                 cache.last_error = None;
             }
             Err(err) => {
-                cache.last_error = Some((err.status, err.message));
+                cache.last_error = Some((err.status, err.message.clone()));
                 return Err(err);
             }
         }
     }
 
-    Ok(Json(HealthResponse { status: "ok" }))
+    let metrics = state.metrics.to_response();
+    Ok(Json(HealthResponse {
+        status: "ok",
+        last_price_cycle_secs_ago: None,
+        last_keeper_cycle_secs_ago: None,
+        price_cycle_count: metrics.price_cycle_count,
+        keeper_cycle_count: metrics.keeper_cycle_count,
+        token_fetch_failures: metrics.token_fetch_failures,
+        submit_failures: metrics.submit_failures,
+    }))
 }
 
 async fn perform_external_ready_checks(state: &AppState) -> Result<(), ApiError> {
@@ -140,20 +189,15 @@ async fn perform_external_ready_checks(state: &AppState) -> Result<(), ApiError>
                 "keeper_balance_low",
             ));
         }
-    match crate::keeper::check_keeper_balance(&keeper_cfg).await {
-        Ok(_) => Ok(()),
-        Err(crate::stellar_rpc::RpcError::BalanceBelowMinimum { .. }) => Err(ApiError::new(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "keeper_balance_low",
-        )),
         Err(error) => {
             tracing::warn!(error = %error, "keeper balance check failed");
-            Err(ApiError::new(
+            return Err(ApiError::new(
                 StatusCode::SERVICE_UNAVAILABLE,
                 "keeper_balance_check_failed",
-            ))
+            ));
         }
     }
+    Ok(())
 }
 
 async fn check_keeper_balance_for_ready(
@@ -227,11 +271,24 @@ pub async fn failed_submissions(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{AppState, Config};
+
+    fn test_state() -> Arc<AppState> {
+        let config = Arc::new(Config::default_for_tests());
+        Arc::new(AppState::new(config))
+    }
 
     // #339 — GET /health must return 200 with {"status":"ok"}, no auth required
+    // #497 — health now also surfaces cycle timestamps and failure counters
     #[tokio::test]
     async fn health_returns_status_ok() {
-        let Json(body) = health().await;
+        let state = test_state();
+        let Json(body) = health(State(state)).await;
         assert_eq!(body.status, "ok");
+        // No cycles have run yet — counts are zero and timestamps are absent
+        assert_eq!(body.price_cycle_count, 0);
+        assert_eq!(body.keeper_cycle_count, 0);
+        assert!(body.last_price_cycle_secs_ago.is_none());
+        assert!(body.last_keeper_cycle_secs_ago.is_none());
     }
 }

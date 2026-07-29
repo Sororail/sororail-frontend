@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use oracle::{api, AppState, Config};
 use tokio::net::TcpListener;
+use tokio_util::sync::CancellationToken;
 use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
@@ -14,7 +15,6 @@ async fn main() {
         Err(errors) => {
             for error in &errors.0 {
                 tracing::error!(%error, "configuration failed");
-                eprintln!("configuration error: {error}");
             }
             std::process::exit(1);
         }
@@ -29,7 +29,6 @@ async fn main() {
         Ok(listener) => listener,
         Err(error) => {
             tracing::error!(%error, %bind_addr, "failed to bind listener");
-            eprintln!("failed to bind {bind_addr}: {error}");
             std::process::exit(1);
         }
     };
@@ -43,7 +42,7 @@ async fn main() {
         "oracle server listening"
     );
 
-    let shutdown_token = CancellationToken::new();
+    let shutdown_token = state.shutdown_token.clone();
     let server_future =
         axum::serve(listener, app).with_graceful_shutdown(shutdown_signal(shutdown_token.clone()));
 
@@ -54,7 +53,6 @@ async fn main() {
         Ok(Ok(())) => {}
         Ok(Err(error)) => {
             tracing::error!(%error, "server error");
-            eprintln!("server error: {error}");
             std::process::exit(1);
         }
         Err(_) => {
@@ -78,7 +76,7 @@ fn init_tracing() {
         .init();
 }
 
-async fn shutdown_signal() {
+async fn shutdown_signal(token: CancellationToken) {
     let ctrl_c = async {
         if let Err(error) = tokio::signal::ctrl_c().await {
             tracing::error!(%error, "failed to install SIGINT handler");
@@ -106,4 +104,6 @@ async fn shutdown_signal() {
         _ = ctrl_c => tracing::info!("received SIGINT"),
         _ = terminate => tracing::info!("received SIGTERM"),
     }
+
+    token.cancel();
 }
