@@ -100,9 +100,8 @@ async fn fund_keeper_at(base_url: &str, account_id: &str) -> Result<(), String> 
         .map_err(|e| format!("Friendbot fetch failed: {e}"))?;
 
     let status = response.status().as_u16();
-    // 200 = funded; 400 = account already exists (idempotent — treat as success)
-    if status == 200 || status == 400 {
-        tracing::info!(account_id, status, "Friendbot response accepted");
+    if status == 200 {
+        tracing::info!(account_id, status, "Friendbot response accepted (newly funded)");
         return Ok(());
     }
 
@@ -110,6 +109,12 @@ async fn fund_keeper_at(base_url: &str, account_id: &str) -> Result<(), String> 
         .text()
         .await
         .unwrap_or_else(|_| "(unreadable body)".to_string());
+
+    if status == 400 && body.contains("createAccountAlreadyExist") {
+        tracing::info!(account_id, status, "Friendbot response accepted (already funded)");
+        return Ok(());
+    }
+
     Err(format!(
         "Friendbot returned {status} for {account_id}: {body}"
     ))
@@ -256,6 +261,15 @@ mod tests {
         assert!(result.is_ok());
     }
 
+    /// Verifies that an unrelated 400 response from Friendbot is treated as an error.
+    #[tokio::test]
+    async fn fund_keeper_via_friendbot_unrelated_400_returns_err() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(
+                ResponseTemplate::new(400).set_body_string(
+                    r#"{"detail":"invalid_field","status":400,"title":"Transaction Failed"}"#,
+                ),
     /// Verifies that a non-200/400 response (e.g. 500) returns an error
     /// containing both the status code and the response body.
     /// Closes #526.
@@ -270,6 +284,11 @@ mod tests {
             .mount(&server)
             .await;
 
+        let result = super::fund_keeper_at(&server.uri(), "GNEWACCOUNT").await;
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err();
+        assert!(err_msg.contains("Friendbot returned 400"));
+        assert!(err_msg.contains("invalid_field"));
         let err = super::fund_keeper_at(&server.uri(), "GKEEPER")
             .await
             .unwrap_err();
