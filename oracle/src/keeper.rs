@@ -270,6 +270,16 @@ mod tests {
                 ResponseTemplate::new(400).set_body_string(
                     r#"{"detail":"invalid_field","status":400,"title":"Transaction Failed"}"#,
                 ),
+    /// Verifies that a non-200/400 response (e.g. 500) returns an error
+    /// containing both the status code and the response body.
+    /// Closes #526.
+    #[tokio::test]
+    async fn fund_keeper_via_friendbot_500_returns_error_with_status_and_body() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(
+                ResponseTemplate::new(500)
+                    .set_body_string(r#"{"detail":"internal server error"}"#),
             )
             .mount(&server)
             .await;
@@ -279,5 +289,37 @@ mod tests {
         let err_msg = result.unwrap_err();
         assert!(err_msg.contains("Friendbot returned 400"));
         assert!(err_msg.contains("invalid_field"));
+        let err = super::fund_keeper_at(&server.uri(), "GKEEPER")
+            .await
+            .unwrap_err();
+
+        assert!(err.contains("500"), "error should contain status code, got: {err}");
+        assert!(
+            err.contains("internal server error"),
+            "error should contain response body, got: {err}"
+        );
+    }
+
+    /// Verifies that a 429 (rate-limited) response surfaces the body for debugging.
+    /// Closes #526.
+    #[tokio::test]
+    async fn fund_keeper_via_friendbot_429_returns_error_with_status_and_body() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(
+                ResponseTemplate::new(429).set_body_string(r#"{"error":"rate limited"}"#),
+            )
+            .mount(&server)
+            .await;
+
+        let err = super::fund_keeper_at(&server.uri(), "GKEEPER")
+            .await
+            .unwrap_err();
+
+        assert!(err.contains("429"), "error should contain status code, got: {err}");
+        assert!(
+            err.contains("rate limited"),
+            "error should contain response body, got: {err}"
+        );
     }
 }

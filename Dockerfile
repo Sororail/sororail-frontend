@@ -13,6 +13,9 @@ RUN apt-get update && apt-get install -y \
 COPY Cargo.toml Cargo.lock ./
 COPY shared/config ./shared/config
 COPY oracle ./oracle
+# config/tokens.json is embedded via include_str! at compile time and must
+# be present in the builder stage before cargo build runs (#502).
+COPY config ./config
 
 # Build the binary
 RUN cargo build --release --bin oracle

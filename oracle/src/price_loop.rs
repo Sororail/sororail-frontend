@@ -188,6 +188,7 @@ async fn build_cached_price(
                 sources.push(source.clone());
             }
             Err(error) => {
+                let error_str = error.to_string();
                 state.metrics.record_token_source_fetch_failure(
                     &token.symbol,
                     &token.stellar_address,
@@ -228,6 +229,7 @@ async fn fetch_source_with_retry(
         || async { fetch_source_price(source, token, pyth_api_key, pyth_prices).await },
         SOURCE_RETRY_ATTEMPTS,
         SOURCE_RETRY_BASE_DELAY_MS,
+        30_000,
     )
     .await
 }
@@ -489,7 +491,7 @@ mod tests {
         };
 
         let state = test_state(token.clone());
-        let cached = build_cached_price(&state, &token, 123).await.unwrap();
+        let cached = build_cached_price(&state, &token, 123, &std::collections::HashMap::new()).await.unwrap();
         let configured_price = token.fixed_price.as_ref().unwrap().parse::<i128>().unwrap();
         let spread = configured_price * token.max_deviation_bps as i128 / 10_000;
 

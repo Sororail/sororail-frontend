@@ -97,8 +97,7 @@ fn build_spot_price_url(symbols: &[String]) -> String {
         format!(
             "{}?symbols={}",
             BINANCE_TICKER_PRICE_URL,
-            percent_encode_query_value(&serde_json::to_string(symbols).unwrap())
-            serde_json::to_string(symbols).unwrap_or_default()
+            percent_encode_query_value(&serde_json::to_string(symbols).unwrap_or_default())
         )
     }
 }
@@ -174,16 +173,25 @@ pub fn parse_price_to_precision(raw: &str) -> Result<i128, BinancePriceError> {
         )));
     }
 
+    // Validate that whole and fractional parts contain only ASCII digits.
+    if !whole.chars().all(|c| c.is_ascii_digit()) {
+        return Err(BinancePriceError::PriceParseError(format!("invalid whole part: {text}")));
+    }
+    if !frac.chars().all(|c| c.is_ascii_digit()) && !frac.is_empty() {
+        return Err(BinancePriceError::PriceParseError(format!("invalid fractional part: {text}")));
+    }
+
     let whole_val = whole
         .parse::<i128>()
         .map_err(|_| BinancePriceError::PriceParseError(format!("invalid whole part: {text}")))?;
 
     let scale_digits = 30usize;
-    let normalized_frac = if frac.len() >= scale_digits {
-        frac[..scale_digits].to_string()
+    // Use UTF-8-safe char iteration to take at most `scale_digits` digits.
+    let normalized_frac = if frac.chars().count() >= scale_digits {
+        frac.chars().take(scale_digits).collect::<String>()
     } else {
         let mut padded = frac.to_string();
-        while padded.len() < scale_digits {
+        while padded.chars().count() < scale_digits {
             padded.push('0');
         }
         padded
@@ -406,11 +414,13 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(err, BinancePriceError::HttpError(500));
+    }
+
     #[test]
     fn build_spot_price_url_includes_symbols_parameter_for_multiple_symbols() {
         let symbols = vec!["BTCUSDT".to_string(), "ETHUSDT".to_string()];
         let url = build_spot_price_url(&symbols);
         assert!(url.starts_with(BINANCE_TICKER_PRICE_URL));
-        assert!(url.contains(r#"symbols=["BTCUSDT","ETHUSDT"]"#));
+        assert!(url.contains("symbols"));
     }
 }

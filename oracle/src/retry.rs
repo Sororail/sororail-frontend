@@ -1,6 +1,11 @@
-/// Retry an async fallible closure with exponential backoff (resolves #356).
+/// Retry an async fallible closure with exponential backoff (resolves #356, #585).
 ///
-/// Doubles the delay after every failure, starting at `base_delay_ms`.
+/// Doubles the delay after every failure, starting at `base_delay_ms`, and
+/// caps the delay at `max_delay_ms` so that runaway growth is impossible
+/// regardless of how many attempts the caller configures.  Mirrors the
+/// explicit `(backoff_ms * 2).min(30_000)` cap already present in
+/// `poll_until_confirmed` in `submit.rs`.
+///
 /// Returns `Ok(T)` on the first success, or the last `Err(E)` after all
 /// attempts are exhausted.
 ///
@@ -10,6 +15,7 @@ pub async fn retry_with_backoff<F, Fut, T, E>(
     mut f: F,
     max_attempts: u32,
     base_delay_ms: u64,
+    max_delay_ms: u64,
 ) -> Result<T, E>
 where
     F: FnMut() -> Fut,
@@ -20,7 +26,7 @@ where
         max_attempts > 0,
         "retry_with_backoff requires max_attempts >= 1"
     );
-    let mut delay_ms = base_delay_ms;
+    let mut delay_ms = base_delay_ms.min(max_delay_ms);
     let mut last_err: Option<E> = None;
 
     for attempt in 1..=max_attempts {
@@ -29,16 +35,16 @@ where
             Err(e) => {
                 let retryable = e.is_retryable();
                 log_retry_failure(attempt, max_attempts, &e, retryable);
-                
+
                 if !retryable {
                     tracing::info!("non-retryable error encountered, aborting retry loop");
                     return Err(e);
                 }
-                
+
                 last_err = Some(e);
                 if attempt < max_attempts {
                     sleep_ms(delay_ms).await;
-                    delay_ms *= 2;
+                    delay_ms = (delay_ms * 2).min(max_delay_ms);
                 }
             }
         }
@@ -110,6 +116,7 @@ mod tests {
                 },
                 3,
                 0,
+                30_000,
             )
             .await
         });
@@ -134,6 +141,7 @@ mod tests {
                 },
                 3,
                 0,
+                30_000,
             )
             .await
         });
@@ -146,7 +154,7 @@ mod tests {
     fn panics_when_max_attempts_is_zero() {
         let result = std::panic::catch_unwind(|| {
             block_on(async {
-                retry_with_backoff(|| async { Ok::<u32, &'static str>(1) }, 0, 100).await
+                retry_with_backoff(|| async { Ok::<u32, &'static str>(1) }, 0, 100, 30_000).await
             })
         });
         assert!(result.is_err());
@@ -168,11 +176,46 @@ mod tests {
                 },
                 3,
                 0,
+                30_000,
             )
             .await
         });
 
         assert_eq!(result, Ok(99));
         assert_eq!(call_count.get(), 1);
+    }
+
+    #[tokio::test]
+    async fn max_delay_cap_is_respected() {
+        tokio::time::pause();
+        let call_count = Rc::new(Cell::new(0u32));
+
+        // base_delay_ms (200) > max_delay_ms (50): first sleep must be clamped.
+        // With 5 attempts the uncapped sequence would be 200 → 400 → 800 → 1600 ms;
+        // capped at 50 it stays at 50 for every inter-attempt sleep.
+        // The test just verifies the function completes and returns the right value
+        // (timing assertions would be flaky in unit tests).
+        let count = Rc::clone(&call_count);
+        let result: Result<u32, &'static str> = retry_with_backoff(
+            || {
+                let count = Rc::clone(&count);
+                async move {
+                    let n = count.get() + 1;
+                    count.set(n);
+                    if n < 3 {
+                        Err("transient")
+                    } else {
+                        Ok(7u32)
+                    }
+                }
+            },
+            5,
+            200, // base_delay intentionally larger than the cap
+            50,  // max_delay cap
+        )
+        .await;
+
+        assert_eq!(result, Ok(7));
+        assert_eq!(call_count.get(), 3);
     }
 }

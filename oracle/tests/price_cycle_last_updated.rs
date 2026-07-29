@@ -147,7 +147,7 @@ async fn last_updated_is_recent_after_successful_cycle() {
 }
 
 #[tokio::test]
-async fn last_updated_unchanged_when_second_cycle_all_fail() {
+async fn last_updated_unchanged_after_failed_cycle() {
     let mock = MockServer::start().await;
     Mock::given(method("POST"))
         .respond_with(ResponseTemplate::new(200).set_body_json(ledger_ok()))
@@ -155,19 +155,26 @@ async fn last_updated_unchanged_when_second_cycle_all_fail() {
         .await;
 
     // Cycle 1: USDC succeeds → last_updated set.
-    let state = test_state(&mock.uri(), vec![fixed_token("USDC", USDC_ADDR)]);
-    run_price_cycle(Arc::clone(&state)).await;
+    let state_success = test_state(&mock.uri(), vec![fixed_token("USDC", USDC_ADDR)]);
+    run_price_cycle(Arc::clone(&state_success)).await;
 
-    let after_first = state.price_cache.read().await.last_updated;
-    assert!(after_first.is_some());
+    let after_first = state_success.price_cache.read().await.last_updated;
+    assert!(after_first.is_some(), "first successful cycle must set last_updated");
 
-    // Simulate a second cycle: forcibly change the token list isn't possible at runtime,
-    // but we can verify the timestamp was set correctly after the first good cycle.
-    // The conditional guard `if tokens_ok > 0` protects it.
-    let after_second = state.price_cache.read().await.last_updated;
+    // Cycle 2: all tokens fail. Carry forward the previous timestamp into a fresh
+    // state so we can verify that a failing cycle does not overwrite it.
+    let state_fail = test_state(&mock.uri(), vec![bad_token("FAILONLY", FAIL1_ADDR)]);
+    {
+        let mut cache = state_fail.price_cache.write().await;
+        cache.last_updated = after_first;
+    }
+
+    run_price_cycle(Arc::clone(&state_fail)).await;
+
+    let after_second = state_fail.price_cache.read().await.last_updated;
     assert_eq!(
         after_first, after_second,
-        "last_updated must not change between reads when no new cycle ran"
+        "last_updated must remain unchanged after a cycle where all tokens fail"
     );
 }
 
@@ -221,19 +228,15 @@ async fn two_consecutive_good_cycles_both_update_last_updated() {
     let state = test_state(&mock.uri(), vec![fixed_token("USDC", USDC_ADDR)]);
 
     run_price_cycle(Arc::clone(&state)).await;
-    let first = state.price_cache.read().await.last_updated;
+    let first = state.price_cache.read().await.last_updated.expect("first timestamp must be set");
 
     // Small yield so SystemTime::now() can advance.
     tokio::time::sleep(Duration::from_millis(5)).await;
 
     run_price_cycle(Arc::clone(&state)).await;
-    let second = state.price_cache.read().await.last_updated;
+    let second = state.price_cache.read().await.last_updated.expect("second timestamp must be set");
 
-    assert!(first.is_some() && second.is_some());
-    assert!(
-        second >= first,
-        "last_updated from the second cycle must be >= the first"
-    );
+    assert!(second > first, "last_updated from the second cycle must be strictly greater than the first");
 }
 
 #[tokio::test]

@@ -40,6 +40,7 @@ pub fn test_config(rpc_url: &str, horizon_url: &str) -> Arc<Config> {
         price_loop_interval: Duration::from_millis(1000),
         keeper_loop_interval: Duration::from_millis(1500),
         price_feed: PriceFeedConfig { tokens: vec![] },
+        pyth_api_key: None,
     })
 }
 
@@ -112,6 +113,7 @@ pub fn test_state(rpc_url: &str, tokens: Vec<TokenConfig>) -> Arc<AppState> {
         price_loop_interval: Duration::from_millis(1000),
         keeper_loop_interval: Duration::from_millis(1000),
         price_feed: PriceFeedConfig { tokens },
+        pyth_api_key: None,
     });
     Arc::new(AppState::new(config))
 }
