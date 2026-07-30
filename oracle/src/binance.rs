@@ -90,6 +90,9 @@ pub fn parse_ticker_http_result(
     parse_ticker_http_response(status_code, &body, symbols)
 }
 
+// Only exercised by the URL-shape tests below; the live fetch path builds its
+// query through reqwest instead.
+#[cfg(test)]
 fn build_spot_price_url(symbols: &[String]) -> String {
     if symbols.len() == 1 {
         format!("{}?symbol={}", BINANCE_TICKER_PRICE_URL, symbols[0])
@@ -102,6 +105,7 @@ fn build_spot_price_url(symbols: &[String]) -> String {
     }
 }
 
+#[cfg(test)]
 fn percent_encode_query_value(value: &str) -> String {
     const HEX: &[u8; 16] = b"0123456789ABCDEF";
     let mut encoded = String::with_capacity(value.len());
@@ -175,10 +179,14 @@ pub fn parse_price_to_precision(raw: &str) -> Result<i128, BinancePriceError> {
 
     // Validate that whole and fractional parts contain only ASCII digits.
     if !whole.chars().all(|c| c.is_ascii_digit()) {
-        return Err(BinancePriceError::PriceParseError(format!("invalid whole part: {text}")));
+        return Err(BinancePriceError::PriceParseError(format!(
+            "invalid whole part: {text}"
+        )));
     }
     if !frac.chars().all(|c| c.is_ascii_digit()) && !frac.is_empty() {
-        return Err(BinancePriceError::PriceParseError(format!("invalid fractional part: {text}")));
+        return Err(BinancePriceError::PriceParseError(format!(
+            "invalid fractional part: {text}"
+        )));
     }
 
     let whole_val = whole

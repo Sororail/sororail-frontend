@@ -161,7 +161,9 @@ pub fn parse_token_configs(raw: &str) -> Result<Vec<TokenConfig>, ConfigError> {
                 "binance" => {
                     if let Some(ref sym) = token.binance_symbol {
                         if sym.is_empty()
-                            || !sym.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+                            || !sym
+                                .chars()
+                                .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
                         {
                             return Err(ConfigError::InvalidToken {
                                 symbol: token.symbol.clone(),
@@ -173,7 +175,9 @@ pub fn parse_token_configs(raw: &str) -> Result<Vec<TokenConfig>, ConfigError> {
                 "coinbase" => {
                     if let Some(ref sym) = token.coinbase_symbol {
                         if sym.is_empty()
-                            || !sym.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+                            || !sym
+                                .chars()
+                                .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
                         {
                             return Err(ConfigError::InvalidToken {
                                 symbol: token.symbol.clone(),
