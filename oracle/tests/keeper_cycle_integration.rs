@@ -24,6 +24,12 @@ fn test_cached_price() -> CachedPrice {
     }
 }
 
+/// Deterministic 64-hex transaction hash for the `nth` submission a test's mock
+/// RPC answers, so `getTransaction` can be routed per submission.
+fn submission_hash(nth: usize) -> String {
+    format!("{nth:0>64}")
+}
+
 #[tokio::test]
 async fn empty_price_cache_returns_error_and_no_rpc_calls() {
     let mock_server = MockServer::start().await;
@@ -123,14 +129,13 @@ async fn mock_rpc_rpc_failure_continues() {
 
     let result = oracle::keeper_loop::run_keeper_cycle(Arc::clone(&state)).await;
 
-    assert!(result.is_err(), "keeper cycle should fail on RPC error");
-    let err = result.err().unwrap();
-    assert!(
-        err.contains("RPC")
-            || err.contains("request failed")
-            || err.contains("parse")
-            || err.contains("status")
-    );
+    // A failing pending-work lookup is logged and skipped rather than aborting
+    // the cycle, so the keeper keeps running across transient RPC outages.
+    let summary = result.expect("keeper cycle should survive an RPC failure");
+    assert_eq!(summary.orders_executed, 0);
+    assert_eq!(summary.deposits_executed, 0);
+    assert_eq!(summary.withdrawals_executed, 0);
+    assert_eq!(summary.errors, 0);
 }
 
 #[tokio::test]
@@ -405,8 +410,12 @@ async fn keeper_cycle_freezes_order_when_budget_exceeded_and_freeze_succeeds() {
     let mock_server = MockServer::start().await;
     let rpc_url = mock_server.uri();
 
+    // sendTransaction hands back a distinct hash per submission so getTransaction
+    // can tell set_prices, execute_order and freeze_order apart.
+    let submissions = Arc::new(AtomicUsize::new(0));
+
     wiremock::Mock::given(wiremock::matchers::method("POST"))
-        .respond_with(|req: &Request| {
+        .respond_with(move |req: &Request| {
             let body: serde_json::Value = serde_json::from_slice(&req.body).unwrap();
             let method = body["method"].as_str().unwrap_or("");
 
@@ -455,30 +464,28 @@ async fn keeper_cycle_freezes_order_when_budget_exceeded_and_freeze_succeeds() {
                     }))
                 }
                 "sendTransaction" => {
+                    let nth = submissions.fetch_add(1, Ordering::SeqCst);
+                    // 0 = set_prices, 1 = execute_order, 2 = freeze_order
                     ResponseTemplate::new(200).set_body_json(serde_json::json!({
                         "jsonrpc": "2.0", "id": 1,
-                        "result": {
-                            "status": "PENDING",
-                            "hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-                        }
+                        "result": { "status": "PENDING", "hash": submission_hash(nth) }
                     }))
                 }
                 "getTransaction" => {
                     let body_obj: serde_json::Value = serde_json::from_slice(&req.body).unwrap();
                     let tx_hash = body_obj["params"]["hash"].as_str().unwrap_or("");
 
-                    // First call returns error with "Budget, ExceededLimit"
-                    // Second call (from freeze_order) returns success
-                    if tx_hash == "aabbccdd00112233aabbccdd00112233aabbccdd00112233aabbccdd00112233" {
+                    // The execute_order submission (the second one) fails with a
+                    // budget overrun; that is what drives the keeper into the
+                    // freeze path. set_prices and freeze_order both succeed.
+                    if tx_hash == submission_hash(1) {
                         ResponseTemplate::new(200).set_body_json(serde_json::json!({
                             "jsonrpc": "2.0", "id": 1,
                             "result": {
                                 "status": "FAILED",
                                 "ledger": 50001,
-                                "diagnosticEventsXdr": [],
-                                "resultXdr": "some_error_containing_Budget_ExceededLimit"
-                            },
-                            "error_description": "Budget, ExceededLimit"
+                                "diagnosticEventsXdr": ["HostError: Error(Budget, ExceededLimit)"]
+                            }
                         }))
                     } else {
                         ResponseTemplate::new(200).set_body_json(serde_json::json!({
@@ -584,6 +591,16 @@ async fn keeper_cycle_rejects_non_hex_order_key() {
                         "hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
                     }
                 })),
+                // set_prices runs before any order is executed, so its
+                // submission has to confirm for the cycle to reach the bad key.
+                "getTransaction" => ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                    "jsonrpc": "2.0", "id": 1,
+                    "result": {
+                        "status": "SUCCESS",
+                        "ledger": 50001,
+                        "diagnosticEventsXdr": []
+                    }
+                })),
                 _ => ResponseTemplate::new(200).set_body_json(serde_json::json!({
                     "jsonrpc": "2.0", "id": 1,
                     "error": {"code": -1, "message": "unknown method"}
@@ -621,21 +638,16 @@ async fn keeper_cycle_rejects_non_hex_order_key() {
 // ── #516: get_account_sequence error branches ─────────────────────────────────
 
 /// Helper: state with one cached price pointing at the mock RPC.
-fn state_with_price(rpc_url: &str) -> Arc<AppState> {
+async fn state_with_price(rpc_url: &str) -> Arc<AppState> {
     let config = test_config(rpc_url, "http://127.0.0.1:9");
     let state = Arc::new(AppState::new(config));
     // Pre-populate the price cache so the cycle reaches get_account_sequence.
-    // We do this synchronously via a blocking write; tests are single-threaded
-    // at this point so the lock is uncontested.
-    let rt = tokio::runtime::Handle::current();
-    rt.block_on(async {
-        state
-            .price_cache
-            .write()
-            .await
-            .prices
-            .insert("TUSDC".to_string(), test_cached_price());
-    });
+    state
+        .price_cache
+        .write()
+        .await
+        .prices
+        .insert("TUSDC".to_string(), test_cached_price());
     state
 }
 
@@ -693,7 +705,7 @@ async fn get_account_sequence_rpc_error_field_propagates() {
         })
     );
 
-    let state = state_with_price(&server.uri());
+    let state = state_with_price(&server.uri()).await;
     let result = oracle::keeper_loop::run_keeper_cycle(state).await;
     assert!(result.is_err());
     assert!(result.unwrap_err().contains("getAccount error"));
@@ -711,7 +723,7 @@ async fn get_account_sequence_missing_sequence_field_propagates() {
         })
     );
 
-    let state = state_with_price(&server.uri());
+    let state = state_with_price(&server.uri()).await;
     let result = oracle::keeper_loop::run_keeper_cycle(state).await;
     assert!(result.is_err());
     assert!(result.unwrap_err().contains("Missing sequence"));
@@ -728,7 +740,7 @@ async fn get_account_sequence_non_numeric_sequence_propagates() {
         })
     );
 
-    let state = state_with_price(&server.uri());
+    let state = state_with_price(&server.uri()).await;
     let result = oracle::keeper_loop::run_keeper_cycle(state).await;
     assert!(result.is_err());
     assert!(result.unwrap_err().contains("failed to parse sequence"));
@@ -760,7 +772,7 @@ macro_rules! mount_simulate_error {
 }
 
 #[tokio::test]
-async fn simulate_contract_call_rpc_error_field_propagates() {
+async fn simulate_contract_call_rpc_error_field_is_contained() {
     let server = MockServer::start().await;
     mount_simulate_error!(
         server,
@@ -770,14 +782,17 @@ async fn simulate_contract_call_rpc_error_field_propagates() {
         })
     );
 
-    let state = state_with_price(&server.uri());
+    let state = state_with_price(&server.uri()).await;
     let result = oracle::keeper_loop::run_keeper_cycle(state).await;
-    assert!(result.is_err());
-    assert!(result.unwrap_err().contains("Simulation error"));
+    // The simulation error is warned about and the affected work type skipped;
+    // it must not take the whole cycle down.
+    let summary = result.expect("simulation errors must not abort the cycle");
+    assert_eq!(summary.orders_executed, 0);
+    assert_eq!(summary.errors, 0);
 }
 
 #[tokio::test]
-async fn simulate_contract_call_missing_result_field_propagates() {
+async fn simulate_contract_call_missing_result_field_is_contained() {
     let server = MockServer::start().await;
     // A 200 response whose body has neither "result" nor "error".
     mount_simulate_error!(
@@ -788,8 +803,9 @@ async fn simulate_contract_call_missing_result_field_propagates() {
         })
     );
 
-    let state = state_with_price(&server.uri());
+    let state = state_with_price(&server.uri()).await;
     let result = oracle::keeper_loop::run_keeper_cycle(state).await;
-    assert!(result.is_err());
-    assert!(result.unwrap_err().contains("Missing result"));
+    let summary = result.expect("a malformed simulate response must not abort the cycle");
+    assert_eq!(summary.orders_executed, 0);
+    assert_eq!(summary.errors, 0);
 }

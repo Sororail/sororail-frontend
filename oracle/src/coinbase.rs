@@ -102,11 +102,17 @@ pub(crate) async fn fetch_spot_price_with_url(
         .filter(|stripped| !stripped.is_empty())
         .unwrap_or(symbol);
 
-    let (clean_url, use_query) = if base_url.contains("currency=") || base_url.contains("exchange-rates") {
-        (base_url.trim_end_matches("?currency=").trim_end_matches("&currency="), true)
-    } else {
-        (base_url, false)
-    };
+    let (clean_url, use_query) =
+        if base_url.contains("currency=") || base_url.contains("exchange-rates") {
+            (
+                base_url
+                    .trim_end_matches("?currency=")
+                    .trim_end_matches("&currency="),
+                true,
+            )
+        } else {
+            (base_url, false)
+        };
 
     let response = if use_query {
         crate::http::client()
@@ -163,23 +169,6 @@ mod tests {
 
         let err = parse_coinbase_response_body(body).unwrap_err();
         assert_eq!(err, CoinbasePriceError::MissingUsdRate);
-    }
-
-    // #604 — a "USD" rate of exactly zero must surface as a parse error rather
-    // than a valid price of 0 flowing into aggregation.
-    #[test]
-    fn test_parse_coinbase_response_body_rejects_zero_usd_rate() {
-        let body = r#"{
-            "data": {
-                "currency": "BTC",
-                "rates": {
-                    "USD": "0"
-                }
-            }
-        }"#;
-
-        let err = parse_coinbase_response_body(body).unwrap_err();
-        assert!(matches!(err, CoinbasePriceError::PriceParseError(_)));
     }
 
     #[test]

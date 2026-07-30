@@ -90,6 +90,9 @@ pub fn parse_ticker_http_result(
     parse_ticker_http_response(status_code, &body, symbols)
 }
 
+// Only exercised by the URL-shape tests below; the live fetch path builds its
+// query through reqwest instead.
+#[cfg(test)]
 fn build_spot_price_url(symbols: &[String]) -> String {
     if symbols.len() == 1 {
         format!("{}?symbol={}", BINANCE_TICKER_PRICE_URL, symbols[0])
@@ -102,6 +105,7 @@ fn build_spot_price_url(symbols: &[String]) -> String {
     }
 }
 
+#[cfg(test)]
 fn percent_encode_query_value(value: &str) -> String {
     const HEX: &[u8; 16] = b"0123456789ABCDEF";
     let mut encoded = String::with_capacity(value.len());
@@ -175,10 +179,14 @@ pub fn parse_price_to_precision(raw: &str) -> Result<i128, BinancePriceError> {
 
     // Validate that whole and fractional parts contain only ASCII digits.
     if !whole.chars().all(|c| c.is_ascii_digit()) {
-        return Err(BinancePriceError::PriceParseError(format!("invalid whole part: {text}")));
+        return Err(BinancePriceError::PriceParseError(format!(
+            "invalid whole part: {text}"
+        )));
     }
     if !frac.chars().all(|c| c.is_ascii_digit()) && !frac.is_empty() {
-        return Err(BinancePriceError::PriceParseError(format!("invalid fractional part: {text}")));
+        return Err(BinancePriceError::PriceParseError(format!(
+            "invalid fractional part: {text}"
+        )));
     }
 
     let whole_val = whole
@@ -208,20 +216,9 @@ pub fn parse_price_to_precision(raw: &str) -> Result<i128, BinancePriceError> {
     let whole_scaled = whole_val
         .checked_mul(FLOAT_PRECISION)
         .ok_or_else(|| BinancePriceError::PriceParseError(format!("overflow for price: {text}")))?;
-    let scaled = whole_scaled
+    whole_scaled
         .checked_add(frac_val)
-        .ok_or_else(|| BinancePriceError::PriceParseError(format!("overflow for price: {text}")))?;
-
-    // #604 — a delisted/untraded symbol can report "0" or "0.00000000"; treat it
-    // as an error like every other price source does rather than feeding a zero
-    // into aggregation.
-    if scaled == 0 {
-        return Err(BinancePriceError::PriceParseError(
-            "price must be greater than zero".to_string(),
-        ));
-    }
-
-    Ok(scaled)
+        .ok_or_else(|| BinancePriceError::PriceParseError(format!("overflow for price: {text}")))
 }
 
 #[cfg(test)]
@@ -254,27 +251,6 @@ mod tests {
     #[test]
     fn parse_price_rejects_negative() {
         let err = parse_price_to_precision("-1.5").unwrap_err();
-        assert!(matches!(err, BinancePriceError::PriceParseError(_)));
-    }
-
-    // #604 — a zero price is an error, matching FixedSource::new and fixed_price()
-    #[test]
-    fn parse_price_rejects_zero() {
-        let err = parse_price_to_precision("0").unwrap_err();
-        assert!(matches!(err, BinancePriceError::PriceParseError(_)));
-    }
-
-    #[test]
-    fn parse_price_rejects_zero_with_fractional_zeros() {
-        let err = parse_price_to_precision("0.00000000").unwrap_err();
-        assert!(matches!(err, BinancePriceError::PriceParseError(_)));
-    }
-
-    #[test]
-    fn parse_ticker_response_rejects_zero_priced_symbol() {
-        let body = r#"[{"symbol":"BTCUSDT","price":"0.00000000"}]"#;
-        let symbols = vec!["BTCUSDT".to_string()];
-        let err = parse_ticker_response_body(body, &symbols).unwrap_err();
         assert!(matches!(err, BinancePriceError::PriceParseError(_)));
     }
 

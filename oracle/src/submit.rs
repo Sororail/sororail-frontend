@@ -1,5 +1,5 @@
-use serde::{Deserialize, Serialize};
 use crate::retry::Retryable;
+use serde::{Deserialize, Serialize};
 
 use crate::stellar_rpc::{rpc_post, RpcError};
 
@@ -204,7 +204,12 @@ async fn poll_until_confirmed(rpc_url: &str, hash: &str) -> Result<u32, SubmitEr
             Err(rpc_err) => {
                 // Map to SubmitError for logging/returning when non-retryable.
                 if rpc_err.is_retryable() {
-                    tracing::warn!(hash, ?rpc_err, attempt, "transient RPC/network error; will retry");
+                    tracing::warn!(
+                        hash,
+                        ?rpc_err,
+                        attempt,
+                        "transient RPC/network error; will retry"
+                    );
                     sleep_ms(backoff_ms).await;
                     backoff_ms = (backoff_ms * 2).min(30_000);
                     continue;
@@ -235,7 +240,12 @@ async fn poll_until_confirmed(rpc_url: &str, hash: &str) -> Result<u32, SubmitEr
             "FAILED" => {
                 let events = result.diagnostic_events_xdr.unwrap_or_default();
                 let preview = truncate_events_for_log(&events);
-                tracing::warn!(hash, event_count = events.len(), ?preview, "transaction failed");
+                tracing::warn!(
+                    hash,
+                    event_count = events.len(),
+                    ?preview,
+                    "transaction failed"
+                );
                 return Err(SubmitError::TransactionFailed { events });
             }
             "PENDING" | "NOT_FOUND" => {

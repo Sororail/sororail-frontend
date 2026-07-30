@@ -177,20 +177,15 @@ impl Config {
             ),
             Network::Mainnet => (
                 MAINNET_PASSPHRASE.to_string(),
-                collect_or_default!(
-                    required(&mut lookup, "STELLAR_RPC_URL"),
-                    String::new()
-                ),
-                lookup("HORIZON_URL")
-                    .unwrap_or_else(|| DEFAULT_MAINNET_HORIZON_URL.to_string()),
+                collect_or_default!(required(&mut lookup, "STELLAR_RPC_URL"), String::new()),
+                lookup("HORIZON_URL").unwrap_or_else(|| DEFAULT_MAINNET_HORIZON_URL.to_string()),
             ),
         };
 
         let oracle_contract_id = match network {
-            Network::Mainnet => collect_or_default!(
-                required(&mut lookup, "ORACLE_CONTRACT_ID"),
-                String::new()
-            ),
+            Network::Mainnet => {
+                collect_or_default!(required(&mut lookup, "ORACLE_CONTRACT_ID"), String::new())
+            }
             Network::Testnet => collect_or_default!(
                 required_any(&mut lookup, "ORACLE_CONTRACT_ID", "ORACLE"),
                 String::new()
@@ -202,61 +197,45 @@ impl Config {
             PriceFeedConfig { tokens: vec![] }
         );
 
-        let role_store_contract_id = collect_or_default!(
-            required(&mut lookup, "ROLE_STORE"),
-            String::new()
-        );
-        let data_store_contract_id = collect_or_default!(
-            required(&mut lookup, "DATA_STORE"),
-            String::new()
-        );
-        let order_handler_contract_id = collect_or_default!(
-            required(&mut lookup, "ORDER_HANDLER"),
-            String::new()
-        );
-        let deposit_handler_contract_id = collect_or_default!(
-            required(&mut lookup, "DEPOSIT_HANDLER"),
-            String::new()
-        );
-        let withdrawal_handler_contract_id = collect_or_default!(
-            required(&mut lookup, "WITHDRAWAL_HANDLER"),
-            String::new()
-        );
-        let reader_contract_id = collect_or_default!(
-            required(&mut lookup, "READER"),
-            String::new()
-        );
+        let role_store_contract_id =
+            collect_or_default!(required(&mut lookup, "ROLE_STORE"), String::new());
+        let data_store_contract_id =
+            collect_or_default!(required(&mut lookup, "DATA_STORE"), String::new());
+        let order_handler_contract_id =
+            collect_or_default!(required(&mut lookup, "ORDER_HANDLER"), String::new());
+        let deposit_handler_contract_id =
+            collect_or_default!(required(&mut lookup, "DEPOSIT_HANDLER"), String::new());
+        let withdrawal_handler_contract_id =
+            collect_or_default!(required(&mut lookup, "WITHDRAWAL_HANDLER"), String::new());
+        let reader_contract_id =
+            collect_or_default!(required(&mut lookup, "READER"), String::new());
 
-        let keeper_private_key_raw = collect_or_default!(
-            required(&mut lookup, "KEEPER_PRIVATE_KEY"),
-            String::new()
-        );
+        let keeper_private_key_raw =
+            collect_or_default!(required(&mut lookup, "KEEPER_PRIVATE_KEY"), String::new());
         let keeper_private_key = if !keeper_private_key_raw.is_empty() {
             collect_or_default!(
-                validate_hex_key("KEEPER_PRIVATE_KEY", keeper_private_key_raw, 32).map(SecretString::new),
+                validate_hex_key("KEEPER_PRIVATE_KEY", keeper_private_key_raw, 32)
+                    .map(SecretString::new),
                 SecretString::new(String::new())
             )
         } else {
             SecretString::new(String::new())
         };
 
-        let keeper_secret_key_raw = collect_or_default!(
-            required(&mut lookup, "KEEPER_SECRET_KEY"),
-            String::new()
-        );
+        let keeper_secret_key_raw =
+            collect_or_default!(required(&mut lookup, "KEEPER_SECRET_KEY"), String::new());
         let keeper_secret_key = if !keeper_secret_key_raw.is_empty() {
             collect_or_default!(
-                validate_strkey("KEEPER_SECRET_KEY", keeper_secret_key_raw, 'S').map(SecretString::new),
+                validate_strkey("KEEPER_SECRET_KEY", keeper_secret_key_raw, 'S')
+                    .map(SecretString::new),
                 SecretString::new(String::new())
             )
         } else {
             SecretString::new(String::new())
         };
 
-        let keeper_account_id_raw = collect_or_default!(
-            required(&mut lookup, "KEEPER_ACCOUNT_ID"),
-            String::new()
-        );
+        let keeper_account_id_raw =
+            collect_or_default!(required(&mut lookup, "KEEPER_ACCOUNT_ID"), String::new());
         let keeper_account_id = if !keeper_account_id_raw.is_empty() {
             collect_or_default!(
                 validate_strkey("KEEPER_ACCOUNT_ID", keeper_account_id_raw, 'G'),
@@ -266,10 +245,8 @@ impl Config {
             String::new()
         };
 
-        let keeper_index = collect_or_default!(
-            parse_or_default(&mut lookup, "KEEPER_INDEX", "0"),
-            0u32
-        );
+        let keeper_index =
+            collect_or_default!(parse_or_default(&mut lookup, "KEEPER_INDEX", "0"), 0u32);
 
         let admin_api_token = lookup("ADMIN_API_TOKEN")
             .filter(|value| !value.trim().is_empty())
@@ -589,7 +566,7 @@ mod tests {
 
     const VALID_JSON: &str = r#"[
         {"symbol":"BTC","stellar_address":"CBTCADDR","sources":["binance","coinbase"],"binance_symbol":"BTCUSDT","coinbase_symbol":"BTC"},
-        {"symbol":"ETH","stellar_address":"CETHADDR","sources":["binance"],"binance_symbol":"ETHUSDT"}
+        {"symbol":"ETH","stellar_address":"CETHADDR","sources":["binance"],"binance_symbol":"ETHUSDT","min_sources":1}
     ]"#;
 
     #[test]
@@ -710,8 +687,8 @@ mod tests {
     #[test]
     fn per_token_source_list_preserved() {
         let json = r#"[
-            {"symbol":"BTC","stellar_address":"CBADDR","sources":["binance"],"binance_symbol":"BTCUSDT"},
-            {"symbol":"ETH","stellar_address":"CEADDR","sources":["coinbase"],"coinbase_symbol":"ETH"}
+            {"symbol":"BTC","stellar_address":"CBADDR","sources":["binance"],"binance_symbol":"BTCUSDT","min_sources":1},
+            {"symbol":"ETH","stellar_address":"CEADDR","sources":["coinbase"],"coinbase_symbol":"ETH","min_sources":1}
         ]"#;
         let cfg = parse_price_feed_config(json).unwrap();
         assert_eq!(cfg.tokens[0].sources, vec!["binance"]);
@@ -831,7 +808,7 @@ mod tests {
 
     #[test]
     fn load_price_feed_config_uses_env_when_set() {
-        let json = r#"[{"symbol":"BTC","stellar_address":"CADDR","sources":["binance"],"binance_symbol":"BTCUSDT"}]"#;
+        let json = r#"[{"symbol":"BTC","stellar_address":"CADDR","sources":["binance"],"binance_symbol":"BTCUSDT","min_sources":1}]"#;
         let cfg = load_price_feed_config(Some(json)).unwrap();
         assert_eq!(cfg.tokens.len(), 1);
         assert_eq!(cfg.tokens[0].symbol, "BTC");
@@ -1108,7 +1085,10 @@ mod tests {
             }
         }
 
-        assert!(err.0.iter().any(|e| matches!(e, EnvError::MissingVar("KEEPER_PRIVATE_KEY"))));
+        assert!(err
+            .0
+            .iter()
+            .any(|e| matches!(e, EnvError::MissingVar("KEEPER_PRIVATE_KEY"))));
     }
 
     #[test]
