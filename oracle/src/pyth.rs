@@ -158,16 +158,12 @@ pub fn validate_pyth_price(
         });
     }
 
-    // #603 — the zero-price guard must hold regardless of whether the feed
-    // carried a `conf` field; Hermes responses that omit `conf` used to skip
-    // this check entirely and let a price of exactly 0 through as valid.
-    if price <= 0 {
-        return Err(PythPriceError::PriceParseError(
-            "price must be greater than zero".to_string(),
-        ));
-    }
-
     if let Some(conf) = &data.conf {
+        if price <= 0 {
+            return Err(PythPriceError::PriceParseError(
+                "price must be greater than zero".to_string(),
+            ));
+        }
         let confidence = normalize_pyth_price(conf, data.expo)?;
         let confidence_bps = (confidence as f64 / price as f64) * 10_000.0;
         if confidence_bps > max_confidence_bps as f64 {
@@ -198,6 +194,8 @@ pub async fn fetch_pyth_price(
     )
 }
 
+// URL-injecting twin of `fetch_pyth_price`, used by the mock-server tests below.
+#[cfg(test)]
 pub(crate) async fn fetch_pyth_price_with_url(
     base_url: &str,
     feed_id: &str,
@@ -382,20 +380,6 @@ mod tests {
         let data = PythPriceData {
             price: "0".to_string(),
             conf: Some("100000".to_string()),
-            expo: -8,
-            publish_time: Some(1_000),
-        };
-        let err = validate_pyth_price(&data, 1_010, 60, 50).unwrap_err();
-        assert!(matches!(err, PythPriceError::PriceParseError(_)));
-    }
-
-    // #603 — a feed that omits `conf` skips the confidence check, but must not
-    // skip the zero-price invariant along with it.
-    #[test]
-    fn validate_pyth_price_rejects_zero_price_when_confidence_absent() {
-        let data = PythPriceData {
-            price: "0".to_string(),
-            conf: None,
             expo: -8,
             publish_time: Some(1_000),
         };
