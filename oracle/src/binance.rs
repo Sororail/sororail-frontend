@@ -208,9 +208,20 @@ pub fn parse_price_to_precision(raw: &str) -> Result<i128, BinancePriceError> {
     let whole_scaled = whole_val
         .checked_mul(FLOAT_PRECISION)
         .ok_or_else(|| BinancePriceError::PriceParseError(format!("overflow for price: {text}")))?;
-    whole_scaled
+    let scaled = whole_scaled
         .checked_add(frac_val)
-        .ok_or_else(|| BinancePriceError::PriceParseError(format!("overflow for price: {text}")))
+        .ok_or_else(|| BinancePriceError::PriceParseError(format!("overflow for price: {text}")))?;
+
+    // #604 — a delisted/untraded symbol can report "0" or "0.00000000"; treat it
+    // as an error like every other price source does rather than feeding a zero
+    // into aggregation.
+    if scaled == 0 {
+        return Err(BinancePriceError::PriceParseError(
+            "price must be greater than zero".to_string(),
+        ));
+    }
+
+    Ok(scaled)
 }
 
 #[cfg(test)]
@@ -243,6 +254,27 @@ mod tests {
     #[test]
     fn parse_price_rejects_negative() {
         let err = parse_price_to_precision("-1.5").unwrap_err();
+        assert!(matches!(err, BinancePriceError::PriceParseError(_)));
+    }
+
+    // #604 — a zero price is an error, matching FixedSource::new and fixed_price()
+    #[test]
+    fn parse_price_rejects_zero() {
+        let err = parse_price_to_precision("0").unwrap_err();
+        assert!(matches!(err, BinancePriceError::PriceParseError(_)));
+    }
+
+    #[test]
+    fn parse_price_rejects_zero_with_fractional_zeros() {
+        let err = parse_price_to_precision("0.00000000").unwrap_err();
+        assert!(matches!(err, BinancePriceError::PriceParseError(_)));
+    }
+
+    #[test]
+    fn parse_ticker_response_rejects_zero_priced_symbol() {
+        let body = r#"[{"symbol":"BTCUSDT","price":"0.00000000"}]"#;
+        let symbols = vec!["BTCUSDT".to_string()];
+        let err = parse_ticker_response_body(body, &symbols).unwrap_err();
         assert!(matches!(err, BinancePriceError::PriceParseError(_)));
     }
 
