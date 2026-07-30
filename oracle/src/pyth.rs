@@ -58,6 +58,24 @@ impl std::fmt::Display for PythPriceError {
 
 impl std::error::Error for PythPriceError {}
 
+impl crate::retry::Retryable for PythPriceError {
+    fn is_retryable(&self) -> bool {
+        match self {
+            // Network errors and 5xx HTTP errors are transient
+            Self::NetworkError(_) => true,
+            Self::HttpError(status) => *status >= 500,
+            // Stale prices might become fresh on retry
+            Self::StalePrice { .. } => true,
+            // Parse/JSON/config/validation errors are permanent failures
+            Self::JsonError(_)
+            | Self::PriceParseError(_)
+            | Self::MissingFeedId(_)
+            | Self::ConfidenceTooWide { .. }
+            | Self::InvalidPublishTime(_) => false,
+        }
+    }
+}
+
 #[derive(Debug, Deserialize)]
 pub struct PythPrice {
     pub price: PythPriceData,
@@ -146,12 +164,16 @@ pub fn validate_pyth_price(
         });
     }
 
+    // #603 — the zero-price guard must hold regardless of whether the feed
+    // carried a `conf` field. Hermes responses that omit `conf` skip the
+    // confidence check by design; they must not skip this invariant with it.
+    if price <= 0 {
+        return Err(PythPriceError::PriceParseError(
+            "price must be greater than zero".to_string(),
+        ));
+    }
+
     if let Some(conf) = &data.conf {
-        if price <= 0 {
-            return Err(PythPriceError::PriceParseError(
-                "price must be greater than zero".to_string(),
-            ));
-        }
         let confidence = normalize_pyth_price(conf, data.expo)?;
         let confidence_bps = (confidence as f64 / price as f64) * 10_000.0;
         if confidence_bps > max_confidence_bps as f64 {
@@ -173,6 +195,51 @@ pub async fn fetch_pyth_price(
     let mut prices = fetch_pyth_prices(&[feed_id], None).await?;
     let feed = prices
         .remove(feed_id)
+        .ok_or_else(|| PythPriceError::MissingFeedId(feed_id.to_string()))?;
+    validate_pyth_price(
+        &feed.price,
+        crate::current_timestamp_secs(),
+        stale_after_seconds,
+        max_confidence_bps,
+    )
+}
+
+// URL-injecting twin of `fetch_pyth_price`, used by the mock-server tests below.
+#[cfg(test)]
+pub(crate) async fn fetch_pyth_price_with_url(
+    base_url: &str,
+    feed_id: &str,
+    stale_after_seconds: u64,
+    max_confidence_bps: u32,
+) -> Result<i128, PythPriceError> {
+    let query = format!("ids[]={feed_id}");
+    let url_string = format!("{base_url}?{query}");
+
+    let response = crate::http::client()
+        .get(&url_string)
+        .send()
+        .await
+        .map_err(|err| PythPriceError::NetworkError(err.to_string()))?;
+
+    let status = response.status().as_u16();
+    if status != 200 {
+        return Err(PythPriceError::HttpError(status));
+    }
+
+    let body = response
+        .text()
+        .await
+        .map_err(|err| PythPriceError::NetworkError(err.to_string()))?;
+
+    let hermes_response: HermesResponse =
+        serde_json::from_str(&body).map_err(|err| PythPriceError::JsonError(err.to_string()))?;
+    let feeds = match hermes_response {
+        HermesResponse::Array(feeds) => feeds,
+        HermesResponse::Wrapped(wrapped) => vec![wrapped.data],
+    };
+    let feed = feeds
+        .into_iter()
+        .find(|f| f.id == feed_id)
         .ok_or_else(|| PythPriceError::MissingFeedId(feed_id.to_string()))?;
     validate_pyth_price(
         &feed.price,
@@ -326,6 +393,20 @@ mod tests {
         let data = PythPriceData {
             price: "0".to_string(),
             conf: Some("100000".to_string()),
+            expo: -8,
+            publish_time: Some(1_000),
+        };
+        let err = validate_pyth_price(&data, 1_010, 60, 50).unwrap_err();
+        assert!(matches!(err, PythPriceError::PriceParseError(_)));
+    }
+
+    // #603 — a feed that omits `conf` skips the confidence check; it must not
+    // skip the zero-price guard along with it.
+    #[test]
+    fn validate_pyth_price_rejects_zero_price_when_confidence_absent() {
+        let data = PythPriceData {
+            price: "0".to_string(),
+            conf: None,
             expo: -8,
             publish_time: Some(1_000),
         };
@@ -558,6 +639,33 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(result, 45 * FLOAT_PRECISION);
+    }
+
+    // #603 — the exact trigger from the report: a fresh feed whose body omits
+    // `conf` entirely and carries a price of zero must be rejected, not fetched
+    // as a valid price.
+    #[tokio::test]
+    async fn fetch_pyth_price_rejects_zero_price_with_missing_conf_field() {
+        use wiremock::matchers::{method, query_param};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let publish = recent_publish_time();
+        let body = format!(
+            r#"[{{"id":"feed-1","price":{{"price":"0","expo":-8,"publish_time":{}}}}}]"#,
+            publish
+        );
+
+        Mock::given(method("GET"))
+            .and(query_param("ids[]", "feed-1"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json"))
+            .mount(&server)
+            .await;
+
+        let err = super::fetch_pyth_price_with_url(&server.uri(), "feed-1", 60, 50)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, PythPriceError::PriceParseError(_)));
     }
 
     #[tokio::test]

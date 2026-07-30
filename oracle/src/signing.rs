@@ -21,10 +21,15 @@ impl std::fmt::Display for SigningError {
     }
 }
 
-/// Construct the price message byte payload.
-/// Build the raw byte payload that is signed for a price update.
+/// Layout: `network_passphrase || ledger_seq || token_strkey || min || max || timestamp`
 ///
-/// Layout: `network_passphrase ‖ ledger_seq (BE u32) ‖ token_strkey ‖ min (BE i128) ‖ max (BE i128) ‖ timestamp (BE u64)`
+/// Data types:
+/// - `network_passphrase`: UTF-8 bytes
+/// - `ledger_seq`: u32 Big-Endian
+/// - `token_strkey`: UTF-8 bytes
+/// - `min`: i128 Big-Endian
+/// - `max`: i128 Big-Endian
+/// - `timestamp`: u64 Big-Endian
 pub fn build_price_message(
     network_passphrase: &str,
     ledger_seq: u32,

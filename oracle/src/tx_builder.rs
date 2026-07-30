@@ -98,6 +98,7 @@ pub async fn get_account_sequence(rpc_url: &str, account_id: &str) -> Result<u64
         .get("sequence")
         .and_then(|s| s.as_str())
         .and_then(|s| s.parse::<u64>().ok())
+        .map(|seq| seq + 1)
         .ok_or(TxBuilderError::MissingSequence)
 }
 

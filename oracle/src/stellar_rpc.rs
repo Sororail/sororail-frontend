@@ -11,6 +11,21 @@ pub enum RpcError {
 
 impl Eq for RpcError {}
 
+/// Network errors and server-side/rate-limit HTTP statuses are transient and
+/// worth retrying; parse errors, RPC faults, and balance-precondition
+/// failures are not going to change on a bare retry, so they fail fast.
+impl crate::retry::Retryable for RpcError {
+    fn is_retryable(&self) -> bool {
+        match self {
+            RpcError::NetworkError(_) => true,
+            RpcError::HttpError(code) => *code >= 500 || *code == 429,
+            RpcError::JsonError(_) => false,
+            RpcError::RpcFault { .. } => false,
+            RpcError::BalanceBelowMinimum { .. } => false,
+        }
+    }
+}
+
 impl std::fmt::Display for RpcError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
