@@ -57,7 +57,11 @@ fn three_source_token() -> TokenConfig {
         symbol: "TMSRC".to_string(),
         display_symbol: Some("MSRC".to_string()),
         stellar_address: "CBAN5YU3KRDKPTQ2H76D6S7HQFPRBGUD524F65BUM2RQCITPTRLKWKES".to_string(),
-        sources: vec!["fixed".to_string(), "fixed".to_string(), "coinbase".to_string()],
+        sources: vec![
+            "fixed".to_string(),
+            "fixed".to_string(),
+            "coinbase".to_string(),
+        ],
         fixed_price: Some("1000000000000000000000000000000".to_string()),
         binance_symbol: None,
         coinbase_symbol: Some("BTC".to_string()),
@@ -92,7 +96,11 @@ async fn multi_source_healthy_cycle_uses_all_three_sources() {
 
     // The two "fixed" sources succeed; "coinbase" fails in test env.
     // With min_sources: 2, the cycle still succeeds.
-    assert_eq!(cached.sources_used.len(), 2, "two fixed sources should succeed");
+    assert_eq!(
+        cached.sources_used.len(),
+        2,
+        "two fixed sources should succeed"
+    );
     assert!(cached.min > 0, "min price must be positive");
     assert!(cached.max > 0, "max price must be positive");
 
@@ -121,7 +129,11 @@ async fn multi_source_consecutive_cycles_preserve_sources_used() {
     let key = cache_key("CBAN5YU3KRDKPTQ2H76D6S7HQFPRBGUD524F65BUM2RQCITPTRLKWKES");
     let cached = cache.prices.get(&key).expect("token should be cached");
 
-    assert_eq!(cached.sources_used.len(), 2, "sources_used stable across cycles");
+    assert_eq!(
+        cached.sources_used.len(),
+        2,
+        "sources_used stable across cycles"
+    );
     assert!(cache.last_updated.is_some(), "last_updated should be set");
 
     let resp = state.metrics.to_response();
@@ -174,7 +186,11 @@ async fn multi_source_degraded_then_recovered_metrics_stable() {
     let cache = state.price_cache.read().await;
     let key = cache_key("CBAN5YU3KRDKPTQ2H76D6S7HQFPRBGUD524F65BUM2RQCITPTRLKWKES");
     let cached = cache.prices.get(&key).expect("token should be cached");
-    assert_eq!(cached.sources_used.len(), 2, "sources_used stable after 3 cycles");
+    assert_eq!(
+        cached.sources_used.len(),
+        2,
+        "sources_used stable after 3 cycles"
+    );
 
     let resp = state.metrics.to_response();
     assert_eq!(resp.price_cycle_count, 3, "all 3 cycles counted");

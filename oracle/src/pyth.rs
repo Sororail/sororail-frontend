@@ -194,6 +194,8 @@ pub async fn fetch_pyth_price(
     )
 }
 
+// URL-injecting twin of `fetch_pyth_price`, used by the mock-server tests below.
+#[cfg(test)]
 pub(crate) async fn fetch_pyth_price_with_url(
     base_url: &str,
     feed_id: &str,

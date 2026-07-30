@@ -7,7 +7,9 @@ use tracing::{error, info, warn};
 
 use crate::chain::scval;
 use crate::chain::tx_builder;
-use crate::state::{AppState, CachedPrice, FailedSubmission, KeeperExecution, MAX_CONSECUTIVE_FREEZE_FAILURES};
+use crate::state::{
+    AppState, CachedPrice, FailedSubmission, KeeperExecution, MAX_CONSECUTIVE_FREEZE_FAILURES,
+};
 
 const KEEPER_TX_FEE: u32 = 2_000_000;
 const ACCOUNT_SEQUENCE_RETRY_ATTEMPTS: u32 = 3;
@@ -122,20 +124,18 @@ async fn execute_keeper_cycle(state: Arc<AppState>) -> Result<CycleSummary, Stri
         return Err("No prices available in cache".to_string());
     }
 
-    let order_keys =
-        get_pending_keys(&state, "get_order_count", "get_order_keys")
-            .await
-            .unwrap_or_else(|e| {
-                warn!(error = %e, "get_pending_keys(orders) failed, skipping orders this cycle");
-                Vec::new()
-            });
-    let deposit_keys =
-        get_pending_keys(&state, "get_deposit_count", "get_deposit_keys")
-            .await
-            .unwrap_or_else(|e| {
-                warn!(error = %e, "get_pending_keys(deposits) failed, skipping deposits this cycle");
-                Vec::new()
-            });
+    let order_keys = get_pending_keys(&state, "get_order_count", "get_order_keys")
+        .await
+        .unwrap_or_else(|e| {
+            warn!(error = %e, "get_pending_keys(orders) failed, skipping orders this cycle");
+            Vec::new()
+        });
+    let deposit_keys = get_pending_keys(&state, "get_deposit_count", "get_deposit_keys")
+        .await
+        .unwrap_or_else(|e| {
+            warn!(error = %e, "get_pending_keys(deposits) failed, skipping deposits this cycle");
+            Vec::new()
+        });
     let withdrawal_keys =
         get_pending_keys(&state, "get_withdrawal_count", "get_withdrawal_keys")
             .await
@@ -212,7 +212,11 @@ async fn execute_keeper_cycle(state: Arc<AppState>) -> Result<CycleSummary, Stri
                 state.in_flight_keys.lock().await.remove(order_key);
                 summary.orders_executed += 1;
                 // Clear any accumulated freeze-failure count on success.
-                state.freeze_failure_counts.lock().await.remove(order_key.as_str());
+                state
+                    .freeze_failure_counts
+                    .lock()
+                    .await
+                    .remove(order_key.as_str());
                 record_execution(
                     &state,
                     "execute_order",
@@ -227,13 +231,7 @@ async fn execute_keeper_cycle(state: Arc<AppState>) -> Result<CycleSummary, Stri
                 // Tx may still confirm on-chain; retain in-flight to prevent re-submission.
                 warn!(key = %order_key, %error, "order_poll_timeout_key_remains_in_flight");
                 summary.errors += 1;
-                record_error(
-                    &state,
-                    &format!("execute_order:{}", order_key),
-                    error,
-                    None,
-                )
-                .await;
+                record_error(&state, &format!("execute_order:{}", order_key), error, None).await;
                 record_execution(
                     &state,
                     "execute_order",
@@ -261,7 +259,11 @@ async fn execute_keeper_cycle(state: Arc<AppState>) -> Result<CycleSummary, Stri
                     {
                         Ok(_) => {
                             info!(key = %order_key, "order_frozen_budget_exceeded");
-                            state.freeze_failure_counts.lock().await.remove(order_key.as_str());
+                            state
+                                .freeze_failure_counts
+                                .lock()
+                                .await
+                                .remove(order_key.as_str());
                         }
                         Err(freeze_error) => {
                             let consecutive = {
@@ -326,7 +328,11 @@ async fn execute_keeper_cycle(state: Arc<AppState>) -> Result<CycleSummary, Stri
             info!(key = %deposit_key, "skipping_in_flight_deposit_key");
             continue;
         }
-        state.in_flight_keys.lock().await.insert(deposit_key.clone());
+        state
+            .in_flight_keys
+            .lock()
+            .await
+            .insert(deposit_key.clone());
 
         match execute_handler(
             &state,
@@ -398,7 +404,11 @@ async fn execute_keeper_cycle(state: Arc<AppState>) -> Result<CycleSummary, Stri
             info!(key = %withdrawal_key, "skipping_in_flight_withdrawal_key");
             continue;
         }
-        state.in_flight_keys.lock().await.insert(withdrawal_key.clone());
+        state
+            .in_flight_keys
+            .lock()
+            .await
+            .insert(withdrawal_key.clone());
 
         match execute_handler(
             &state,
@@ -503,7 +513,7 @@ async fn get_pending_keys(
     .await?;
 
     let keys = parse_bytes_vec_from_result(&keys_result)?;
-    
+
     // Cross-check parsed length against reported count to detect RPC/ABI drift
     if keys.len() != count as usize {
         tracing::warn!(
@@ -517,7 +527,7 @@ async fn get_pending_keys(
             keys.len()
         ));
     }
-    
+
     Ok(keys)
 }
 
@@ -528,7 +538,9 @@ async fn set_prices_on_chain(
     let prices_vec: Vec<&CachedPrice> = prices.values().collect();
     let prices_scval = scval::encode_prices_vec(&prices_vec)?;
 
-    let sequence = get_account_sequence(state).await.map_err(|e| e.to_string())?;
+    let sequence = get_account_sequence(state)
+        .await
+        .map_err(|e| e.to_string())?;
 
     let tx = tx_builder::build_invoke_tx(
         &state.config.keeper_account_id,
@@ -537,6 +549,7 @@ async fn set_prices_on_chain(
         vec![prices_scval],
         1_000_000,
         sequence,
+        None,
     )?;
 
     let signed_xdr = tx_builder::sign_transaction(
@@ -566,7 +579,9 @@ async fn execute_handler(
             .map_err(|e| format!("key bytes conversion failed: {e}"))?,
     ));
 
-    let sequence = get_account_sequence(state).await.map_err(|e| e.to_string())?;
+    let sequence = get_account_sequence(state)
+        .await
+        .map_err(|e| e.to_string())?;
 
     let tx = tx_builder::build_invoke_tx(
         &state.config.keeper_account_id,
@@ -580,6 +595,7 @@ async fn execute_handler(
         ],
         KEEPER_TX_FEE,
         sequence,
+        None,
     )?;
 
     let signed_xdr = tx_builder::sign_transaction(
@@ -626,10 +642,9 @@ async fn get_account_sequence_once(state: &Arc<AppState>) -> Result<u64, Sequenc
         .map_err(|e| SequenceFetchError::Network(format!("getAccount request failed: {e}")))?;
 
     let status = response.status();
-    let body = response
-        .text()
-        .await
-        .map_err(|e| SequenceFetchError::Network(format!("Failed to read getAccount response: {e}")))?;
+    let body = response.text().await.map_err(|e| {
+        SequenceFetchError::Network(format!("Failed to read getAccount response: {e}"))
+    })?;
 
     if !status.is_success() {
         return Err(SequenceFetchError::Network(format!(
@@ -638,23 +653,29 @@ async fn get_account_sequence_once(state: &Arc<AppState>) -> Result<u64, Sequenc
         )));
     }
 
-    let response_json: serde_json::Value = serde_json::from_str(&body)
-        .map_err(|e| SequenceFetchError::Network(format!("Failed to parse getAccount response: {e}")))?;
+    let response_json: serde_json::Value = serde_json::from_str(&body).map_err(|e| {
+        SequenceFetchError::Network(format!("Failed to parse getAccount response: {e}"))
+    })?;
 
     if let Some(error) = response_json.get("error") {
-        return Err(SequenceFetchError::Network(format!("getAccount error: {error}")));
+        return Err(SequenceFetchError::Network(format!(
+            "getAccount error: {error}"
+        )));
     }
 
     let seq_str = response_json
         .get("result")
         .and_then(|r| r.get("sequence"))
         .and_then(|s| s.as_str())
-        .ok_or_else(|| SequenceFetchError::MissingOrInvalid("Missing sequence in getAccount response".to_string()))?;
+        .ok_or_else(|| {
+            SequenceFetchError::MissingOrInvalid(
+                "Missing sequence in getAccount response".to_string(),
+            )
+        })?;
 
-    seq_str
-        .parse::<u64>()
-        .map(|seq| seq + 1)
-        .map_err(|e| SequenceFetchError::MissingOrInvalid(format!("failed to parse sequence '{seq_str}': {e}")))
+    seq_str.parse::<u64>().map(|seq| seq + 1).map_err(|e| {
+        SequenceFetchError::MissingOrInvalid(format!("failed to parse sequence '{seq_str}': {e}"))
+    })
 }
 
 async fn simulate_contract_call(
@@ -708,8 +729,8 @@ async fn simulate_contract_call(
         return Err(format!("RPC request returned HTTP {}", status.as_u16()));
     }
 
-    let response_json: serde_json::Value = serde_json::from_str(&body)
-        .map_err(|e| format!("Failed to parse RPC response: {e}"))?;
+    let response_json: serde_json::Value =
+        serde_json::from_str(&body).map_err(|e| format!("Failed to parse RPC response: {e}"))?;
 
     if let Some(error) = response_json.get("error") {
         return Err(format!("Simulation error: {error}"));
