@@ -165,6 +165,23 @@ mod tests {
         assert_eq!(err, CoinbasePriceError::MissingUsdRate);
     }
 
+    // #604 — a "USD" rate of exactly zero must surface as a parse error rather
+    // than a valid price of 0 flowing into aggregation.
+    #[test]
+    fn test_parse_coinbase_response_body_rejects_zero_usd_rate() {
+        let body = r#"{
+            "data": {
+                "currency": "BTC",
+                "rates": {
+                    "USD": "0"
+                }
+            }
+        }"#;
+
+        let err = parse_coinbase_response_body(body).unwrap_err();
+        assert!(matches!(err, CoinbasePriceError::PriceParseError(_)));
+    }
+
     #[test]
     fn test_parse_coinbase_response_body_invalid_json() {
         let err = parse_coinbase_response_body("not json").unwrap_err();
