@@ -937,11 +937,16 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_bytes_vec_entries_without_bytes_key_are_skipped() {
+    fn test_parse_bytes_vec_entry_without_bytes_key_is_an_error() {
+        // An entry that's neither "bytes" nor "Bytes" is a malformed
+        // result, not something to silently drop — parse_bytes_vec_from_result
+        // surfaces it as an error rather than returning a shorter Vec that
+        // quietly lost data.
         let result = r#"{"vec":[{"u32":7},{"bytes":"aabb"}]}"#;
-        assert_eq!(
-            parse_bytes_vec_from_result(result).unwrap(),
-            vec!["aabb".to_string()]
+        let err = parse_bytes_vec_from_result(result).unwrap_err();
+        assert!(
+            err.contains("missing 'bytes' field"),
+            "unexpected error: {err}"
         );
     }
 
