@@ -158,12 +158,16 @@ pub fn validate_pyth_price(
         });
     }
 
+    // #603 — the zero-price guard must hold regardless of whether the feed
+    // carried a `conf` field. Hermes responses that omit `conf` skip the
+    // confidence check by design; they must not skip this invariant with it.
+    if price <= 0 {
+        return Err(PythPriceError::PriceParseError(
+            "price must be greater than zero".to_string(),
+        ));
+    }
+
     if let Some(conf) = &data.conf {
-        if price <= 0 {
-            return Err(PythPriceError::PriceParseError(
-                "price must be greater than zero".to_string(),
-            ));
-        }
         let confidence = normalize_pyth_price(conf, data.expo)?;
         let confidence_bps = (confidence as f64 / price as f64) * 10_000.0;
         if confidence_bps > max_confidence_bps as f64 {
@@ -380,6 +384,20 @@ mod tests {
         let data = PythPriceData {
             price: "0".to_string(),
             conf: Some("100000".to_string()),
+            expo: -8,
+            publish_time: Some(1_000),
+        };
+        let err = validate_pyth_price(&data, 1_010, 60, 50).unwrap_err();
+        assert!(matches!(err, PythPriceError::PriceParseError(_)));
+    }
+
+    // #603 — a feed that omits `conf` skips the confidence check; it must not
+    // skip the zero-price guard along with it.
+    #[test]
+    fn validate_pyth_price_rejects_zero_price_when_confidence_absent() {
+        let data = PythPriceData {
+            price: "0".to_string(),
+            conf: None,
             expo: -8,
             publish_time: Some(1_000),
         };
@@ -612,6 +630,33 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(result, 45 * FLOAT_PRECISION);
+    }
+
+    // #603 — the exact trigger from the report: a fresh feed whose body omits
+    // `conf` entirely and carries a price of zero must be rejected, not fetched
+    // as a valid price.
+    #[tokio::test]
+    async fn fetch_pyth_price_rejects_zero_price_with_missing_conf_field() {
+        use wiremock::matchers::{method, query_param};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let publish = recent_publish_time();
+        let body = format!(
+            r#"[{{"id":"feed-1","price":{{"price":"0","expo":-8,"publish_time":{}}}}}]"#,
+            publish
+        );
+
+        Mock::given(method("GET"))
+            .and(query_param("ids[]", "feed-1"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json"))
+            .mount(&server)
+            .await;
+
+        let err = super::fetch_pyth_price_with_url(&server.uri(), "feed-1", 60, 50)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, PythPriceError::PriceParseError(_)));
     }
 
     #[tokio::test]
