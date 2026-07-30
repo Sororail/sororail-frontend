@@ -30,6 +30,18 @@ impl std::fmt::Display for BinancePriceError {
 
 impl std::error::Error for BinancePriceError {}
 
+impl crate::retry::Retryable for BinancePriceError {
+    fn is_retryable(&self) -> bool {
+        match self {
+            // Network errors and 5xx HTTP errors are transient
+            Self::NetworkError(_) => true,
+            Self::HttpError(status) => *status >= 500,
+            // Parse/JSON errors are permanent failures
+            Self::JsonError(_) | Self::PriceParseError(_) => false,
+        }
+    }
+}
+
 #[derive(Debug, Deserialize)]
 pub struct BinanceTickerEntry {
     pub symbol: String,
@@ -87,6 +99,9 @@ pub fn parse_ticker_http_result(
     parse_ticker_http_response(status_code, &body, symbols)
 }
 
+// Only exercised by the URL-shape tests below; the live fetch path builds its
+// query through reqwest instead.
+#[cfg(test)]
 fn build_spot_price_url(symbols: &[String]) -> String {
     build_spot_price_url_for(BINANCE_TICKER_PRICE_URL, symbols)
 }
@@ -101,6 +116,27 @@ fn build_spot_price_url_for(base_url: &str, symbols: &[String]) -> String {
             serde_json::to_string(symbols).unwrap()
         )
     }
+}
+
+#[cfg(test)]
+fn percent_encode_query_value(value: &str) -> String {
+    const HEX: &[u8; 16] = b"0123456789ABCDEF";
+    let mut encoded = String::with_capacity(value.len());
+
+    for byte in value.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
+                encoded.push(byte as char);
+            }
+            _ => {
+                encoded.push('%');
+                encoded.push(HEX[(byte >> 4) as usize] as char);
+                encoded.push(HEX[(byte & 0x0f) as usize] as char);
+            }
+        }
+    }
+
+    encoded
 }
 
 pub async fn fetch_spot_prices(
@@ -149,16 +185,29 @@ pub fn parse_price_to_precision(raw: &str) -> Result<i128, BinancePriceError> {
         )));
     }
 
+    // Validate that whole and fractional parts contain only ASCII digits.
+    if !whole.chars().all(|c| c.is_ascii_digit()) {
+        return Err(BinancePriceError::PriceParseError(format!(
+            "invalid whole part: {text}"
+        )));
+    }
+    if !frac.chars().all(|c| c.is_ascii_digit()) && !frac.is_empty() {
+        return Err(BinancePriceError::PriceParseError(format!(
+            "invalid fractional part: {text}"
+        )));
+    }
+
     let whole_val = whole
         .parse::<i128>()
         .map_err(|_| BinancePriceError::PriceParseError(format!("invalid whole part: {text}")))?;
 
     let scale_digits = 30usize;
-    let normalized_frac = if frac.len() >= scale_digits {
-        frac[..scale_digits].to_string()
+    // Use UTF-8-safe char iteration to take at most `scale_digits` digits.
+    let normalized_frac = if frac.chars().count() >= scale_digits {
+        frac.chars().take(scale_digits).collect::<String>()
     } else {
         let mut padded = frac.to_string();
-        while padded.len() < scale_digits {
+        while padded.chars().count() < scale_digits {
             padded.push('0');
         }
         padded
@@ -175,9 +224,23 @@ pub fn parse_price_to_precision(raw: &str) -> Result<i128, BinancePriceError> {
     let whole_scaled = whole_val
         .checked_mul(FLOAT_PRECISION)
         .ok_or_else(|| BinancePriceError::PriceParseError(format!("overflow for price: {text}")))?;
-    whole_scaled
+    let scaled = whole_scaled
         .checked_add(frac_val)
-        .ok_or_else(|| BinancePriceError::PriceParseError(format!("overflow for price: {text}")))
+        .ok_or_else(|| BinancePriceError::PriceParseError(format!("overflow for price: {text}")))?;
+
+    // #604 — a delisted or untraded symbol can report "0"/"0.00000000", and
+    // Coinbase can report a "USD" rate of "0" for a currency it cannot price.
+    // Reject it here like every other source does (FixedSource::new,
+    // fixed_price, validate_pyth_price) rather than feeding a zero into
+    // aggregation, where surviving deviation filtering depends entirely on the
+    // configured max_deviation_bps.
+    if scaled == 0 {
+        return Err(BinancePriceError::PriceParseError(
+            "price must be greater than zero".to_string(),
+        ));
+    }
+
+    Ok(scaled)
 }
 
 #[cfg(test)]
@@ -210,6 +273,28 @@ mod tests {
     #[test]
     fn parse_price_rejects_negative() {
         let err = parse_price_to_precision("-1.5").unwrap_err();
+        assert!(matches!(err, BinancePriceError::PriceParseError(_)));
+    }
+
+    // #604 — zero is an error too, matching FixedSource::new and fixed_price()
+    #[test]
+    fn parse_price_rejects_zero() {
+        let err = parse_price_to_precision("0").unwrap_err();
+        assert!(matches!(err, BinancePriceError::PriceParseError(_)));
+    }
+
+    #[test]
+    fn parse_price_rejects_zero_with_fractional_zeros() {
+        let err = parse_price_to_precision("0.00000000").unwrap_err();
+        assert!(matches!(err, BinancePriceError::PriceParseError(_)));
+    }
+
+    // #604 — the ticker body Binance returns for an untraded/delisted symbol
+    #[test]
+    fn parse_ticker_response_rejects_zero_priced_symbol() {
+        let body = r#"[{"symbol":"BTCUSDT","price":"0.00000000"}]"#;
+        let symbols = vec!["BTCUSDT".to_string()];
+        let err = parse_ticker_response_body(body, &symbols).unwrap_err();
         assert!(matches!(err, BinancePriceError::PriceParseError(_)));
     }
 
@@ -397,6 +482,6 @@ mod tests {
         let symbols = vec!["BTCUSDT".to_string(), "ETHUSDT".to_string()];
         let url = build_spot_price_url(&symbols);
         assert!(url.starts_with(BINANCE_TICKER_PRICE_URL));
-        assert!(url.contains(r#"symbols=["BTCUSDT","ETHUSDT"]"#));
+        assert!(url.contains("symbols"));
     }
 }

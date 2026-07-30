@@ -32,6 +32,18 @@ impl std::fmt::Display for CoinbasePriceError {
 
 impl std::error::Error for CoinbasePriceError {}
 
+impl crate::retry::Retryable for CoinbasePriceError {
+    fn is_retryable(&self) -> bool {
+        match self {
+            // Network errors and 5xx HTTP errors are transient
+            Self::NetworkError(_) => true,
+            Self::HttpError(status) => *status >= 500,
+            // Parse/JSON/config errors are permanent failures
+            Self::JsonError(_) | Self::PriceParseError(_) | Self::MissingUsdRate => false,
+        }
+    }
+}
+
 #[derive(Debug, Deserialize)]
 pub struct CoinbaseRates {
     pub rates: std::collections::HashMap<String, String>,
@@ -99,13 +111,29 @@ pub(crate) async fn fetch_spot_price_with_url(
         .filter(|stripped| !stripped.is_empty())
         .unwrap_or(symbol);
 
-    let url_str = format!("{}{}", base_url, base_currency);
+    let (clean_url, use_query) =
+        if base_url.contains("currency=") || base_url.contains("exchange-rates") {
+            (
+                base_url
+                    .trim_end_matches("?currency=")
+                    .trim_end_matches("&currency="),
+                true,
+            )
+        } else {
+            (base_url, false)
+        };
 
-    let response = crate::http::client()
-        .get(&url_str)
-        .send()
-        .await
-        .map_err(|err| CoinbasePriceError::NetworkError(err.to_string()))?;
+    let response = if use_query {
+        crate::http::client()
+            .get(clean_url)
+            .query(&[("currency", base_currency)])
+            .send()
+            .await
+    } else {
+        let url_str = format!("{}{}", clean_url, base_currency);
+        crate::http::client().get(&url_str).send().await
+    }
+    .map_err(|err| CoinbasePriceError::NetworkError(err.to_string()))?;
 
     let status = response.status().as_u16();
     let body = response
@@ -150,6 +178,23 @@ mod tests {
 
         let err = parse_coinbase_response_body(body).unwrap_err();
         assert_eq!(err, CoinbasePriceError::MissingUsdRate);
+    }
+
+    // #604 — Coinbase reuses binance::parse_price_to_precision, so a "USD" rate
+    // of exactly zero must surface as a parse error, not a valid price of 0.
+    #[test]
+    fn test_parse_coinbase_response_body_rejects_zero_usd_rate() {
+        let body = r#"{
+            "data": {
+                "currency": "BTC",
+                "rates": {
+                    "USD": "0"
+                }
+            }
+        }"#;
+
+        let err = parse_coinbase_response_body(body).unwrap_err();
+        assert!(matches!(err, CoinbasePriceError::PriceParseError(_)));
     }
 
     #[test]

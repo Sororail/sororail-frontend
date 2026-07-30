@@ -13,8 +13,11 @@ use std::path::Path;
 /// server.  Fields cover both use-cases:
 ///   - `symbol`, `stellar_address`, `sources` — oracle feed config
 ///   - `min`, `max`, `sources_used` — API price-lookup metadata
+// #504 — deny_unknown_fields ensures a typo'd key (e.g. "max_deviaton_bps") is
+// rejected at parse time instead of being silently ignored and falling back to
+// the Default value, which would let the oracle run with wrong risk thresholds.
 #[derive(Debug, Clone, Deserialize, PartialEq)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct TokenConfig {
     /// On-chain token symbol, e.g. "TWBTC", "TETH". Used as the canonical key.
     pub symbol: String,
@@ -136,6 +139,7 @@ pub fn parse_token_configs(raw: &str) -> Result<Vec<TokenConfig>, ConfigError> {
         return Err(ConfigError::EmptyTokenList);
     }
 
+    let mut symbols_seen = std::collections::HashSet::new();
     for token in &tokens {
         if token.symbol.is_empty() {
             return Err(ConfigError::InvalidToken {
@@ -143,11 +147,46 @@ pub fn parse_token_configs(raw: &str) -> Result<Vec<TokenConfig>, ConfigError> {
                 reason: "symbol must not be empty".to_string(),
             });
         }
+        let lower_symbol = token.symbol.to_lowercase();
+        if !symbols_seen.insert(lower_symbol) {
+            return Err(ConfigError::InvalidToken {
+                symbol: token.symbol.clone(),
+                reason: "duplicate symbol (case-insensitive)".to_string(),
+            });
+        }
         // stellar_address and sources are optional for the API server path,
         // but required for the oracle path — the oracle validates separately.
         for source in &token.sources {
             match source.as_str() {
-                "binance" | "coinbase" | "pyth" | "fixed" => {}
+                "binance" => {
+                    if let Some(ref sym) = token.binance_symbol {
+                        if sym.is_empty()
+                            || !sym
+                                .chars()
+                                .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+                        {
+                            return Err(ConfigError::InvalidToken {
+                                symbol: token.symbol.clone(),
+                                reason: format!("invalid binance_symbol '{sym}': must contain only alphanumeric characters, dashes, or underscores"),
+                            });
+                        }
+                    }
+                }
+                "coinbase" => {
+                    if let Some(ref sym) = token.coinbase_symbol {
+                        if sym.is_empty()
+                            || !sym
+                                .chars()
+                                .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+                        {
+                            return Err(ConfigError::InvalidToken {
+                                symbol: token.symbol.clone(),
+                                reason: format!("invalid coinbase_symbol '{sym}': must contain only alphanumeric characters, dashes, or underscores"),
+                            });
+                        }
+                    }
+                }
+                "pyth" | "fixed" => {}
                 other => {
                     return Err(ConfigError::InvalidToken {
                         symbol: token.symbol.clone(),
@@ -155,6 +194,39 @@ pub fn parse_token_configs(raw: &str) -> Result<Vec<TokenConfig>, ConfigError> {
                     });
                 }
             }
+        }
+
+        // #504 — range validation so misconfigured tuning fields fail loudly at
+        // startup rather than silently running with wrong risk thresholds.
+        if token.max_deviation_bps == 0 || token.max_deviation_bps > 10_000 {
+            return Err(ConfigError::InvalidToken {
+                symbol: token.symbol.clone(),
+                reason: format!(
+                    "max_deviation_bps ({}) must be between 1 and 10000",
+                    token.max_deviation_bps
+                ),
+            });
+        }
+        if token.stale_after_seconds == 0 {
+            return Err(ConfigError::InvalidToken {
+                symbol: token.symbol.clone(),
+                reason: "stale_after_seconds must be greater than 0".to_string(),
+            });
+        }
+        if token.submit_threshold_bps > 10_000 {
+            return Err(ConfigError::InvalidToken {
+                symbol: token.symbol.clone(),
+                reason: format!(
+                    "submit_threshold_bps ({}) must be between 0 and 10000",
+                    token.submit_threshold_bps
+                ),
+            });
+        }
+        if token.min_sources == 0 {
+            return Err(ConfigError::InvalidToken {
+                symbol: token.symbol.clone(),
+                reason: "min_sources must be at least 1".to_string(),
+            });
         }
     }
 
@@ -225,6 +297,22 @@ mod tests {
     }
 
     #[test]
+    fn reject_case_colliding_symbols() {
+        let json = r#"[
+            {"symbol":"BTC","stellar_address":"CBTCADDR","sources":["binance"],"min":44000.0,"max":46000.0},
+            {"symbol":"btc","stellar_address":"CETHADDR","sources":["binance"],"min":2400.0,"max":2600.0}
+        ]"#;
+        let err = parse_token_configs(json).unwrap_err();
+        match err {
+            ConfigError::InvalidToken { symbol, reason } => {
+                assert_eq!(symbol, "btc");
+                assert_eq!(reason, "duplicate symbol (case-insensitive)");
+            }
+            _ => panic!("expected ConfigError::InvalidToken"),
+        }
+    }
+
+    #[test]
     fn load_from_env_var_returns_none_when_unset() {
         let result = load_from_env_var(None).unwrap();
         assert!(result.is_none());
@@ -275,5 +363,56 @@ mod tests {
         assert!(map.contains_key("upper"));
         assert!(!map.contains_key("MIXEDcase"));
         assert!(!map.contains_key("UPPER"));
+    }
+
+    // #504 — deny_unknown_fields: typo'd keys must be rejected, not silently ignored.
+    #[test]
+    fn reject_unknown_field_typo() {
+        let json = r#"[{"symbol":"BTC","sources":["binance"],"max_deviaton_bps":50}]"#;
+        let err = parse_token_configs(json).unwrap_err();
+        assert!(
+            matches!(err, ConfigError::MalformedJson(_)),
+            "expected MalformedJson for unknown field, got: {err:?}"
+        );
+    }
+
+    // #504 — range validation: zero max_deviation_bps must fail.
+    #[test]
+    fn reject_zero_max_deviation_bps() {
+        let json = r#"[{"symbol":"BTC","sources":["binance"],"max_deviation_bps":0}]"#;
+        let err = parse_token_configs(json).unwrap_err();
+        assert!(matches!(err, ConfigError::InvalidToken { .. }), "{err:?}");
+    }
+
+    // #504 — range validation: max_deviation_bps above 10000 must fail.
+    #[test]
+    fn reject_max_deviation_bps_above_10000() {
+        let json = r#"[{"symbol":"BTC","sources":["binance"],"max_deviation_bps":10001}]"#;
+        let err = parse_token_configs(json).unwrap_err();
+        assert!(matches!(err, ConfigError::InvalidToken { .. }), "{err:?}");
+    }
+
+    // #504 — range validation: stale_after_seconds = 0 must fail.
+    #[test]
+    fn reject_zero_stale_after_seconds() {
+        let json = r#"[{"symbol":"BTC","sources":["binance"],"stale_after_seconds":0}]"#;
+        let err = parse_token_configs(json).unwrap_err();
+        assert!(matches!(err, ConfigError::InvalidToken { .. }), "{err:?}");
+    }
+
+    // #504 — range validation: submit_threshold_bps above 10000 must fail.
+    #[test]
+    fn reject_submit_threshold_bps_above_10000() {
+        let json = r#"[{"symbol":"BTC","sources":["binance"],"submit_threshold_bps":10001}]"#;
+        let err = parse_token_configs(json).unwrap_err();
+        assert!(matches!(err, ConfigError::InvalidToken { .. }), "{err:?}");
+    }
+
+    // #504 — range validation: min_sources = 0 must fail.
+    #[test]
+    fn reject_zero_min_sources() {
+        let json = r#"[{"symbol":"BTC","sources":["binance"],"min_sources":0}]"#;
+        let err = parse_token_configs(json).unwrap_err();
+        assert!(matches!(err, ConfigError::InvalidToken { .. }), "{err:?}");
     }
 }

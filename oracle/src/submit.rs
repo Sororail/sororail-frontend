@@ -1,3 +1,4 @@
+use crate::retry::Retryable;
 use serde::{Deserialize, Serialize};
 
 use crate::stellar_rpc::{rpc_post, RpcError};
@@ -7,6 +8,43 @@ const MAX_POLL_ATTEMPTS: u32 = 10;
 const INITIAL_BACKOFF_MS: u64 = 1_000;
 #[cfg(test)]
 const INITIAL_BACKOFF_MS: u64 = 1;
+
+/// Maximum number of diagnostic-event XDR entries logged at warn/error level.
+/// Full payload capture is already available in the admin-gated failure ring
+/// buffer; the structured log only needs enough context for triage.
+const MAX_LOGGED_EVENTS: usize = 5;
+/// Maximum character length of a single diagnostic-event XDR entry in logs.
+const MAX_EVENT_PREVIEW_LEN: usize = 128;
+
+/// Truncate a diagnostic-events vector for structured logging.
+///
+/// Returns at most `MAX_LOGGED_EVENTS` entries, each capped at
+/// `MAX_EVENT_PREVIEW_LEN` characters with a `…` suffix when truncated.
+/// Logs a count of the total events so operators know how many were dropped.
+fn truncate_events_for_log(events: &[String]) -> Vec<String> {
+    let total = events.len();
+    let truncated: Vec<String> = events
+        .iter()
+        .take(MAX_LOGGED_EVENTS)
+        .map(|e| {
+            if e.len() > MAX_EVENT_PREVIEW_LEN {
+                format!("{}…", &e[..MAX_EVENT_PREVIEW_LEN])
+            } else {
+                e.clone()
+            }
+        })
+        .collect();
+
+    if total > MAX_LOGGED_EVENTS {
+        tracing::debug!(
+            total_events = total,
+            logged_events = truncated.len(),
+            "diagnostic events truncated for log; full payload in failure ring buffer"
+        );
+    }
+
+    truncated
+}
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum SubmitError {
@@ -158,9 +196,40 @@ async fn poll_until_confirmed(rpc_url: &str, hash: &str) -> Result<u32, SubmitEr
         })
         .map_err(|e| SubmitError::JsonError(e.to_string()))?;
 
-        let body = rpc_post(rpc_url, payload).await.map_err(SubmitError::Rpc)?;
+        // Call RPC and parse response, but route transient RPC/network errors
+        // through the same backoff/retry path used for PENDING/NOT_FOUND so
+        // a single transient blip doesn't abort the whole poll.
+        let body = match rpc_post(rpc_url, payload).await {
+            Ok(b) => b,
+            Err(rpc_err) => {
+                // Map to SubmitError for logging/returning when non-retryable.
+                if rpc_err.is_retryable() {
+                    tracing::warn!(
+                        hash,
+                        ?rpc_err,
+                        attempt,
+                        "transient RPC/network error; will retry"
+                    );
+                    sleep_ms(backoff_ms).await;
+                    backoff_ms = (backoff_ms * 2).min(30_000);
+                    continue;
+                } else {
+                    return Err(SubmitError::Rpc(rpc_err));
+                }
+            }
+        };
 
-        let result = parse_get_transaction_response(&body)?;
+        let result = match parse_get_transaction_response(&body) {
+            Ok(r) => r,
+            Err(e) => match e {
+                // Propagate non-retryable parse/RPC faults immediately.
+                SubmitError::Rpc(rpc_err) => return Err(SubmitError::Rpc(rpc_err)),
+                SubmitError::JsonError(_) => return Err(e),
+                // Any other SubmitError variants shouldn't occur here, but
+                // treat them as non-retryable and return.
+                _ => return Err(e),
+            },
+        };
 
         match result.status.as_str() {
             "SUCCESS" => {
@@ -170,7 +239,13 @@ async fn poll_until_confirmed(rpc_url: &str, hash: &str) -> Result<u32, SubmitEr
             }
             "FAILED" => {
                 let events = result.diagnostic_events_xdr.unwrap_or_default();
-                tracing::error!(hash, ?events, "transaction failed");
+                let preview = truncate_events_for_log(&events);
+                tracing::warn!(
+                    hash,
+                    event_count = events.len(),
+                    ?preview,
+                    "transaction failed"
+                );
                 return Err(SubmitError::TransactionFailed { events });
             }
             "PENDING" | "NOT_FOUND" => {
