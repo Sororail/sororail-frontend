@@ -300,7 +300,12 @@ pub async fn submit_and_poll(rpc_url: &str, signed_xdr: &str) -> Result<u32, Sub
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
     use wiremock::ResponseTemplate;
+    use wiremock::{
+        matchers::{method, path},
+        Mock, MockServer,
+    };
 
     // ── sendTransaction parsing ──────────────────────────────────────────────
 
@@ -636,6 +641,304 @@ mod tests {
             );
         } else {
             panic!("expected PollTimeout error with hash");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_submit_and_poll_rejected_on_non_pending_send() {
+        let mock_server = MockServer::start().await;
+
+        let send_response_body = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": {
+                "status": "REJECTED",
+                "hash": "abc123def456",
+                "errorResultXdr": "AAAAAA=="
+            }
+        });
+
+        Mock::given(method("POST"))
+            .and(path("/"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(send_response_body))
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+
+        let signed_xdr = "AAAAAA==";
+        let rpc_url = mock_server.uri();
+
+        let result = submit_and_poll(&rpc_url, signed_xdr).await;
+
+        match result {
+            Err(SubmitError::Rejected { status }) => {
+                assert_eq!(status, "REJECTED");
+            }
+            other => panic!("Expected SubmitError::Rejected, got: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_submit_and_poll_rejected_with_various_status_codes() {
+        let test_cases = vec![
+            "REJECTED",
+            "FAILED",
+            "TIMEOUT",
+            "INSUFFICIENT_FEE",
+            "BAD_SEQUENCE",
+        ];
+
+        for status in test_cases {
+            let mock_server = MockServer::start().await;
+
+            let send_response_body = serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "result": {
+                    "status": status,
+                    "hash": "abc123def456",
+                }
+            });
+
+            Mock::given(method("POST"))
+                .and(path("/"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(send_response_body))
+                .expect(1)
+                .mount(&mock_server)
+                .await;
+
+            let signed_xdr = "AAAAAA==";
+            let rpc_url = mock_server.uri();
+
+            let result = submit_and_poll(&rpc_url, signed_xdr).await;
+
+            match result {
+                Err(SubmitError::Rejected {
+                    status: returned_status,
+                }) => {
+                    assert_eq!(returned_status, status);
+                }
+                other => {
+                    panic!("Expected SubmitError::Rejected with status '{status}', got: {other:?}")
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_submit_and_poll_success_path_with_pending_send() {
+        let mock_server = MockServer::start().await;
+
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let request_count = AtomicUsize::new(0);
+
+        let send_response = json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": {
+                "status": "PENDING",
+                "hash": "abc123def456"
+            }
+        });
+
+        let get_response = json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": {
+                "status": "SUCCESS",
+                "ledger": 12345
+            }
+        });
+
+        Mock::given(method("POST"))
+            .and(path("/"))
+            .respond_with(move |_: &wiremock::Request| {
+                let count = request_count.fetch_add(1, Ordering::SeqCst);
+                if count == 0 {
+                    ResponseTemplate::new(200).set_body_json(send_response.clone())
+                } else {
+                    ResponseTemplate::new(200).set_body_json(get_response.clone())
+                }
+            })
+            .expect(2)
+            .mount(&mock_server)
+            .await;
+
+        let signed_xdr = "AAAAAA==";
+        let rpc_url = mock_server.uri();
+
+        let result = submit_and_poll(&rpc_url, signed_xdr).await;
+
+        assert!(result.is_ok(), "Expected Ok, got: {:?}", result);
+        assert_eq!(result.unwrap(), 12345);
+    }
+
+    #[tokio::test]
+    async fn test_submit_and_poll_handles_send_transaction_rpc_error() {
+        let mock_server = MockServer::start().await;
+
+        let error_response_body = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "error": {
+                "code": -32000,
+                "message": "Internal error"
+            }
+        });
+
+        Mock::given(method("POST"))
+            .and(path("/"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(error_response_body))
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+
+        let signed_xdr = "AAAAAA==";
+        let rpc_url = mock_server.uri();
+
+        let result = submit_and_poll(&rpc_url, signed_xdr).await;
+
+        match result {
+            Err(SubmitError::Rpc(RpcError::RpcFault { code, message })) => {
+                assert_eq!(code, -32000);
+                assert_eq!(message, "Internal error");
+            }
+            other => panic!("Expected SubmitError::Rpc, got: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_submit_and_poll_handles_malformed_send_response() {
+        let mock_server = MockServer::start().await;
+
+        let malformed_response = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1
+        });
+
+        Mock::given(method("POST"))
+            .and(path("/"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(malformed_response))
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+
+        let signed_xdr = "AAAAAA==";
+        let rpc_url = mock_server.uri();
+
+        let result = submit_and_poll(&rpc_url, signed_xdr).await;
+
+        match result {
+            Err(SubmitError::JsonError(msg)) => {
+                assert!(msg.contains("missing 'result' field"));
+            }
+            other => panic!("Expected SubmitError::JsonError, got: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_submit_and_poll_does_not_poll_on_rejection() {
+        let mock_server = MockServer::start().await;
+
+        let send_response_body = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": {
+                "status": "REJECTED",
+                "hash": "abc123def456"
+            }
+        });
+
+        Mock::given(method("POST"))
+            .and(path("/"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(send_response_body))
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+
+        let signed_xdr = "AAAAAA==";
+        let rpc_url = mock_server.uri();
+
+        let result = submit_and_poll(&rpc_url, signed_xdr).await;
+
+        assert!(matches!(result, Err(SubmitError::Rejected { .. })));
+    }
+
+    #[tokio::test]
+    async fn test_submit_and_poll_rejected_with_error_result_xdr() {
+        let mock_server = MockServer::start().await;
+
+        let send_response_body = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": {
+                "status": "REJECTED",
+                "hash": "abc123def456",
+                "errorResultXdr": "AAAAAA=="
+            }
+        });
+
+        Mock::given(method("POST"))
+            .and(path("/"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(send_response_body))
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+
+        let signed_xdr = "AAAAAA==";
+        let rpc_url = mock_server.uri();
+
+        let result = submit_and_poll(&rpc_url, signed_xdr).await;
+
+        match result {
+            Err(SubmitError::Rejected { status }) => {
+                assert_eq!(status, "REJECTED");
+            }
+            other => panic!("Expected SubmitError::Rejected, got: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_submit_and_poll_handles_http_error_on_send() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/"))
+            .respond_with(ResponseTemplate::new(500).set_body_string("Internal Server Error"))
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+
+        let signed_xdr = "AAAAAA==";
+        let rpc_url = mock_server.uri();
+
+        let result = submit_and_poll(&rpc_url, signed_xdr).await;
+
+        assert!(matches!(result, Err(SubmitError::Rpc(_))));
+    }
+
+    #[tokio::test]
+    async fn test_parse_send_response_handles_non_pending_status() {
+        let test_cases = vec![
+            ("REJECTED", "REJECTED"),
+            ("FAILED", "FAILED"),
+            ("TIMEOUT", "TIMEOUT"),
+            ("INSUFFICIENT_FEE", "INSUFFICIENT_FEE"),
+        ];
+
+        for (status, expected_status) in test_cases {
+            let response_body = serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "result": {
+                    "status": status,
+                    "hash": "test_hash"
+                }
+            });
+
+            let result = parse_send_response(&response_body.to_string()).unwrap();
+            assert_eq!(result.status, expected_status);
+            assert_eq!(result.hash, "test_hash");
         }
     }
 }
