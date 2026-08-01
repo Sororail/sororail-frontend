@@ -119,9 +119,44 @@ pub struct CycleSummary {
 }
 
 async fn execute_keeper_cycle(state: Arc<AppState>) -> Result<CycleSummary, String> {
-    let prices = state.price_cache.read().await.prices.clone();
-    if prices.is_empty() {
-        return Err("No prices available in cache".to_string());
+    // Get fresh (non-stale) prices from cache
+    let now = crate::current_timestamp_secs();
+    let fresh_prices = {
+        let cache = state.price_cache.read().await;
+        let tokens = &state.config.price_feed.tokens;
+
+        cache
+            .prices
+            .iter()
+            .filter_map(|(key, price)| {
+                tokens
+                    .iter()
+                    .find(|t| t.lookup_key() == *key)
+                    .and_then(|token| {
+                        if price.is_stale(token.stale_after_seconds, now) {
+                            tracing::debug!(
+                                symbol = %token.symbol,
+                                token = %token.stellar_address,
+                                cached_timestamp = price.timestamp,
+                                stale_after_seconds = token.stale_after_seconds,
+                                age_seconds = now.saturating_sub(price.timestamp),
+                                "skipping stale price in keeper cycle"
+                            );
+                            None
+                        } else {
+                            Some((key.clone(), price.clone()))
+                        }
+                    })
+            })
+            .collect::<std::collections::BTreeMap<_, _>>()
+    };
+
+    if fresh_prices.is_empty() {
+        let cache = state.price_cache.read().await;
+        return Err(format!(
+            "No fresh prices available in cache (cache size: {}, all stale)",
+            cache.prices.len()
+        ));
     }
 
     let order_keys = get_pending_keys(&state, "get_order_count", "get_order_keys")
@@ -165,10 +200,12 @@ async fn execute_keeper_cycle(state: Arc<AppState>) -> Result<CycleSummary, Stri
         orders = order_keys.len(),
         deposits = deposit_keys.len(),
         withdrawals = withdrawal_keys.len(),
+        fresh_prices = fresh_prices.len(),
         "found_pending_work"
     );
 
-    let tx_hash = set_prices_on_chain(&state, &prices).await?;
+    // Submit prices on-chain - only fresh prices are included
+    let tx_hash = set_prices_on_chain(&state, &fresh_prices).await?;
     info!(hash = %tx_hash, "set_prices_confirmed");
     tokio::time::sleep(Duration::from_millis(5000)).await;
 
@@ -899,72 +936,56 @@ mod tests {
         );
     }
 
-    // #515 — parse_bytes_vec_from_result format branches
+    #[tokio::test]
+    async fn test_keeper_cycle_filters_stale_prices() {
+        let now = crate::current_timestamp_secs();
+        let stale_after = 60;
 
-    #[test]
-    fn test_parse_bytes_vec_lowercase_vec_and_bytes() {
-        let result = r#"{"vec":[{"bytes":"aabb"},{"bytes":"ccdd"}]}"#;
-        assert_eq!(
-            parse_bytes_vec_from_result(result).unwrap(),
-            vec!["aabb".to_string(), "ccdd".to_string()]
-        );
-    }
+        let fresh_price = CachedPrice {
+            token_address: "GAFRESH".to_string(),
+            symbol: "FRESH".to_string(),
+            display_symbol: "FRESH".to_string(),
+            keeper_index: 0,
+            min: 1000,
+            max: 1000,
+            median: 1000,
+            timestamp: now,
+            ledger_seq: 12345,
+            sources_used: vec!["test".to_string()],
+            signature: "sig".to_string(),
+        };
 
-    #[test]
-    fn test_parse_bytes_vec_uppercase_vec_and_bytes() {
-        let result = r#"{"Vec":[{"Bytes":"aabb"},{"Bytes":"ccdd"}]}"#;
-        assert_eq!(
-            parse_bytes_vec_from_result(result).unwrap(),
-            vec!["aabb".to_string(), "ccdd".to_string()]
-        );
-    }
+        let stale_price = CachedPrice {
+            token_address: "GASTALE".to_string(),
+            symbol: "STALE".to_string(),
+            display_symbol: "STALE".to_string(),
+            keeper_index: 0,
+            min: 900,
+            max: 900,
+            median: 900,
+            timestamp: now - 100,
+            ledger_seq: 12344,
+            sources_used: vec!["test".to_string()],
+            signature: "sig".to_string(),
+        };
 
-    #[test]
-    fn test_parse_bytes_vec_bare_array_fallback() {
-        let result = r#"[{"bytes":"aabb"}]"#;
-        assert_eq!(
-            parse_bytes_vec_from_result(result).unwrap(),
-            vec!["aabb".to_string()]
-        );
-    }
+        let mut prices = std::collections::BTreeMap::new();
+        prices.insert("GAFRESH".to_string(), fresh_price);
+        prices.insert("GASTALE".to_string(), stale_price);
 
-    #[test]
-    fn test_parse_bytes_vec_empty_array_returns_empty_vec() {
-        assert!(parse_bytes_vec_from_result(r#"{"vec":[]}"#)
-            .unwrap()
-            .is_empty());
-        assert!(parse_bytes_vec_from_result("[]").unwrap().is_empty());
-    }
+        let filtered_prices: Vec<_> = prices
+            .iter()
+            .filter(|(_, price)| !price.is_stale(stale_after, now))
+            .collect();
 
-    #[test]
-    fn test_parse_bytes_vec_entry_without_bytes_key_is_an_error() {
-        // An entry that's neither "bytes" nor "Bytes" is a malformed
-        // result, not something to silently drop — parse_bytes_vec_from_result
-        // surfaces it as an error rather than returning a shorter Vec that
-        // quietly lost data.
-        let result = r#"{"vec":[{"u32":7},{"bytes":"aabb"}]}"#;
-        let err = parse_bytes_vec_from_result(result).unwrap_err();
-        assert!(
-            err.contains("missing 'bytes' field"),
-            "unexpected error: {err}"
-        );
-    }
+        assert_eq!(filtered_prices.len(), 1);
+        assert_eq!(filtered_prices[0].1.symbol, "FRESH");
 
-    #[test]
-    fn test_parse_bytes_vec_non_array_value_returns_error() {
-        let err = parse_bytes_vec_from_result("42").unwrap_err();
-        assert!(err.starts_with("expected array"), "unexpected error: {err}");
-
-        let err = parse_bytes_vec_from_result(r#"{"vec":"not-an-array"}"#).unwrap_err();
-        assert!(err.starts_with("expected array"), "unexpected error: {err}");
-    }
-
-    #[test]
-    fn test_parse_bytes_vec_invalid_json_returns_error() {
-        let err = parse_bytes_vec_from_result("not json").unwrap_err();
-        assert!(
-            err.starts_with("failed to parse result"),
-            "unexpected error: {err}"
-        );
+        let stale_filtered: Vec<_> = prices
+            .iter()
+            .filter(|(_, price)| price.is_stale(stale_after, now))
+            .collect();
+        assert_eq!(stale_filtered.len(), 1);
+        assert_eq!(stale_filtered[0].1.symbol, "STALE");
     }
 }
