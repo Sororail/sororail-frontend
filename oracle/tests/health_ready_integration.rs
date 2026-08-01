@@ -578,10 +578,11 @@ async fn get_ready_returns_503_when_keeper_balance_low() {
             .insert("BTC".to_string(), sample_cached_price());
     }
 
-    // Set price cycle as recent (so staleness check passes)
+    // Set price and keeper cycles as recent (so both staleness checks pass)
     {
         let mut cycle = state.cycle_status.write().await;
         cycle.last_price_cycle_at = Some(SystemTime::now());
+        cycle.last_keeper_cycle_at = Some(SystemTime::now());
     }
 
     let app = build_router(state);
@@ -635,10 +636,11 @@ async fn get_ready_returns_503_when_keeper_balance_check_fails() {
             .insert("BTC".to_string(), sample_cached_price());
     }
 
-    // Set price cycle as recent (so staleness check passes)
+    // Set price and keeper cycles as recent (so both staleness checks pass)
     {
         let mut cycle = state.cycle_status.write().await;
         cycle.last_price_cycle_at = Some(SystemTime::now());
+        cycle.last_keeper_cycle_at = Some(SystemTime::now());
     }
 
     let app = build_router(state);
