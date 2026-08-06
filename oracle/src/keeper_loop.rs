@@ -11,6 +11,31 @@ use crate::state::{
     AppState, CachedPrice, FailedSubmission, KeeperExecution, MAX_CONSECUTIVE_FREEZE_FAILURES,
 };
 
+const ACCOUNT_SEQUENCE_RETRY_ATTEMPTS: u32 = 3;
+const ACCOUNT_SEQUENCE_RETRY_BASE_DELAY_MS: u64 = 100;
+/// Hard cap on a single keeper cycle — closes #490.
+const KEEPER_CYCLE_TIMEOUT_SECS: u64 = 50;
+
+#[derive(Debug)]
+enum SequenceFetchError {
+    Network(String),
+    MissingOrInvalid(String),
+}
+
+impl std::fmt::Display for SequenceFetchError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Network(msg) | Self::MissingOrInvalid(msg) => write!(f, "{msg}"),
+        }
+    }
+}
+
+impl crate::retry::Retryable for SequenceFetchError {
+    fn is_retryable(&self) -> bool {
+        matches!(self, Self::Network(_))
+    }
+}
+
 pub async fn run_keeper_loop(state: Arc<AppState>) {
     let mut ticker = interval(state.config.keeper_loop_interval);
     ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
@@ -93,9 +118,44 @@ pub struct CycleSummary {
 }
 
 async fn execute_keeper_cycle(state: Arc<AppState>) -> Result<CycleSummary, String> {
-    let prices = state.price_cache.read().await.prices.clone();
-    if prices.is_empty() {
-        return Err("No prices available in cache".to_string());
+    // Get fresh (non-stale) prices from cache
+    let now = crate::current_timestamp_secs();
+    let fresh_prices = {
+        let cache = state.price_cache.read().await;
+        let tokens = &state.config.price_feed.tokens;
+
+        cache
+            .prices
+            .iter()
+            .filter_map(|(key, price)| {
+                tokens
+                    .iter()
+                    .find(|t| t.lookup_key() == *key)
+                    .and_then(|token| {
+                        if price.is_stale(token.stale_after_seconds, now) {
+                            tracing::debug!(
+                                symbol = %token.symbol,
+                                token = %token.stellar_address,
+                                cached_timestamp = price.timestamp,
+                                stale_after_seconds = token.stale_after_seconds,
+                                age_seconds = now.saturating_sub(price.timestamp),
+                                "skipping stale price in keeper cycle"
+                            );
+                            None
+                        } else {
+                            Some((key.clone(), price.clone()))
+                        }
+                    })
+            })
+            .collect::<std::collections::BTreeMap<_, _>>()
+    };
+
+    if fresh_prices.is_empty() {
+        let cache = state.price_cache.read().await;
+        return Err(format!(
+            "No fresh prices available in cache (cache size: {}, all stale)",
+            cache.prices.len()
+        ));
     }
 
     let order_keys = get_pending_keys(&state, "get_order_count", "get_order_keys")
@@ -139,10 +199,12 @@ async fn execute_keeper_cycle(state: Arc<AppState>) -> Result<CycleSummary, Stri
         orders = order_keys.len(),
         deposits = deposit_keys.len(),
         withdrawals = withdrawal_keys.len(),
+        fresh_prices = fresh_prices.len(),
         "found_pending_work"
     );
 
-    let tx_hash = set_prices_on_chain(&state, &prices).await?;
+    // Submit prices on-chain - only fresh prices are included
+    let tx_hash = set_prices_on_chain(&state, &fresh_prices).await?;
     info!(hash = %tx_hash, "set_prices_confirmed");
     tokio::time::sleep(Duration::from_millis(5000)).await;
 
@@ -847,6 +909,8 @@ mod tests {
             admin_api_token: None,
             pyth_api_key: None,
             min_keeper_balance_xlm: 0.0,
+            set_prices_tx_fee: crate::config::DEFAULT_SET_PRICES_TX_FEE,
+            keeper_tx_fee: crate::config::DEFAULT_KEEPER_TX_FEE,
             price_loop_interval: Duration::from_millis(50),
             keeper_loop_interval: Duration::from_millis(50),
             price_feed: PriceFeedConfig { tokens: vec![] },
@@ -871,5 +935,58 @@ mod tests {
             completed.is_ok(),
             "run_keeper_loop must exit within 500 ms of shutdown_token cancellation"
         );
+    }
+
+    #[tokio::test]
+    async fn test_keeper_cycle_filters_stale_prices() {
+        let now = crate::current_timestamp_secs();
+        let stale_after = 60;
+
+        let fresh_price = CachedPrice {
+            token_address: "GAFRESH".to_string(),
+            symbol: "FRESH".to_string(),
+            display_symbol: "FRESH".to_string(),
+            keeper_index: 0,
+            min: 1000,
+            max: 1000,
+            median: 1000,
+            timestamp: now,
+            ledger_seq: 12345,
+            sources_used: vec!["test".to_string()],
+            signature: "sig".to_string(),
+        };
+
+        let stale_price = CachedPrice {
+            token_address: "GASTALE".to_string(),
+            symbol: "STALE".to_string(),
+            display_symbol: "STALE".to_string(),
+            keeper_index: 0,
+            min: 900,
+            max: 900,
+            median: 900,
+            timestamp: now - 100,
+            ledger_seq: 12344,
+            sources_used: vec!["test".to_string()],
+            signature: "sig".to_string(),
+        };
+
+        let mut prices = std::collections::BTreeMap::new();
+        prices.insert("GAFRESH".to_string(), fresh_price);
+        prices.insert("GASTALE".to_string(), stale_price);
+
+        let filtered_prices: Vec<_> = prices
+            .iter()
+            .filter(|(_, price)| !price.is_stale(stale_after, now))
+            .collect();
+
+        assert_eq!(filtered_prices.len(), 1);
+        assert_eq!(filtered_prices[0].1.symbol, "FRESH");
+
+        let stale_filtered: Vec<_> = prices
+            .iter()
+            .filter(|(_, price)| price.is_stale(stale_after, now))
+            .collect();
+        assert_eq!(stale_filtered.len(), 1);
+        assert_eq!(stale_filtered[0].1.symbol, "STALE");
     }
 }

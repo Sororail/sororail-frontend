@@ -35,7 +35,7 @@ impl crate::retry::Retryable for BinancePriceError {
         match self {
             // Network errors and 5xx HTTP errors are transient
             Self::NetworkError(_) => true,
-            Self::HttpError(status) => *status >= 500,
+            Self::HttpError { status, .. } => *status >= 500,
             // Parse/JSON errors are permanent failures
             Self::JsonError(_) | Self::PriceParseError(_) => false,
         }

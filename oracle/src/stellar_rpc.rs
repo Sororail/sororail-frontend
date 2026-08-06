@@ -18,7 +18,7 @@ impl crate::retry::Retryable for RpcError {
     fn is_retryable(&self) -> bool {
         match self {
             RpcError::NetworkError(_) => true,
-            RpcError::HttpError(code) => *code >= 500 || *code == 429,
+            RpcError::HttpError { status, .. } => *status >= 500 || *status == 429,
             RpcError::JsonError(_) => false,
             RpcError::RpcFault { .. } => false,
             RpcError::BalanceBelowMinimum { .. } => false,

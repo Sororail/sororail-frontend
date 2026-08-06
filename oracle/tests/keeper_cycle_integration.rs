@@ -5,8 +5,18 @@ use wiremock::{MockServer, Request, ResponseTemplate};
 
 mod common;
 
-use common::test_config;
+use common::{fixed_token, test_config_with_tokens};
 use oracle::state::{AppState, CachedPrice};
+
+/// Cache key for `test_cached_price()`/`fresh_cached_price()` — must equal the
+/// matching token's `lookup_key()`, which lowercases the symbol.
+const TUSDC_KEY: &str = "tusdc";
+
+/// Token config matching `TUSDC_KEY`, for keeper-cycle tests that rely on the
+/// per-token freshness filter in `execute_keeper_cycle` (#530) finding a match.
+fn test_token() -> shared_config::TokenConfig {
+    fixed_token("TUSDC", "")
+}
 
 fn test_cached_price() -> CachedPrice {
     CachedPrice {
@@ -24,6 +34,15 @@ fn test_cached_price() -> CachedPrice {
     }
 }
 
+/// Same as `test_cached_price()` but timestamped "now" so it survives the
+/// per-token freshness filter in `execute_keeper_cycle` (#530).
+fn fresh_cached_price() -> CachedPrice {
+    CachedPrice {
+        timestamp: oracle::current_timestamp_secs(),
+        ..test_cached_price()
+    }
+}
+
 /// Deterministic 64-hex transaction hash for the `nth` submission a test's mock
 /// RPC answers, so `getTransaction` can be routed per submission.
 fn submission_hash(nth: usize) -> String {
@@ -35,7 +54,7 @@ async fn empty_price_cache_returns_error_and_no_rpc_calls() {
     let mock_server = MockServer::start().await;
     let rpc_url = mock_server.uri();
 
-    let config = test_config(&rpc_url, "http://127.0.0.1:9");
+    let config = test_config_with_tokens(&rpc_url, "http://127.0.0.1:9", vec![test_token()]);
     let state = Arc::new(AppState::new(config));
 
     // Don't populate the price cache — leave it empty.
@@ -45,8 +64,8 @@ async fn empty_price_cache_returns_error_and_no_rpc_calls() {
     assert!(result.is_err(), "expected Err for empty price cache");
     assert_eq!(
         result.unwrap_err(),
-        "No prices available in cache",
-        "error must match the exact string in execute_keeper_cycle line 89"
+        "No fresh prices available in cache (cache size: 0, all stale)",
+        "error must match the exact string in execute_keeper_cycle"
     );
 
     // Verify no RPC calls were made — the function short-circuits before any network I/O.
@@ -83,14 +102,14 @@ async fn mock_rpc_empty_cycle_skips_submission() {
         .mount(&mock_server)
         .await;
 
-    let config = test_config(&rpc_url, "http://127.0.0.1:9");
+    let config = test_config_with_tokens(&rpc_url, "http://127.0.0.1:9", vec![test_token()]);
     let state = Arc::new(AppState::new(config));
 
     {
         let mut cache = state.price_cache.write().await;
         cache
             .prices
-            .insert("TUSDC".to_string(), test_cached_price());
+            .insert(TUSDC_KEY.to_string(), fresh_cached_price());
     }
 
     let result = oracle::keeper_loop::run_keeper_cycle(Arc::clone(&state)).await;
@@ -117,14 +136,14 @@ async fn mock_rpc_rpc_failure_continues() {
         .mount(&mock_server)
         .await;
 
-    let config = test_config(&rpc_url, "http://127.0.0.1:9");
+    let config = test_config_with_tokens(&rpc_url, "http://127.0.0.1:9", vec![test_token()]);
     let state = Arc::new(AppState::new(config));
 
     {
         let mut cache = state.price_cache.write().await;
         cache
             .prices
-            .insert("TUSDC".to_string(), test_cached_price());
+            .insert(TUSDC_KEY.to_string(), fresh_cached_price());
     }
 
     let result = oracle::keeper_loop::run_keeper_cycle(Arc::clone(&state)).await;
@@ -220,14 +239,14 @@ async fn mock_rpc_full_keeper_cycle_with_pending_orders() {
         .mount(&mock_server)
         .await;
 
-    let config = test_config(&rpc_url, "http://127.0.0.1:9");
+    let config = test_config_with_tokens(&rpc_url, "http://127.0.0.1:9", vec![test_token()]);
     let state = Arc::new(AppState::new(config));
 
     {
         let mut cache = state.price_cache.write().await;
         cache
             .prices
-            .insert("TUSDC".to_string(), test_cached_price());
+            .insert(TUSDC_KEY.to_string(), fresh_cached_price());
     }
 
     let result = oracle::keeper_loop::run_keeper_cycle(Arc::clone(&state)).await;
@@ -330,14 +349,14 @@ async fn keeper_cycle_retries_transient_get_account_sequence_failure() {
         .mount(&mock_server)
         .await;
 
-    let config = test_config(&rpc_url, "http://127.0.0.1:9");
+    let config = test_config_with_tokens(&rpc_url, "http://127.0.0.1:9", vec![test_token()]);
     let state = Arc::new(AppState::new(config));
 
     {
         let mut cache = state.price_cache.write().await;
         cache
             .prices
-            .insert("TUSDC".to_string(), test_cached_price());
+            .insert(TUSDC_KEY.to_string(), fresh_cached_price());
     }
 
     let result = oracle::keeper_loop::run_keeper_cycle(Arc::clone(&state)).await;
@@ -507,14 +526,14 @@ async fn keeper_cycle_freezes_order_when_budget_exceeded_and_freeze_succeeds() {
         .mount(&mock_server)
         .await;
 
-    let config = test_config(&rpc_url, "http://127.0.0.1:9");
+    let config = test_config_with_tokens(&rpc_url, "http://127.0.0.1:9", vec![test_token()]);
     let state = Arc::new(AppState::new(config));
 
     {
         let mut cache = state.price_cache.write().await;
         cache
             .prices
-            .insert("TUSDC".to_string(), test_cached_price());
+            .insert(TUSDC_KEY.to_string(), fresh_cached_price());
     }
 
     let result = oracle::keeper_loop::run_keeper_cycle(Arc::clone(&state)).await;
@@ -610,14 +629,14 @@ async fn keeper_cycle_rejects_non_hex_order_key() {
         .mount(&mock_server)
         .await;
 
-    let config = test_config(&rpc_url, "http://127.0.0.1:9");
+    let config = test_config_with_tokens(&rpc_url, "http://127.0.0.1:9", vec![test_token()]);
     let state = Arc::new(AppState::new(config));
 
     {
         let mut cache = state.price_cache.write().await;
         cache
             .prices
-            .insert("TUSDC".to_string(), test_cached_price());
+            .insert(TUSDC_KEY.to_string(), fresh_cached_price());
     }
 
     let result = oracle::keeper_loop::run_keeper_cycle(Arc::clone(&state)).await;
@@ -639,7 +658,7 @@ async fn keeper_cycle_rejects_non_hex_order_key() {
 
 /// Helper: state with one cached price pointing at the mock RPC.
 async fn state_with_price(rpc_url: &str) -> Arc<AppState> {
-    let config = test_config(rpc_url, "http://127.0.0.1:9");
+    let config = test_config_with_tokens(rpc_url, "http://127.0.0.1:9", vec![test_token()]);
     let state = Arc::new(AppState::new(config));
     // Pre-populate the price cache so the cycle reaches get_account_sequence.
     state
@@ -647,7 +666,7 @@ async fn state_with_price(rpc_url: &str) -> Arc<AppState> {
         .write()
         .await
         .prices
-        .insert("TUSDC".to_string(), test_cached_price());
+        .insert(TUSDC_KEY.to_string(), fresh_cached_price());
     state
 }
 
