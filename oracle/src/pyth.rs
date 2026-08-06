@@ -63,7 +63,7 @@ impl crate::retry::Retryable for PythPriceError {
         match self {
             // Network errors and 5xx HTTP errors are transient
             Self::NetworkError(_) => true,
-            Self::HttpError(status) => *status >= 500,
+            Self::HttpError { status, .. } => *status >= 500,
             // Stale prices might become fresh on retry
             Self::StalePrice { .. } => true,
             // Parse/JSON/config/validation errors are permanent failures
@@ -222,14 +222,17 @@ pub(crate) async fn fetch_pyth_price_with_url(
         .map_err(|err| PythPriceError::NetworkError(err.to_string()))?;
 
     let status = response.status().as_u16();
-    if status != 200 {
-        return Err(PythPriceError::HttpError(status));
-    }
-
     let body = response
         .text()
         .await
         .map_err(|err| PythPriceError::NetworkError(err.to_string()))?;
+
+    if status != 200 {
+        return Err(PythPriceError::HttpError {
+            status,
+            body: crate::http::truncate_error_body(&body),
+        });
+    }
 
     let hermes_response: HermesResponse =
         serde_json::from_str(&body).map_err(|err| PythPriceError::JsonError(err.to_string()))?;

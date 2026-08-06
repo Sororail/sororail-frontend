@@ -597,6 +597,8 @@ impl Config {
             admin_api_token: None,
             pyth_api_key: None,
             min_keeper_balance_xlm: 1.0,
+            set_prices_tx_fee: DEFAULT_SET_PRICES_TX_FEE,
+            keeper_tx_fee: DEFAULT_KEEPER_TX_FEE,
             price_loop_interval: std::time::Duration::from_secs(10),
             keeper_loop_interval: std::time::Duration::from_secs(10),
             price_feed: PriceFeedConfig { tokens: vec![] },
