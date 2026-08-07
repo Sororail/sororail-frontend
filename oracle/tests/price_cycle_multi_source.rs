@@ -44,6 +44,8 @@ fn test_state(rpc_url: &str, tokens: Vec<TokenConfig>) -> Arc<AppState> {
         admin_api_token: None,
         pyth_api_key: None,
         min_keeper_balance_xlm: 0.0,
+        set_prices_tx_fee: oracle::config::DEFAULT_SET_PRICES_TX_FEE,
+        keeper_tx_fee: oracle::config::DEFAULT_KEEPER_TX_FEE,
         price_loop_interval: Duration::from_millis(1000),
         keeper_loop_interval: Duration::from_millis(1000),
         price_feed: PriceFeedConfig { tokens },

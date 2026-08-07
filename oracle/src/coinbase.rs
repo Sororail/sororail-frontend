@@ -6,7 +6,7 @@ pub const COINBASE_EXCHANGE_RATES_URL: &str =
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CoinbasePriceError {
     NetworkError(String),
-    HttpError(u16),
+    HttpError { status: u16, body: String },
     JsonError(String),
     PriceParseError(String),
     MissingUsdRate,
@@ -17,7 +17,13 @@ impl std::fmt::Display for CoinbasePriceError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::NetworkError(error) => write!(f, "Coinbase network error: {error}"),
-            Self::HttpError(status) => write!(f, "Coinbase returned HTTP {status}"),
+            Self::HttpError { status, body } => {
+                if body.is_empty() {
+                    write!(f, "Coinbase returned HTTP {status}")
+                } else {
+                    write!(f, "Coinbase returned HTTP {status}: {body}")
+                }
+            }
             Self::JsonError(error) => write!(f, "invalid Coinbase response: {error}"),
             Self::PriceParseError(error) => write!(f, "invalid Coinbase price: {error}"),
             Self::MissingUsdRate => f.write_str("Coinbase response has no USD rate"),
@@ -39,7 +45,7 @@ impl crate::retry::Retryable for CoinbasePriceError {
         match self {
             // Network errors and 5xx HTTP errors are transient
             Self::NetworkError(_) => true,
-            Self::HttpError(status) => *status >= 500,
+            Self::HttpError { status, .. } => *status >= 500,
             // Parse/JSON/config errors are permanent failures
             Self::JsonError(_) | Self::PriceParseError(_) | Self::MissingUsdRate => false,
             // Currency mismatch should not be retried - it's a data integrity issue
@@ -100,7 +106,10 @@ pub fn parse_coinbase_http_response(
     expected_currency: &str,
 ) -> Result<i128, CoinbasePriceError> {
     if status_code != 200 {
-        return Err(CoinbasePriceError::HttpError(status_code));
+        return Err(CoinbasePriceError::HttpError {
+            status: status_code,
+            body: crate::http::truncate_error_body(body),
+        });
     }
     parse_coinbase_response_body(body, expected_currency)
 }
@@ -245,7 +254,10 @@ mod tests {
     #[test]
     fn test_parse_coinbase_http_response_non_200() {
         let err = parse_coinbase_http_response(404, "{}", "BTC").unwrap_err();
-        assert_eq!(err, CoinbasePriceError::HttpError(404));
+        assert!(matches!(
+            err,
+            CoinbasePriceError::HttpError { status: 404, .. }
+        ));
     }
 
     #[test]
@@ -511,7 +523,10 @@ mod tests {
         let err = super::fetch_spot_price_with_url(&base_url, "BTC")
             .await
             .unwrap_err();
-        assert_eq!(err, CoinbasePriceError::HttpError(404));
+        assert!(matches!(
+            err,
+            CoinbasePriceError::HttpError { status: 404, .. }
+        ));
     }
 
     #[tokio::test]
@@ -530,6 +545,9 @@ mod tests {
         let err = super::fetch_spot_price_with_url(&base_url, "BTC")
             .await
             .unwrap_err();
-        assert_eq!(err, CoinbasePriceError::HttpError(500));
+        assert!(matches!(
+            err,
+            CoinbasePriceError::HttpError { status: 500, .. }
+        ));
     }
 }

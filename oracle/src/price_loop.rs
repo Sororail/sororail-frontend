@@ -489,6 +489,8 @@ mod tests {
             admin_api_token: None,
             pyth_api_key: None,
             min_keeper_balance_xlm: 0.0,
+            set_prices_tx_fee: crate::config::DEFAULT_SET_PRICES_TX_FEE,
+            keeper_tx_fee: crate::config::DEFAULT_KEEPER_TX_FEE,
             price_loop_interval: Duration::from_millis(1),
             keeper_loop_interval: Duration::from_millis(1),
             price_feed: PriceFeedConfig {
@@ -523,6 +525,8 @@ mod tests {
             admin_api_token: None,
             pyth_api_key: None,
             min_keeper_balance_xlm: 0.0,
+            set_prices_tx_fee: crate::config::DEFAULT_SET_PRICES_TX_FEE,
+            keeper_tx_fee: crate::config::DEFAULT_KEEPER_TX_FEE,
             price_loop_interval: Duration::from_millis(50),
             keeper_loop_interval: Duration::from_millis(50),
             price_feed: PriceFeedConfig { tokens: vec![] },
