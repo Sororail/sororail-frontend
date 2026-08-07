@@ -363,6 +363,8 @@ async fn cold_start_reads_ready_after_price_and_keeper_loops() {
         admin_api_token: Some(SecretString::new("test-admin-token".to_string())),
         pyth_api_key: None,
         min_keeper_balance_xlm: 10.0,
+        set_prices_tx_fee: oracle::config::DEFAULT_SET_PRICES_TX_FEE,
+        keeper_tx_fee: oracle::config::DEFAULT_KEEPER_TX_FEE,
         price_loop_interval: Duration::from_millis(100),
         keeper_loop_interval: Duration::from_millis(100),
         price_feed: PriceFeedConfig {

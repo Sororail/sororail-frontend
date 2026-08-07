@@ -11,7 +11,6 @@ use crate::state::{
     AppState, CachedPrice, FailedSubmission, KeeperExecution, MAX_CONSECUTIVE_FREEZE_FAILURES,
 };
 
-const KEEPER_TX_FEE: u32 = 2_000_000;
 const ACCOUNT_SEQUENCE_RETRY_ATTEMPTS: u32 = 3;
 const ACCOUNT_SEQUENCE_RETRY_BASE_DELAY_MS: u64 = 100;
 /// Hard cap on a single keeper cycle — closes #490.
@@ -584,7 +583,7 @@ async fn set_prices_on_chain(
         &state.config.oracle_contract_id,
         "set_prices",
         vec![prices_scval],
-        1_000_000,
+        state.config.set_prices_tx_fee,
         sequence,
         None,
     )?;
@@ -630,7 +629,7 @@ async fn execute_handler(
             )?),
             key_scval,
         ],
-        KEEPER_TX_FEE,
+        state.config.keeper_tx_fee,
         sequence,
         None,
     )?;
@@ -910,6 +909,8 @@ mod tests {
             admin_api_token: None,
             pyth_api_key: None,
             min_keeper_balance_xlm: 0.0,
+            set_prices_tx_fee: crate::config::DEFAULT_SET_PRICES_TX_FEE,
+            keeper_tx_fee: crate::config::DEFAULT_KEEPER_TX_FEE,
             price_loop_interval: Duration::from_millis(50),
             keeper_loop_interval: Duration::from_millis(50),
             price_feed: PriceFeedConfig { tokens: vec![] },

@@ -147,7 +147,7 @@ async fn last_updated_is_recent_after_successful_cycle() {
 }
 
 #[tokio::test]
-async fn last_updated_unchanged_after_failed_cycle() {
+async fn last_updated_cleared_after_previously_successful_cycle_then_all_fail() {
     let mock = MockServer::start().await;
     Mock::given(method("POST"))
         .respond_with(ResponseTemplate::new(200).set_body_json(ledger_ok()))
@@ -165,7 +165,8 @@ async fn last_updated_unchanged_after_failed_cycle() {
     );
 
     // Cycle 2: all tokens fail. Carry forward the previous timestamp into a fresh
-    // state so we can verify that a failing cycle does not overwrite it.
+    // state to verify that a total-failure cycle clears it — a stale last_updated
+    // paired with an emptied price cache would misreport freshness (#530).
     let state_fail = test_state(&mock.uri(), vec![bad_token("FAILONLY", FAIL1_ADDR)]);
     {
         let mut cache = state_fail.price_cache.write().await;
@@ -175,9 +176,9 @@ async fn last_updated_unchanged_after_failed_cycle() {
     run_price_cycle(Arc::clone(&state_fail)).await;
 
     let after_second = state_fail.price_cache.read().await.last_updated;
-    assert_eq!(
-        after_first, after_second,
-        "last_updated must remain unchanged after a cycle where all tokens fail"
+    assert!(
+        after_second.is_none(),
+        "last_updated must be cleared after a cycle where all tokens fail, even if it was previously set"
     );
 }
 
