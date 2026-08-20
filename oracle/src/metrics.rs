@@ -215,54 +215,54 @@ impl Metrics {
         let c = self.counters.lock().unwrap_or_else(|p| p.into_inner());
         let mut output = String::new();
 
-        output.push_str("# HELP oracle_price_cycle_count Total number of price cycles\n");
-        output.push_str("# TYPE oracle_price_cycle_count counter\n");
+        output.push_str("# HELP oracle_price_cycles_total Total number of price cycles\n");
+        output.push_str("# TYPE oracle_price_cycles_total counter\n");
         output.push_str(&format!(
-            "oracle_price_cycle_count {}\n",
+            "oracle_price_cycles_total {}\n",
             c.price_cycle_count
         ));
 
         output.push_str(
-            "# HELP oracle_price_cycle_latency_ms Last price cycle latency in milliseconds\n",
+            "# HELP oracle_price_cycle_duration_seconds Last price cycle duration in seconds\n",
         );
-        output.push_str("# TYPE oracle_price_cycle_latency_ms gauge\n");
+        output.push_str("# TYPE oracle_price_cycle_duration_seconds gauge\n");
         output.push_str(&format!(
-            "oracle_price_cycle_latency_ms {}\n",
-            c.price_cycle_latency_ms
+            "oracle_price_cycle_duration_seconds {}\n",
+            c.price_cycle_latency_ms as f64 / 1000.0
         ));
 
-        output.push_str("# HELP oracle_keeper_cycle_count Total number of keeper cycles\n");
-        output.push_str("# TYPE oracle_keeper_cycle_count counter\n");
+        output.push_str("# HELP oracle_keeper_cycles_total Total number of keeper cycles\n");
+        output.push_str("# TYPE oracle_keeper_cycles_total counter\n");
         output.push_str(&format!(
-            "oracle_keeper_cycle_count {}\n",
+            "oracle_keeper_cycles_total {}\n",
             c.keeper_cycle_count
         ));
 
         output.push_str(
-            "# HELP oracle_keeper_cycle_latency_ms Last keeper cycle latency in milliseconds\n",
+            "# HELP oracle_keeper_cycle_duration_seconds Last keeper cycle duration in seconds\n",
         );
-        output.push_str("# TYPE oracle_keeper_cycle_latency_ms gauge\n");
+        output.push_str("# TYPE oracle_keeper_cycle_duration_seconds gauge\n");
         output.push_str(&format!(
-            "oracle_keeper_cycle_latency_ms {}\n",
-            c.keeper_cycle_latency_ms
+            "oracle_keeper_cycle_duration_seconds {}\n",
+            c.keeper_cycle_latency_ms as f64 / 1000.0
         ));
 
-        output.push_str("# HELP oracle_orders_executed Total number of orders executed\n");
-        output.push_str("# TYPE oracle_orders_executed counter\n");
-        output.push_str(&format!("oracle_orders_executed {}\n", c.orders_executed));
+        output.push_str("# HELP oracle_orders_executed_total Total number of orders executed\n");
+        output.push_str("# TYPE oracle_orders_executed_total counter\n");
+        output.push_str(&format!("oracle_orders_executed_total {}\n", c.orders_executed));
 
-        output.push_str("# HELP oracle_deposits_executed Total number of deposits executed\n");
-        output.push_str("# TYPE oracle_deposits_executed counter\n");
+        output.push_str("# HELP oracle_deposits_executed_total Total number of deposits executed\n");
+        output.push_str("# TYPE oracle_deposits_executed_total counter\n");
         output.push_str(&format!(
-            "oracle_deposits_executed {}\n",
+            "oracle_deposits_executed_total {}\n",
             c.deposits_executed
         ));
 
         output
-            .push_str("# HELP oracle_withdrawals_executed Total number of withdrawals executed\n");
-        output.push_str("# TYPE oracle_withdrawals_executed counter\n");
+            .push_str("# HELP oracle_withdrawals_executed_total Total number of withdrawals executed\n");
+        output.push_str("# TYPE oracle_withdrawals_executed_total counter\n");
         output.push_str(&format!(
-            "oracle_withdrawals_executed {}\n",
+            "oracle_withdrawals_executed_total {}\n",
             c.withdrawals_executed
         ));
 
@@ -297,9 +297,9 @@ impl Metrics {
             ));
         }
 
-        output.push_str("# HELP oracle_submit_failures Total number of submit failures\n");
-        output.push_str("# TYPE oracle_submit_failures counter\n");
-        output.push_str(&format!("oracle_submit_failures {}\n", c.submit_failures));
+        output.push_str("# HELP oracle_submit_failures_total Total number of submit failures\n");
+        output.push_str("# TYPE oracle_submit_failures_total counter\n");
+        output.push_str(&format!("oracle_submit_failures_total {}\n", c.submit_failures));
 
         output.push_str("# HELP oracle_last_metrics_update Timestamp of last metrics update\n");
         output.push_str("# TYPE oracle_last_metrics_update gauge\n");
@@ -424,8 +424,8 @@ mod tests {
         metrics.record_price_cycle(100, 3, 1);
 
         let prometheus = metrics.to_prometheus();
-        assert!(prometheus.contains("oracle_price_cycle_count 1"));
-        assert!(prometheus.contains("oracle_price_cycle_latency_ms 100"));
+        assert!(prometheus.contains("oracle_price_cycles_total 1"));
+        assert!(prometheus.contains("oracle_price_cycle_duration_seconds 0.1"));
     }
 
     #[test]
@@ -489,6 +489,4 @@ mod tests {
         assert_eq!(matches, 3);
         assert!(output.contains("oracle_http_requests_total{route=\"/unmatched\",method=\"GET\",status_class=\"4xx\"} 2"));
     }
-
-
 }
