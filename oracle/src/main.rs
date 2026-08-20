@@ -71,8 +71,8 @@ fn init_tracing() {
     tracing_subscriber::fmt()
         .json()
         .with_env_filter(filter)
-        .with_current_span(false)
-        .with_span_list(false)
+        .with_current_span(true)
+        .with_span_list(true)
         .init();
 }
 
