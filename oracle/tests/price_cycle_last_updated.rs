@@ -240,7 +240,7 @@ async fn two_consecutive_good_cycles_both_update_last_updated() {
         .expect("first timestamp must be set");
 
     // We cannot mock SystemTime::now() without changing AppState to take an injected Clock trait.
-    // Instead of refactoring the whole app to support clock injection just for this assertion, 
+    // Instead of refactoring the whole app to support clock injection just for this assertion,
     // we do a short sleep to ensure the wall clock advances between cycles.
     tokio::time::sleep(Duration::from_millis(5)).await;
 
