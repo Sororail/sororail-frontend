@@ -25,6 +25,11 @@ jobs:
           workspaces: |
             .
             oracle
+      - run: |
+          if [ -d "tests" ]; then
+            echo "Error: tests/ directory found in the virtual manifest root. Cargo ignores this. Please place integration tests in oracle/tests/."
+            exit 1
+          fi
       - run: cargo test --all
 
   clippy:
@@ -67,3 +72,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: docker build -t so4-oracle .
+
+  coverage:
+    name: coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+      - uses: taiki-e/install-action@cargo-llvm-cov
+      - run: cargo llvm-cov --all --fail-under-lines 85
+      - run: cargo llvm-cov report --markdown >> $GITHUB_STEP_SUMMARY
