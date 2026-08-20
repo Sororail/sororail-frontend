@@ -87,7 +87,9 @@ async fn http_get_prices_with_populated_cache() {
     let body: serde_json::Value = response.json().await.unwrap();
     assert!(body.is_array());
     let prices = body.as_array().unwrap();
-    assert!(prices.iter().any(|p| p.get("symbol").unwrap().as_str().unwrap() == "TUSDC"));
+    assert!(prices
+        .iter()
+        .any(|p| p.get("symbol").unwrap().as_str().unwrap() == "TUSDC"));
 }
 
 #[tokio::test]
