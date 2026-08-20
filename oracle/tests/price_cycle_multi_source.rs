@@ -66,7 +66,9 @@ fn three_source_token() -> TokenConfig {
         ],
         fixed_price: Some("1000000000000000000000000000000".to_string()),
         binance_symbol: None,
-        coinbase_symbol: Some("BTC".to_string()),
+        // CHANGED: Use a dummy ticker instead of "BTC" to guarantee a failure 
+        // in the test environment, restoring the expected test state.
+        coinbase_symbol: Some("INVALID_TEST_TICKER".to_string()),
         pyth_feed_id: None,
         min_sources: 2,
         max_deviation_bps: 100,
