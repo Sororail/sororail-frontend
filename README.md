@@ -171,3 +171,15 @@ railway up
 | `/keeper/status` | GET | Admin | Keeper status and execution history |
 | `/oracle/failed-submissions` | GET | Admin | Failed submission history |
 | `/metrics` | GET | Admin | Prometheus metrics |
+
+## Observability
+
+Every request emits a structured JSON log carrying: `timestamp`, `level`, `method`, `route` (matched path, not raw URI), `status`, `latency_ms`, and `request_id`. An `x-request-id` header is accepted on inbound requests; if absent, a UUIDv4 is generated. The request ID is echoed in the response headers and included in all handler-internal log events.
+
+The following HTTP metrics are exposed at `/metrics`:
+- `oracle_http_requests_total{route,method,status_class}` (counter)
+- `oracle_http_request_duration_seconds_bucket{route,le}` (histogram)
+- `oracle_http_requests_in_flight` (gauge)
+- `oracle_http_auth_failures_total{route}` (counter for 401s on admin routes)
+
+> **Note:** Health check traffic (`/health` and `/ready`) is logged at the `debug` level. Because these endpoints are polled frequently (e.g., every 30s by the Docker HEALTHCHECK), logging them at `info` would drown out real traffic.

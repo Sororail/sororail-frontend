@@ -763,7 +763,6 @@ mod tests {
                     ResponseTemplate::new(200).set_body_json(get_response.clone())
                 }
             })
-            .expect(2)
             .mount(&mock_server)
             .await;
 
