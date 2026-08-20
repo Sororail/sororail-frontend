@@ -83,4 +83,4 @@ jobs:
           components: llvm-tools-preview
       - uses: taiki-e/install-action@cargo-llvm-cov
       - run: cargo llvm-cov --all --fail-under-lines 85
-      - run: cargo llvm-cov report --markdown >> $GITHUB_STEP_SUMMARY
+      - run: cargo llvm-cov report >> $GITHUB_STEP_SUMMARY
