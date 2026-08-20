@@ -118,7 +118,6 @@ fn build_spot_price_url_for(base_url: &str, symbols: &[String]) -> String {
     }
 }
 
-
 pub async fn fetch_spot_prices(
     symbols: &[String],
 ) -> Result<Vec<(String, i128)>, BinancePriceError> {
