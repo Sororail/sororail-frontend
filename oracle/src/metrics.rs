@@ -249,17 +249,22 @@ impl Metrics {
 
         output.push_str("# HELP oracle_orders_executed_total Total number of orders executed\n");
         output.push_str("# TYPE oracle_orders_executed_total counter\n");
-        output.push_str(&format!("oracle_orders_executed_total {}\n", c.orders_executed));
+        output.push_str(&format!(
+            "oracle_orders_executed_total {}\n",
+            c.orders_executed
+        ));
 
-        output.push_str("# HELP oracle_deposits_executed_total Total number of deposits executed\n");
+        output
+            .push_str("# HELP oracle_deposits_executed_total Total number of deposits executed\n");
         output.push_str("# TYPE oracle_deposits_executed_total counter\n");
         output.push_str(&format!(
             "oracle_deposits_executed_total {}\n",
             c.deposits_executed
         ));
 
-        output
-            .push_str("# HELP oracle_withdrawals_executed_total Total number of withdrawals executed\n");
+        output.push_str(
+            "# HELP oracle_withdrawals_executed_total Total number of withdrawals executed\n",
+        );
         output.push_str("# TYPE oracle_withdrawals_executed_total counter\n");
         output.push_str(&format!(
             "oracle_withdrawals_executed_total {}\n",
@@ -299,7 +304,10 @@ impl Metrics {
 
         output.push_str("# HELP oracle_submit_failures_total Total number of submit failures\n");
         output.push_str("# TYPE oracle_submit_failures_total counter\n");
-        output.push_str(&format!("oracle_submit_failures_total {}\n", c.submit_failures));
+        output.push_str(&format!(
+            "oracle_submit_failures_total {}\n",
+            c.submit_failures
+        ));
 
         output.push_str("# HELP oracle_last_metrics_update Timestamp of last metrics update\n");
         output.push_str("# TYPE oracle_last_metrics_update gauge\n");
