@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use axum::extract::FromRequestParts;
+use axum::extract::MatchedPath;
 use axum::http::header::AUTHORIZATION;
 use axum::http::request::Parts;
 use axum::http::{Method, StatusCode};
@@ -8,11 +9,10 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::{Json, Router};
 use serde::Serialize;
-use tower_http::cors::{Any, CorsLayer};
-use tower_http::trace::TraceLayer;
-use tower_http::request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer};
-use axum::extract::MatchedPath;
 use std::time::Duration;
+use tower_http::cors::{Any, CorsLayer};
+use tower_http::request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer};
+use tower_http::trace::TraceLayer;
 use tracing::Span;
 
 use crate::state::AppState;
@@ -80,12 +80,16 @@ impl FromRequestParts<Arc<AppState>> for AdminAuth {
                 Ok(AdminAuth)
             }
             _ => {
-                let route = parts.extensions.get::<MatchedPath>()
+                let route = parts
+                    .extensions
+                    .get::<MatchedPath>()
                     .map(|m| m.as_str())
                     .unwrap_or("unknown");
                 state.metrics.record_http_auth_failure(route);
-                
-                let request_id = parts.extensions.get::<tower_http::request_id::RequestId>()
+
+                let request_id = parts
+                    .extensions
+                    .get::<tower_http::request_id::RequestId>()
                     .and_then(|id| id.header_value().to_str().ok())
                     .unwrap_or("");
 
@@ -94,7 +98,7 @@ impl FromRequestParts<Arc<AppState>> for AdminAuth {
                     request_id = request_id,
                     "unauthorized admin access attempt"
                 );
-                
+
                 Err(ApiError::new(StatusCode::UNAUTHORIZED, "unauthorized"))
             }
         }
@@ -112,19 +116,24 @@ async fn track_metrics(
     let path = if let Some(matched_path) = request.extensions().get::<MatchedPath>() {
         matched_path.as_str().to_owned()
     } else {
-        request.uri().path().to_owned()
+        "/unmatched".to_owned()
     };
     let method = request.method().as_str().to_owned();
 
     state.metrics.inc_http_in_flight();
     let start = std::time::Instant::now();
-    
+
     let mut response = next.run(request).await;
-    
+
     let latency = start.elapsed();
     state.metrics.dec_http_in_flight();
-    state.metrics.record_http_request(&path, &method, response.status().as_u16(), latency.as_millis() as u64);
-    
+    state.metrics.record_http_request(
+        &path,
+        &method,
+        response.status().as_u16(),
+        latency.as_millis() as u64,
+    );
+
     response.extensions_mut().insert(RouteExt(path));
     response
 }
@@ -163,25 +172,33 @@ pub fn build_router(state: Arc<AppState>) -> Router {
                 latency_ms = tracing::field::Empty,
             )
         })
-        .on_response(|response: &axum::http::Response<_>, latency: Duration, span: &Span| {
-            let status = response.status().as_u16();
-            let latency_ms = latency.as_millis() as u64;
-            span.record("status", &status);
-            span.record("latency_ms", &latency_ms);
-            
-            let is_health = response.extensions().get::<RouteExt>()
-                .map(|ext| ext.0 == "/health" || ext.0 == "/ready")
-                .unwrap_or(false);
+        .on_response(
+            |response: &axum::http::Response<_>, latency: Duration, span: &Span| {
+                let status = response.status().as_u16();
+                let latency_ms = latency.as_millis() as u64;
+                span.record("status", status);
+                span.record("latency_ms", latency_ms);
 
-            if is_health {
-                tracing::debug!("request completed");
-            } else {
-                tracing::info!("request completed");
-            }
-        })
-        .on_failure(|error: tower_http::classify::ServerErrorsFailureClass, _latency: Duration, _span: &Span| {
-            tracing::error!(%error, "request failed");
-        });
+                let is_health = response
+                    .extensions()
+                    .get::<RouteExt>()
+                    .map(|ext| ext.0 == "/health" || ext.0 == "/ready")
+                    .unwrap_or(false);
+
+                if is_health {
+                    tracing::debug!("request completed");
+                } else {
+                    tracing::info!("request completed");
+                }
+            },
+        )
+        .on_failure(
+            |error: tower_http::classify::ServerErrorsFailureClass,
+             _latency: Duration,
+             _span: &Span| {
+                tracing::error!(%error, "request failed");
+            },
+        );
 
     Router::new()
         .route("/health", get(prices::health))
@@ -196,10 +213,10 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             get(prices::failed_submissions),
         )
         .with_state(state.clone())
-        .layer(axum::middleware::from_fn_with_state(state, track_metrics))
-        .layer(trace_layer)
         .layer(PropagateRequestIdLayer::x_request_id())
         .layer(SetRequestIdLayer::x_request_id(MakeRequestUuid))
+        .layer(trace_layer)
+        .layer(axum::middleware::from_fn_with_state(state, track_metrics))
 }
 
 fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
@@ -219,10 +236,10 @@ fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
 mod tests {
     use super::constant_time_eq;
     use crate::{AppState, Config};
-    use axum::http::Request;
     use axum::body::Body;
-    use tower::ServiceExt;
+    use axum::http::Request;
     use std::sync::Arc;
+    use tower::ServiceExt;
 
     #[test]
     fn constant_time_comparison_matches_equal_values_only() {
@@ -237,18 +254,20 @@ mod tests {
         let test_secret = "SCVXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX";
         let test_admin_token = "admin_super_secret_token_123";
         config.keeper_secret_key = crate::config::SecretString::new(test_secret.to_string());
-        config.admin_api_token = Some(crate::config::SecretString::new(test_admin_token.to_string()));
+        config.admin_api_token = Some(crate::config::SecretString::new(
+            test_admin_token.to_string(),
+        ));
 
         let state = Arc::new(AppState::new(Arc::new(config)));
         let app = super::build_router(Arc::clone(&state));
 
         // Make an unauthorized admin request
-        let request = Request::builder()
+        let _request = Request::builder()
             .uri("/oracle/status")
             .header("Authorization", format!("Bearer {}", test_admin_token)) // wait, we want a failing one to check auth failure metrics
             .body(Body::empty())
             .unwrap();
-        
+
         let failing_request = Request::builder()
             .uri("/oracle/status")
             .header("Authorization", "Bearer WRONG_TOKEN")
@@ -258,8 +277,14 @@ mod tests {
         let _ = app.clone().oneshot(failing_request).await;
 
         let metrics_out = state.metrics.to_prometheus();
-        
-        assert!(!metrics_out.contains(test_secret), "keeper secret key found in metrics");
-        assert!(!metrics_out.contains(test_admin_token), "admin token found in metrics");
+
+        assert!(
+            !metrics_out.contains(test_secret),
+            "keeper secret key found in metrics"
+        );
+        assert!(
+            !metrics_out.contains(test_admin_token),
+            "admin token found in metrics"
+        );
     }
 }

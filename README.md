@@ -181,3 +181,5 @@ The following HTTP metrics are exposed at `/metrics`:
 - `oracle_http_request_duration_seconds_bucket{route,le}` (histogram)
 - `oracle_http_requests_in_flight` (gauge)
 - `oracle_http_auth_failures_total{route}` (counter for 401s on admin routes)
+
+> **Note:** Health check traffic (`/health` and `/ready`) is logged at the `debug` level. Because these endpoints are polled frequently (e.g., every 30s by the Docker HEALTHCHECK), logging them at `info` would drown out real traffic.

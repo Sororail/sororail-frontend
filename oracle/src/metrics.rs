@@ -145,23 +145,43 @@ impl Metrics {
         let mut c = self.counters.lock().unwrap_or_else(|p| p.into_inner());
         *c.http_requests_total.entry(labels).or_insert(0) += 1;
 
-        let buckets = c.http_request_duration_buckets.entry(route.to_string()).or_insert([0; 7]);
+        let buckets = c
+            .http_request_duration_buckets
+            .entry(route.to_string())
+            .or_insert([0; 7]);
         let latency_sec = latency_ms as f64 / 1000.0;
-        if latency_sec <= 0.01 { buckets[0] += 1; }
-        if latency_sec <= 0.05 { buckets[1] += 1; }
-        if latency_sec <= 0.10 { buckets[2] += 1; }
-        if latency_sec <= 0.25 { buckets[3] += 1; }
-        if latency_sec <= 0.50 { buckets[4] += 1; }
-        if latency_sec <= 1.00 { buckets[5] += 1; }
+        if latency_sec <= 0.01 {
+            buckets[0] += 1;
+        }
+        if latency_sec <= 0.05 {
+            buckets[1] += 1;
+        }
+        if latency_sec <= 0.10 {
+            buckets[2] += 1;
+        }
+        if latency_sec <= 0.25 {
+            buckets[3] += 1;
+        }
+        if latency_sec <= 0.50 {
+            buckets[4] += 1;
+        }
+        if latency_sec <= 1.00 {
+            buckets[5] += 1;
+        }
         buckets[6] += 1; // +Inf
 
-        let sum = c.http_request_duration_sum.entry(route.to_string()).or_insert(0.0);
+        let sum = c
+            .http_request_duration_sum
+            .entry(route.to_string())
+            .or_insert(0.0);
         *sum += latency_sec;
     }
 
     pub fn record_http_auth_failure(&self, route: &str) {
         let mut c = self.counters.lock().unwrap_or_else(|p| p.into_inner());
-        *c.http_auth_failures_total.entry(route.to_string()).or_insert(0) += 1;
+        *c.http_auth_failures_total
+            .entry(route.to_string())
+            .or_insert(0) += 1;
     }
 
     /// Stamp the last-update time as part of the same locked critical
@@ -300,27 +320,61 @@ impl Metrics {
             ));
         }
 
-        output.push_str("# HELP oracle_http_request_duration_seconds HTTP request duration histogram\n");
+        output.push_str(
+            "# HELP oracle_http_request_duration_seconds HTTP request duration histogram\n",
+        );
         output.push_str("# TYPE oracle_http_request_duration_seconds histogram\n");
         for (route, buckets) in &c.http_request_duration_buckets {
             let escaped_route = escape_label_value(route);
-            output.push_str(&format!("oracle_http_request_duration_seconds_bucket{{route=\"{}\",le=\"0.01\"}} {}\n", escaped_route, buckets[0]));
-            output.push_str(&format!("oracle_http_request_duration_seconds_bucket{{route=\"{}\",le=\"0.05\"}} {}\n", escaped_route, buckets[1]));
-            output.push_str(&format!("oracle_http_request_duration_seconds_bucket{{route=\"{}\",le=\"0.1\"}} {}\n", escaped_route, buckets[2]));
-            output.push_str(&format!("oracle_http_request_duration_seconds_bucket{{route=\"{}\",le=\"0.25\"}} {}\n", escaped_route, buckets[3]));
-            output.push_str(&format!("oracle_http_request_duration_seconds_bucket{{route=\"{}\",le=\"0.5\"}} {}\n", escaped_route, buckets[4]));
-            output.push_str(&format!("oracle_http_request_duration_seconds_bucket{{route=\"{}\",le=\"1\"}} {}\n", escaped_route, buckets[5]));
-            output.push_str(&format!("oracle_http_request_duration_seconds_bucket{{route=\"{}\",le=\"+Inf\"}} {}\n", escaped_route, buckets[6]));
-            
-            output.push_str(&format!("oracle_http_request_duration_seconds_count{{route=\"{}\"}} {}\n", escaped_route, buckets[6]));
+            output.push_str(&format!(
+                "oracle_http_request_duration_seconds_bucket{{route=\"{}\",le=\"0.01\"}} {}\n",
+                escaped_route, buckets[0]
+            ));
+            output.push_str(&format!(
+                "oracle_http_request_duration_seconds_bucket{{route=\"{}\",le=\"0.05\"}} {}\n",
+                escaped_route, buckets[1]
+            ));
+            output.push_str(&format!(
+                "oracle_http_request_duration_seconds_bucket{{route=\"{}\",le=\"0.1\"}} {}\n",
+                escaped_route, buckets[2]
+            ));
+            output.push_str(&format!(
+                "oracle_http_request_duration_seconds_bucket{{route=\"{}\",le=\"0.25\"}} {}\n",
+                escaped_route, buckets[3]
+            ));
+            output.push_str(&format!(
+                "oracle_http_request_duration_seconds_bucket{{route=\"{}\",le=\"0.5\"}} {}\n",
+                escaped_route, buckets[4]
+            ));
+            output.push_str(&format!(
+                "oracle_http_request_duration_seconds_bucket{{route=\"{}\",le=\"1\"}} {}\n",
+                escaped_route, buckets[5]
+            ));
+            output.push_str(&format!(
+                "oracle_http_request_duration_seconds_bucket{{route=\"{}\",le=\"+Inf\"}} {}\n",
+                escaped_route, buckets[6]
+            ));
+
+            output.push_str(&format!(
+                "oracle_http_request_duration_seconds_count{{route=\"{}\"}} {}\n",
+                escaped_route, buckets[6]
+            ));
             if let Some(sum) = c.http_request_duration_sum.get(route) {
-                output.push_str(&format!("oracle_http_request_duration_seconds_sum{{route=\"{}\"}} {}\n", escaped_route, sum));
+                output.push_str(&format!(
+                    "oracle_http_request_duration_seconds_sum{{route=\"{}\"}} {}\n",
+                    escaped_route, sum
+                ));
             }
         }
 
-        output.push_str("# HELP oracle_http_requests_in_flight Current number of in-flight HTTP requests\n");
+        output.push_str(
+            "# HELP oracle_http_requests_in_flight Current number of in-flight HTTP requests\n",
+        );
         output.push_str("# TYPE oracle_http_requests_in_flight gauge\n");
-        output.push_str(&format!("oracle_http_requests_in_flight {}\n", c.http_requests_in_flight));
+        output.push_str(&format!(
+            "oracle_http_requests_in_flight {}\n",
+            c.http_requests_in_flight
+        ));
 
         output.push_str("# HELP oracle_http_auth_failures_total Total number of unauthorized admin access attempts\n");
         output.push_str("# TYPE oracle_http_auth_failures_total counter\n");
@@ -428,7 +482,7 @@ mod tests {
         // In our axum layer we use MatchedPath, or "/unmatched" fallback.
         metrics.record_http_request("/unmatched", "GET", 404, 15);
         metrics.record_http_request("/unmatched", "GET", 404, 25);
-        
+
         let output = metrics.to_prometheus();
         let matches = output.matches("oracle_http_requests_total").count();
         // 2 matches: one for the HELP/TYPE header, one for the actual metric.
@@ -436,21 +490,5 @@ mod tests {
         assert!(output.contains("oracle_http_requests_total{route=\"/unmatched\",method=\"GET\",status_class=\"4xx\"} 2"));
     }
 
-    #[test]
-    fn test_metrics_no_secrets() {
-        let metrics = Metrics::new();
-        // In a real scenario, this shouldn't happen, but we ensure our metric labels
-        // do not inadvertently expose tokens if they ever get passed.
-        let secret = "SXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX";
-        let admin_token = "super_secret_admin_token";
-        
-        metrics.record_http_auth_failure(secret);
-        metrics.record_http_request(admin_token, "GET", 200, 10);
-        
-        // Wait, the acceptance criteria says:
-        // "Tests assert secrets never appear in log output or metric labels."
-        // We will test if our to_prometheus function contains them if they were passed,
-        // actually no, if we pass them, they WILL be there. The point is that the app NEVER passes them.
-        // I will write this test in `api/mod.rs` to actually test the handler output/metrics.
-    }
+
 }
