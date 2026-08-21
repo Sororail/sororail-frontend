@@ -106,6 +106,7 @@ fn build_spot_price_url(symbols: &[String]) -> String {
     build_spot_price_url_for(BINANCE_TICKER_PRICE_URL, symbols)
 }
 
+// Binance symbols are strictly [A-Z0-9] — no percent-encoding needed.
 fn build_spot_price_url_for(base_url: &str, symbols: &[String]) -> String {
     if symbols.len() == 1 {
         format!("{}?symbol={}", base_url, symbols[0])

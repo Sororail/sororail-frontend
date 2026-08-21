@@ -12,15 +12,39 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: -Dwarnings
+  MSRV: "1.95"
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
 
 jobs:
-  test:
-    name: cargo test
+  # ── MSRV enforcement ────────────────────────────────────────────────────
+  msrv:
+    name: MSRV check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.MSRV }}
+      - uses: Swatinem/rust-cache@v2
+      - name: Verify Dockerfile MSRV matches declared rust-version
+        run: |
+          DOCKERFILE_MSRV=$(grep -oP 'FROM rust:\K[0-9]+\.[0-9]+' Dockerfile)
+          DECLARED_MSRV=$(grep -oP 'rust-version\s*=\s*"\K[0-9]+\.[0-9]+' Cargo.toml | head -1)
+          if [ "$DOCKERFILE_MSRV" != "$DECLARED_MSRV" ]; then
+            echo "::error::Dockerfile base image (rust:${DOCKERFILE_MSRV}) does not match declared MSRV (${DECLARED_MSRV})"
+            exit 1
+          fi
+          echo "MSRV consistent: ${DECLARED_MSRV}"
+      - run: cargo check --workspace --locked
+
+  # ── Code quality ────────────────────────────────────────────────────────
+  fmt:
+    name: rustfmt
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
         with:
           workspaces: |
             .
@@ -46,20 +70,10 @@ jobs:
         with:
           components: clippy
       - uses: Swatinem/rust-cache@v2
-      - run: cargo clippy --all-targets --all-features -- -D warnings
+      - run: cargo clippy --all-targets --all-features --locked -- -D warnings
 
-  fmt:
-    name: rustfmt
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt
-      - run: cargo fmt --all -- --check
-
-  build:
-    name: cargo build
+  test:
+    name: cargo test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -69,11 +83,34 @@ jobs:
           workspaces: |
             .
             oracle
-      - run: cargo build --release --all
+      - run: cargo test --all --locked
 
-  docker-build:
+  # ── Supply-chain scanning ───────────────────────────────────────────────
+  audit:
+    name: cargo audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo install cargo-audit --locked
+      - run: cargo audit
+
+  deny:
+    name: cargo deny
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check advisories bans licenses sources
+
+  # ── Docker image build + push to GHCR ──────────────────────────────────
+  docker:
     name: docker build
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
     steps:
       - uses: actions/checkout@v4
       - run: docker build -t so4-oracle .
