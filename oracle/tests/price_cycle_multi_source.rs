@@ -78,6 +78,15 @@ fn three_source_token() -> TokenConfig {
     }
 }
 
+/// Same as three_source_token but with coinbase_symbol: None so coinbase
+/// always fails with a config error, regardless of network availability.
+fn three_source_token_coinbase_must_fail() -> TokenConfig {
+    TokenConfig {
+        coinbase_symbol: None,
+        ..three_source_token()
+    }
+}
+
 #[tokio::test]
 async fn multi_source_healthy_cycle_uses_all_three_sources() {
     let mock_server = MockServer::start().await;
@@ -96,12 +105,12 @@ async fn multi_source_healthy_cycle_uses_all_three_sources() {
     let key = cache_key("CBAN5YU3KRDKPTQ2H76D6S7HQFPRBGUD524F65BUM2RQCITPTRLKWKES");
     let cached = cache.prices.get(&key).expect("token should be cached");
 
-    // The two "fixed" sources succeed; "coinbase" fails in test env.
-    // With min_sources: 2, the cycle still succeeds.
-    assert_eq!(
-        cached.sources_used.len(),
-        2,
-        "two fixed sources should succeed"
+    // At least the two "fixed" sources succeed; coinbase may or may not
+    // succeed depending on network availability.
+    assert!(
+        cached.sources_used.len() >= 2,
+        "at least two sources should succeed, got {}",
+        cached.sources_used.len()
     );
     assert!(cached.min > 0, "min price must be positive");
     assert!(cached.max > 0, "max price must be positive");
@@ -131,10 +140,10 @@ async fn multi_source_consecutive_cycles_preserve_sources_used() {
     let key = cache_key("CBAN5YU3KRDKPTQ2H76D6S7HQFPRBGUD524F65BUM2RQCITPTRLKWKES");
     let cached = cache.prices.get(&key).expect("token should be cached");
 
-    assert_eq!(
-        cached.sources_used.len(),
-        2,
-        "sources_used stable across cycles"
+    assert!(
+        cached.sources_used.len() >= 2,
+        "at least min_sources should succeed across cycles, got {}",
+        cached.sources_used.len()
     );
     assert!(cache.last_updated.is_some(), "last_updated should be set");
 
@@ -151,7 +160,8 @@ async fn multi_source_coinbase_failure_recorded_separately() {
         .mount(&mock_server)
         .await;
 
-    let token = three_source_token();
+    // Use a token where coinbase is guaranteed to fail (missing coinbase_symbol).
+    let token = three_source_token_coinbase_must_fail();
     let state = test_state(&mock_server.uri(), vec![token]);
 
     run_price_cycle(Arc::clone(&state)).await;
@@ -180,7 +190,8 @@ async fn multi_source_degraded_then_recovered_metrics_stable() {
     let state = test_state(&mock_server.uri(), vec![token]);
 
     // Three consecutive cycles: the two fixed sources keep succeeding,
-    // coinbase keeps failing. The cycle succeeds every time via min_sources: 2.
+    // coinbase may or may not succeed. The cycle succeeds every time
+    // via min_sources: 2.
     for _ in 0..3 {
         run_price_cycle(Arc::clone(&state)).await;
     }
@@ -188,10 +199,10 @@ async fn multi_source_degraded_then_recovered_metrics_stable() {
     let cache = state.price_cache.read().await;
     let key = cache_key("CBAN5YU3KRDKPTQ2H76D6S7HQFPRBGUD524F65BUM2RQCITPTRLKWKES");
     let cached = cache.prices.get(&key).expect("token should be cached");
-    assert_eq!(
-        cached.sources_used.len(),
-        2,
-        "sources_used stable after 3 cycles"
+    assert!(
+        cached.sources_used.len() >= 2,
+        "at least min_sources should succeed after 3 cycles, got {}",
+        cached.sources_used.len()
     );
 
     let resp = state.metrics.to_response();
