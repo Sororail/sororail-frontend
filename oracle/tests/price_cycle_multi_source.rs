@@ -66,7 +66,7 @@ fn three_source_token() -> TokenConfig {
         ],
         fixed_price: Some("1000000000000000000000000000000".to_string()),
         binance_symbol: None,
-        coinbase_symbol: Some("BTC".to_string()),
+        coinbase_symbol: Some("INVALID_XYZ_123".to_string()),
         pyth_feed_id: None,
         min_sources: 2,
         max_deviation_bps: 100,
