@@ -136,6 +136,12 @@ Before starting, leave a comment on the issue so no one duplicates effort.
 
 ---
 
+## Working with Coding Agents
+
+If you are using an autonomous coding agent (or if you are an agent), you must read and strictly follow the [AGENTS.md](./AGENTS.md) contract. It contains the mandatory verification gate commands and specific repository traps you must be aware of to avoid breaking the build.
+
+---
+
 ## Pull Request Guidelines
 
 - **Title:** Start with a type prefix: `feat:`, `fix:`, `test:`, `docs:`, `chore:`.
