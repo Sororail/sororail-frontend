@@ -736,53 +736,57 @@ mod tests {
     }
 
     // #532 — array branch must match the requested feed_id, not blindly pop
-    #[test]
-    fn hermes_array_with_wrong_feed_id_returns_missing_feed_id_error() {
-        // Simulate what fetch_pyth_price does on the array branch when no entry
-        // matches the requested feed_id.
-        let feeds: Vec<PythPriceFeed> = vec![PythPriceFeed {
-            id: "other_feed_id".to_string(),
-            price: PythPriceData {
-                price: "4500000000".to_string(),
-                conf: None,
-                expo: -8,
-                publish_time: Some(1_000),
-            },
-        }];
-        let requested = "requested_feed_id";
-        let result: Option<PythPriceFeed> = feeds.into_iter().find(|f| f.id == requested);
+    #[tokio::test]
+    async fn hermes_array_with_wrong_feed_id_returns_missing_feed_id_error() {
+        use wiremock::matchers::{method, query_param};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let publish = recent_publish_time();
+        // Array with a single feed whose id does NOT match the requested one
+        let body = format!(
+            r#"[{{"id":"other_feed_id","price":{{"price":"4500000000","expo":-8,"conf":"100000","publish_time":{}}}}}]"#,
+            publish
+        );
+
+        Mock::given(method("GET"))
+            .and(query_param("ids[]", "requested_feed_id"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json"))
+            .mount(&server)
+            .await;
+
+        let err = super::fetch_pyth_price_with_url(&server.uri(), "requested_feed_id", 60, 50)
+            .await
+            .unwrap_err();
         assert!(
-            result.is_none(),
-            "find() must return None when no feed matches the requested id"
+            matches!(err, PythPriceError::MissingFeedId(ref id) if id == "requested_feed_id"),
+            "expected MissingFeedId for requested_feed_id, got: {err:?}"
         );
     }
 
-    #[test]
-    fn hermes_array_with_matching_feed_id_returns_correct_feed() {
-        let feeds: Vec<PythPriceFeed> = vec![
-            PythPriceFeed {
-                id: "feed_a".to_string(),
-                price: PythPriceData {
-                    price: "1000000000".to_string(),
-                    conf: None,
-                    expo: -8,
-                    publish_time: Some(1_000),
-                },
-            },
-            PythPriceFeed {
-                id: "feed_b".to_string(),
-                price: PythPriceData {
-                    price: "4500000000".to_string(),
-                    conf: None,
-                    expo: -8,
-                    publish_time: Some(1_000),
-                },
-            },
-        ];
-        let requested = "feed_b";
-        let found = feeds.into_iter().find(|f| f.id == requested).unwrap();
-        assert_eq!(found.id, "feed_b");
-        assert_eq!(found.price.price, "4500000000");
+    #[tokio::test]
+    async fn hermes_array_with_matching_feed_id_returns_correct_feed() {
+        use wiremock::matchers::{method, query_param};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let publish = recent_publish_time();
+        // Array with two feeds; only feed_b matches the requested id
+        let body = format!(
+            r#"[{{"id":"feed_a","price":{{"price":"1000000000","expo":-8,"conf":"100000","publish_time":{}}}}},{{"id":"feed_b","price":{{"price":"4500000000","expo":-8,"conf":"100000","publish_time":{}}}}}]"#,
+            publish, publish
+        );
+
+        Mock::given(method("GET"))
+            .and(query_param("ids[]", "feed_b"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json"))
+            .mount(&server)
+            .await;
+
+        let result = super::fetch_pyth_price_with_url(&server.uri(), "feed_b", 60, 50)
+            .await
+            .unwrap();
+        assert_eq!(result, 45 * FLOAT_PRECISION);
     }
 
     // #365 — normalize_pyth_price("4500000000", -8) must equal 45 * FLOAT_PRECISION
