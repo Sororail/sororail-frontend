@@ -1,14 +1,16 @@
 use std::sync::Arc;
-use std::time::{Instant, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 
 use shared_config::TokenConfig;
-use tokio::time::{interval, MissedTickBehavior};
+use tokio::time::{interval, timeout, MissedTickBehavior};
 
 use crate::prices::AggregatedPrice;
 use crate::state::{AppState, CachedPrice, FailedSubmission};
 
 const SOURCE_RETRY_ATTEMPTS: u32 = 3;
 const SOURCE_RETRY_BASE_DELAY_MS: u64 = 100;
+/// Hard cap on a single price cycle — mirrors KEEPER_CYCLE_TIMEOUT_SECS (#781).
+const PRICE_CYCLE_TIMEOUT_SECS: u64 = 60;
 
 /// Unified error type for all price sources, preserving structure through retries.
 #[derive(Debug, Clone)]
@@ -80,8 +82,29 @@ pub async fn run_price_cycle(state: Arc<AppState>) {
         status.price_cycle_running = true;
     }
 
+    let result = timeout(
+        Duration::from_secs(PRICE_CYCLE_TIMEOUT_SECS),
+        execute_price_cycle(Arc::clone(&state)),
+    )
+    .await;
+
+    match result {
+        Ok((tokens_ok, tokens_stale)) => {
+            finish_cycle(&state, started, tokens_ok, 0, tokens_stale).await;
+        }
+        Err(_) => {
+            tracing::error!(
+                timeout_secs = PRICE_CYCLE_TIMEOUT_SECS,
+                "price cycle exceeded timeout budget"
+            );
+            finish_cycle(&state, started, 0, 1, 0).await;
+        }
+    }
+}
+
+/// Inner price cycle logic, bounded by PRICE_CYCLE_TIMEOUT_SECS.
+async fn execute_price_cycle(state: Arc<AppState>) -> (usize, usize) {
     let mut tokens_ok = 0usize;
-    let mut tokens_failed = 0usize;
     let mut tokens_stale = 0usize;
     let now = crate::current_timestamp_secs();
 
@@ -95,8 +118,7 @@ pub async fn run_price_cycle(state: Arc<AppState>) {
                     "price cycle aborted: failed to fetch latest ledger sequence from RPC"
                 );
                 record_error(&state, "get_latest_ledger", error.to_string()).await;
-                finish_cycle(&state, started, tokens_ok, tokens_failed).await;
-                return;
+                return (0, 0);
             }
         };
 
@@ -152,7 +174,6 @@ pub async fn run_price_cycle(state: Arc<AppState>) {
                     tokens_ok += 1;
                 }
                 Err(error) => {
-                    tokens_failed += 1;
                     let ctx = ErrorContext {
                         token: token.stellar_address.clone(),
                         symbol: token.symbol.clone(),
@@ -203,7 +224,6 @@ pub async fn run_price_cycle(state: Arc<AppState>) {
         if tokens_stale > 0 {
             tracing::info!(
                 tokens_ok,
-                tokens_failed,
                 tokens_stale,
                 "price cycle completed with stale entries evicted"
             );
@@ -218,7 +238,7 @@ pub async fn run_price_cycle(state: Arc<AppState>) {
         );
     }
 
-    finish_cycle(&state, started, tokens_ok, tokens_failed).await;
+    (tokens_ok, tokens_stale)
 }
 
 /// Finalizes the cycle timing and updates `CycleStatus` state flags (Resolves Issue #394).
@@ -227,19 +247,20 @@ async fn finish_cycle(
     started: Instant,
     tokens_ok: usize,
     tokens_failed: usize,
+    tokens_stale: usize,
 ) {
+    let latency_ms = started.elapsed().as_millis() as u64;
     {
         let mut status = state.cycle_status.write().await;
         status.price_cycle_running = false;
         status.last_price_cycle_at = Some(SystemTime::now());
     }
 
-    let latency_ms = started.elapsed().as_millis() as u64;
     state
         .metrics
         .record_price_cycle(latency_ms, tokens_ok, tokens_failed);
 
-    tracing::info!(tokens_ok, tokens_failed, latency_ms, "cycle_complete");
+    tracing::info!(tokens_ok, tokens_failed, tokens_stale, latency_ms, "cycle_complete");
 }
 
 /// Fetches prices from all configured sources, filters and aggregates them,
