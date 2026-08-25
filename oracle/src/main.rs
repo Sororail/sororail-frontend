@@ -46,24 +46,40 @@ async fn main() {
     let server_future =
         axum::serve(listener, app).with_graceful_shutdown(shutdown_signal(shutdown_token.clone()));
 
-    let server_result =
-        tokio::time::timeout(std::time::Duration::from_secs(30), server_future).await;
-
-    match server_result {
-        Ok(Ok(())) => {}
-        Ok(Err(error)) => {
-            tracing::error!(%error, "server error");
-            std::process::exit(1);
+    // If either background task panics or returns unexpectedly while the
+    // server is still running, trigger a full shutdown so an external
+    // restart policy can take over rather than serving a half-dead process.
+    tokio::select! {
+        result = price_loop => {
+            match result {
+                Ok(()) => tracing::error!("price_loop exited unexpectedly"),
+                Err(e) => tracing::error!(error = %e, "price_loop panicked"),
+            }
+            state.shutdown_token.cancel();
         }
-        Err(_) => {
-            tracing::warn!("server shutdown timed out after 30s, canceling background tasks");
+        result = keeper_loop => {
+            match result {
+                Ok(()) => tracing::error!("keeper_loop exited unexpectedly"),
+                Err(e) => tracing::error!(error = %e, "keeper_loop panicked"),
+            }
+            state.shutdown_token.cancel();
+        }
+        result = tokio::time::timeout(std::time::Duration::from_secs(30), server_future) => {
+            match result {
+                Ok(Ok(())) => {}
+                Ok(Err(error)) => {
+                    tracing::error!(%error, "server error");
+                    std::process::exit(1);
+                }
+                Err(_) => {
+                    tracing::warn!("server shutdown timed out after 30s, canceling background tasks");
+                }
+            }
         }
     }
 
     tracing::info!("shutdown initiated, draining...");
     state.shutdown_token.cancel();
-
-    let _ = tokio::join!(price_loop, keeper_loop);
 }
 
 fn init_tracing() {
