@@ -70,15 +70,11 @@ pub async fn run_keeper_cycle(state: Arc<AppState>) -> Result<CycleSummary, Stri
         ))
     });
 
+    let latency_ms = started.elapsed().as_millis() as u64;
     {
         let mut status = state.cycle_status.write().await;
         status.keeper_cycle_running = false;
         status.last_keeper_cycle_at = Some(SystemTime::now());
-    }
-
-    let latency_ms = started.elapsed().as_millis() as u64;
-    {
-        let mut status = state.cycle_status.write().await;
         status.last_keeper_cycle_latency_ms = Some(latency_ms);
     }
     match &result {
