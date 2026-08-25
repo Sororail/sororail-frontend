@@ -1,3 +1,4 @@
+use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -200,7 +201,7 @@ async fn perform_external_ready_checks(state: &AppState) -> Result<(), ApiError>
         min_balance_xlm: state.config.min_keeper_balance_xlm,
     };
 
-    match check_keeper_balance_for_ready(&keeper_cfg).await {
+    match check_keeper_balance_for_ready(&keeper_cfg, &state.keeper_balance_below_min).await {
         Ok(_) => {}
         Err(crate::stellar_rpc::RpcError::BalanceBelowMinimum { .. }) => {
             return Err(ApiError::new(
@@ -221,11 +222,12 @@ async fn perform_external_ready_checks(state: &AppState) -> Result<(), ApiError>
 
 async fn check_keeper_balance_for_ready(
     keeper_cfg: &crate::keeper::KeeperBalanceConfig,
+    below_min: &Arc<AtomicBool>,
 ) -> Result<i64, crate::stellar_rpc::RpcError> {
     let mut last_error = None;
 
     for attempt in 1..=READY_BALANCE_RETRY_ATTEMPTS {
-        match crate::keeper::check_keeper_balance(keeper_cfg).await {
+        match crate::keeper::check_keeper_balance(keeper_cfg, below_min).await {
             Ok(stroops) => return Ok(stroops),
             Err(error @ crate::stellar_rpc::RpcError::BalanceBelowMinimum { .. }) => {
                 return Err(error);

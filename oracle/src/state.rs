@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use std::time::SystemTime;
 
@@ -156,6 +157,10 @@ pub struct AppState {
     /// Order keys that have been permanently abandoned after too many
     /// consecutive freeze failures (#498).
     pub frozen_order_blacklist: Arc<Mutex<HashMap<String, u32>>>,
+    /// Tracks whether the keeper balance is currently below the minimum.
+    /// Scoped to AppState instead of a bare process-global to avoid races
+    /// between concurrent /ready and /keeper/balance checks (#737).
+    pub keeper_balance_below_min: Arc<AtomicBool>,
 }
 
 impl AppState {
@@ -173,6 +178,7 @@ impl AppState {
             shutdown_token: CancellationToken::new(),
             freeze_failure_counts: Arc::new(Mutex::new(HashMap::new())),
             frozen_order_blacklist: Arc::new(Mutex::new(HashMap::new())),
+            keeper_balance_below_min: Arc::new(AtomicBool::new(false)),
         }
     }
 }
