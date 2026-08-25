@@ -156,6 +156,20 @@ pub fn parse_token_configs(raw: &str) -> Result<Vec<TokenConfig>, ConfigError> {
         }
         // stellar_address and sources are optional for the API server path,
         // but required for the oracle path — the oracle validates separately.
+
+        // Reject duplicate source entries so one config source cannot be
+        // double-counted in price aggregation (#755).
+        {
+            let unique_sources: std::collections::HashSet<_> =
+                token.sources.iter().collect();
+            if unique_sources.len() != token.sources.len() {
+                return Err(ConfigError::InvalidToken {
+                    symbol: token.symbol.clone(),
+                    reason: "sources list contains duplicate entries".to_string(),
+                });
+            }
+        }
+
         for source in &token.sources {
             match source.as_str() {
                 "binance" => {

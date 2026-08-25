@@ -60,7 +60,7 @@ async fn token_failure_does_not_abort_remaining_tokens() {
         "USDC price should be cached after a partial failure"
     );
 
-    let fail_key = cache_key("CFAILADDR1111111111111111111111111111111111111111111111111");
+    let fail_key = cache_key("CFAILADDR111111111111111111111111111111111111111111111111");
     assert!(
         !cache.prices.contains_key(&fail_key),
         "FAILTOKEN must not appear in cache"
