@@ -309,10 +309,10 @@ impl Metrics {
             c.submit_failures
         ));
 
-        output.push_str("# HELP oracle_last_metrics_update Timestamp of last metrics update\n");
-        output.push_str("# TYPE oracle_last_metrics_update gauge\n");
+        output.push_str("# HELP oracle_last_cycle_metrics_update Timestamp of last price/keeper cycle metrics update\n");
+        output.push_str("# TYPE oracle_last_cycle_metrics_update gauge\n");
         output.push_str(&format!(
-            "oracle_last_metrics_update {}\n",
+            "oracle_last_cycle_metrics_update {}\n",
             c.last_metrics_update
         ));
 
