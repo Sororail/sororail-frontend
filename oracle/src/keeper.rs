@@ -1,4 +1,5 @@
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 use crate::stellar_rpc::{get_account_balance_stroops, RpcError};
 
@@ -7,10 +8,6 @@ pub const XLM_IN_STROOPS: i64 = 10_000_000;
 
 /// Default minimum keeper balance: 10 XLM.
 pub const DEFAULT_MIN_KEEPER_BALANCE_XLM: f64 = 10.0;
-
-/// Tracks whether the keeper was already below the minimum so `/ready` probes
-/// do not re-emit `error!` on every poll for a sustained low-balance condition.
-static KEEPER_BALANCE_BELOW_MIN: AtomicBool = AtomicBool::new(false);
 
 pub struct KeeperBalanceConfig {
     pub horizon_url: String,
@@ -24,12 +21,19 @@ pub struct KeeperBalanceConfig {
 /// Logs `error!` only on the transition into the low-balance state (and
 /// `info!` on recovery). Subsequent checks while the balance remains low
 /// use `debug!` so readiness probes do not flood logs.
-pub async fn check_keeper_balance(cfg: &KeeperBalanceConfig) -> Result<i64, RpcError> {
+///
+/// The `below_min` flag is scoped to the application instance rather than
+/// a bare process-global, so concurrent callers (e.g. /ready and
+/// /keeper/balance) share well-defined state (#737).
+pub async fn check_keeper_balance(
+    cfg: &KeeperBalanceConfig,
+    below_min: &Arc<AtomicBool>,
+) -> Result<i64, RpcError> {
     let stroops = get_account_balance_stroops(&cfg.horizon_url, &cfg.account_id).await?;
 
     let xlm = stroops as f64 / XLM_IN_STROOPS as f64;
     if xlm < cfg.min_balance_xlm {
-        let was_below = KEEPER_BALANCE_BELOW_MIN.swap(true, Ordering::Relaxed);
+        let was_below = below_min.swap(true, Ordering::Relaxed);
         if was_below {
             tracing::debug!(
                 balance_xlm = xlm,
@@ -51,7 +55,7 @@ pub async fn check_keeper_balance(cfg: &KeeperBalanceConfig) -> Result<i64, RpcE
         });
     }
 
-    if KEEPER_BALANCE_BELOW_MIN.swap(false, Ordering::Relaxed) {
+    if below_min.swap(false, Ordering::Relaxed) {
         tracing::info!(
             balance_xlm = xlm,
             min_balance_xlm = cfg.min_balance_xlm,
@@ -157,7 +161,8 @@ mod tests {
             min_balance_xlm: 10.0,
         };
 
-        let stroops = check_keeper_balance(&cfg).await.unwrap();
+        let below_min = Arc::new(AtomicBool::new(false));
+        let stroops = check_keeper_balance(&cfg, &below_min).await.unwrap();
         assert_eq!(stroops, 200_000_000); // 20 XLM in stroops
     }
 
@@ -178,7 +183,8 @@ mod tests {
             min_balance_xlm: 10.0,
         };
 
-        let err = check_keeper_balance(&cfg).await.unwrap_err();
+        let below_min = Arc::new(AtomicBool::new(false));
+        let err = check_keeper_balance(&cfg, &below_min).await.unwrap_err();
         assert!(matches!(err, RpcError::BalanceBelowMinimum { .. }));
     }
 
@@ -191,7 +197,8 @@ mod tests {
             min_balance_xlm: 10.0,
         };
 
-        let err = check_keeper_balance(&cfg).await.unwrap_err();
+        let below_min = Arc::new(AtomicBool::new(false));
+        let err = check_keeper_balance(&cfg, &below_min).await.unwrap_err();
         assert!(matches!(err, RpcError::NetworkError(_)));
     }
 
