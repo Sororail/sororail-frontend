@@ -1,7 +1,7 @@
 use crate::retry::Retryable;
 use serde::{Deserialize, Serialize};
 
-use crate::stellar_rpc::{rpc_post, RpcError};
+use crate::stellar_rpc::{rpc_post, JsonRpcRequest, JsonRpcResponse, RpcError};
 
 const MAX_POLL_ATTEMPTS: u32 = 10;
 #[cfg(not(test))]
@@ -79,28 +79,6 @@ impl From<RpcError> for SubmitError {
     fn from(err: RpcError) -> Self {
         SubmitError::Rpc(err)
     }
-}
-
-// ── JSON-RPC wire types ──────────────────────────────────────────────────────
-
-#[derive(Serialize)]
-struct JsonRpcRequest<'a, P: Serialize> {
-    jsonrpc: &'a str,
-    id: u32,
-    method: &'a str,
-    params: P,
-}
-
-#[derive(Deserialize)]
-struct JsonRpcResponse<T> {
-    result: Option<T>,
-    error: Option<JsonRpcFault>,
-}
-
-#[derive(Deserialize)]
-struct JsonRpcFault {
-    code: i64,
-    message: String,
 }
 
 // ── sendTransaction response ─────────────────────────────────────────────────
