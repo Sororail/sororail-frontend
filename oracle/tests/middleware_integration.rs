@@ -104,8 +104,7 @@ async fn test_promtool_validation() {
 
     let metrics_out = state.metrics.to_prometheus();
 
-    // Run promtool if it is installed
-    if let Ok(mut child) = std::process::Command::new("promtool")
+    let mut child = match std::process::Command::new("promtool")
         .arg("check")
         .arg("metrics")
         .stdin(std::process::Stdio::piped())
@@ -113,24 +112,31 @@ async fn test_promtool_validation() {
         .stderr(std::process::Stdio::piped())
         .spawn()
     {
-        use std::io::Write;
-        let mut stdin = child.stdin.take().expect("Failed to open stdin");
-        std::thread::spawn(move || {
-            stdin
-                .write_all(metrics_out.as_bytes())
-                .expect("Failed to write to stdin");
-        });
-
-        let output = child.wait_with_output().expect("Failed to read stdout");
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            panic!(
-                "promtool check metrics failed!\nSTDOUT:\n{}\nSTDERR:\n{}",
-                stdout, stderr
-            );
+        Ok(child) => child,
+        Err(_) if std::env::var("CI").is_ok() => {
+            panic!("promtool not found in CI — install it in the test job to validate /metrics output");
         }
-    } else {
-        println!("promtool not found, skipping validation test");
+        Err(_) => {
+            println!("promtool not found, skipping validation test");
+            return;
+        }
+    };
+
+    use std::io::Write;
+    let mut stdin = child.stdin.take().expect("Failed to open stdin");
+    std::thread::spawn(move || {
+        stdin
+            .write_all(metrics_out.as_bytes())
+            .expect("Failed to write to stdin");
+    });
+
+    let output = child.wait_with_output().expect("Failed to read stdout");
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        panic!(
+            "promtool check metrics failed!\nSTDOUT:\n{}\nSTDERR:\n{}",
+            stdout, stderr
+        );
     }
 }
