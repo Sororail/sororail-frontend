@@ -23,6 +23,7 @@ pub enum PythPriceError {
         confidence_bps: f64,
         max_bps: u32,
     },
+    MissingPublishTime,
     InvalidPublishTime(i64),
 }
 
@@ -54,6 +55,9 @@ impl std::fmt::Display for PythPriceError {
                 f,
                 "Pyth confidence interval is too wide ({confidence_bps:.2} bps; maximum {max_bps})"
             ),
+            Self::MissingPublishTime => {
+                write!(f, "Pyth response is missing publish_time field")
+            }
             Self::InvalidPublishTime(value) => write!(f, "invalid Pyth publish time: {value}"),
         }
     }
@@ -74,6 +78,7 @@ impl crate::retry::Retryable for PythPriceError {
             | Self::PriceParseError(_)
             | Self::MissingFeedId(_)
             | Self::ConfidenceTooWide { .. }
+            | Self::MissingPublishTime
             | Self::InvalidPublishTime(_) => false,
         }
     }
@@ -154,7 +159,7 @@ pub fn validate_pyth_price(
     let price = normalize_pyth_price(&data.price, data.expo)?;
     let publish_time = data
         .publish_time
-        .ok_or(PythPriceError::InvalidPublishTime(-1))?;
+        .ok_or(PythPriceError::MissingPublishTime)?;
     if publish_time < 0 {
         return Err(PythPriceError::InvalidPublishTime(publish_time));
     }
@@ -379,7 +384,7 @@ mod tests {
             publish_time: None,
         };
         let err = validate_pyth_price(&data, 1_010, 60, 50).unwrap_err();
-        assert_eq!(err, PythPriceError::InvalidPublishTime(-1));
+        assert_eq!(err, PythPriceError::MissingPublishTime);
     }
 
     #[test]
