@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
-use std::time::SystemTime;
+use std::time::{Duration, Instant, SystemTime};
 
 use serde::Serialize;
 use tokio::sync::{Mutex, RwLock};
@@ -138,6 +138,12 @@ pub struct ReadyCache {
 /// skipped and a loud alert is emitted (#498).
 pub const MAX_CONSECUTIVE_FREEZE_FAILURES: u32 = 3;
 
+/// Maximum time a key can remain "in flight" after a poll timeout before it
+/// is automatically evicted with a warning (#801). 5 minutes is generous
+/// enough for Stellar confirmations but short enough to unblock silently
+/// stuck orders within a handful of keeper cycles.
+pub const IN_FLIGHT_EXPIRY: Duration = Duration::from_secs(300);
+
 #[derive(Clone)]
 pub struct AppState {
     pub config: Arc<Config>,
@@ -146,7 +152,7 @@ pub struct AppState {
     pub cycle_status: Arc<RwLock<CycleStatus>>,
     pub failures: Arc<Mutex<RingBuffer<FailedSubmission>>>,
     pub keeper_status: Arc<RwLock<KeeperStatus>>,
-    pub in_flight_keys: Arc<Mutex<std::collections::HashSet<String>>>,
+    pub in_flight_keys: Arc<Mutex<HashMap<String, Instant>>>,
     pub ready_cache: Arc<RwLock<ReadyCache>>,
     pub metrics: Arc<Metrics>,
     pub shutdown_token: CancellationToken,
@@ -172,7 +178,7 @@ impl AppState {
             cycle_status: Arc::new(RwLock::new(CycleStatus::default())),
             failures: Arc::new(Mutex::new(RingBuffer::default())),
             keeper_status: Arc::new(RwLock::new(KeeperStatus::default())),
-            in_flight_keys: Arc::new(Mutex::new(std::collections::HashSet::new())),
+            in_flight_keys: Arc::new(Mutex::new(HashMap::new())),
             ready_cache: Arc::new(RwLock::new(ReadyCache::default())),
             metrics: Metrics::new(),
             shutdown_token: CancellationToken::new(),

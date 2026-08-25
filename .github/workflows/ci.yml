@@ -96,8 +96,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - run: cargo install cargo-audit --locked
+      - uses: taiki-e/install-action@cargo-audit
       - run: cargo audit
 
   deny:

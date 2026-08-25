@@ -8,7 +8,8 @@ use tracing::{error, info, warn};
 use crate::chain::scval;
 use crate::chain::tx_builder;
 use crate::state::{
-    AppState, CachedPrice, FailedSubmission, KeeperExecution, MAX_CONSECUTIVE_FREEZE_FAILURES,
+    AppState, CachedPrice, FailedSubmission, KeeperExecution, IN_FLIGHT_EXPIRY,
+    MAX_CONSECUTIVE_FREEZE_FAILURES,
 };
 
 const ACCOUNT_SEQUENCE_RETRY_ATTEMPTS: u32 = 3;
@@ -225,12 +226,26 @@ async fn execute_keeper_cycle(state: Arc<AppState>) -> Result<CycleSummary, Stri
                 continue;
             }
         }
-        // Skip keys whose prior submission is still in-flight — closes #491
-        if state.in_flight_keys.lock().await.contains(order_key) {
-            info!(key = %order_key, "skipping_in_flight_order_key");
-            continue;
+        // Skip keys whose prior submission is still in-flight — closes #491.
+        // Evict keys stuck longer than IN_FLIGHT_EXPIRY to prevent silent
+        // permanent skips after a poll timeout (#801).
+        {
+            let mut in_flight = state.in_flight_keys.lock().await;
+            if let Some(inserted_at) = in_flight.get(order_key) {
+                if inserted_at.elapsed() > IN_FLIGHT_EXPIRY {
+                    warn!(
+                        key = %order_key,
+                        elapsed_secs = inserted_at.elapsed().as_secs(),
+                        "in_flight_key_expired_evicted"
+                    );
+                    in_flight.remove(order_key);
+                } else {
+                    info!(key = %order_key, "skipping_in_flight_order_key");
+                    continue;
+                }
+            }
+            in_flight.insert(order_key.clone(), Instant::now());
         }
-        state.in_flight_keys.lock().await.insert(order_key.clone());
 
         match execute_handler(
             &state,
@@ -356,15 +371,23 @@ async fn execute_keeper_cycle(state: Arc<AppState>) -> Result<CycleSummary, Stri
     }
 
     for deposit_key in &deposit_keys {
-        if state.in_flight_keys.lock().await.contains(deposit_key) {
-            info!(key = %deposit_key, "skipping_in_flight_deposit_key");
-            continue;
+        {
+            let mut in_flight = state.in_flight_keys.lock().await;
+            if let Some(inserted_at) = in_flight.get(deposit_key) {
+                if inserted_at.elapsed() > IN_FLIGHT_EXPIRY {
+                    warn!(
+                        key = %deposit_key,
+                        elapsed_secs = inserted_at.elapsed().as_secs(),
+                        "in_flight_key_expired_evicted"
+                    );
+                    in_flight.remove(deposit_key);
+                } else {
+                    info!(key = %deposit_key, "skipping_in_flight_deposit_key");
+                    continue;
+                }
+            }
+            in_flight.insert(deposit_key.clone(), Instant::now());
         }
-        state
-            .in_flight_keys
-            .lock()
-            .await
-            .insert(deposit_key.clone());
 
         match execute_handler(
             &state,
@@ -432,15 +455,23 @@ async fn execute_keeper_cycle(state: Arc<AppState>) -> Result<CycleSummary, Stri
     }
 
     for withdrawal_key in &withdrawal_keys {
-        if state.in_flight_keys.lock().await.contains(withdrawal_key) {
-            info!(key = %withdrawal_key, "skipping_in_flight_withdrawal_key");
-            continue;
+        {
+            let mut in_flight = state.in_flight_keys.lock().await;
+            if let Some(inserted_at) = in_flight.get(withdrawal_key) {
+                if inserted_at.elapsed() > IN_FLIGHT_EXPIRY {
+                    warn!(
+                        key = %withdrawal_key,
+                        elapsed_secs = inserted_at.elapsed().as_secs(),
+                        "in_flight_key_expired_evicted"
+                    );
+                    in_flight.remove(withdrawal_key);
+                } else {
+                    info!(key = %withdrawal_key, "skipping_in_flight_withdrawal_key");
+                    continue;
+                }
+            }
+            in_flight.insert(withdrawal_key.clone(), Instant::now());
         }
-        state
-            .in_flight_keys
-            .lock()
-            .await
-            .insert(withdrawal_key.clone());
 
         match execute_handler(
             &state,
