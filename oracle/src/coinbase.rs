@@ -268,20 +268,42 @@ mod tests {
 
     // ── #347 acceptance criteria ──────────────────────────────────────────────
 
-    /// #347 — USDT suffix is stripped before querying Coinbase.
-    /// fetch_spot_price strips suffixes so the URL uses the base asset only.
-    #[test]
-    fn coinbase_strips_usdt_suffix() {
-        // Verify suffix-stripping logic directly via parse helpers.
-        // "BTCUSDT" → base "BTC" → USD rate extracted correctly.
+    /// #347 / #794 — a raw "SOLUSDT" symbol must be stripped to "SOL" *before*
+    /// the Coinbase request is built. Drives the real `fetch_spot_price_with_url`
+    /// via wiremock and asserts the outgoing request path is the stripped base,
+    /// instead of re-checking `parse_coinbase_response_body` with an
+    /// already-stripped symbol (which never exercises the strip at all).
+    #[tokio::test]
+    async fn coinbase_strips_usdt_suffix() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
         let body = r#"{
             "data": {
-                "currency": "BTC",
-                "rates": { "USD": "50000.0" }
+                "currency": "SOL",
+                "rates": { "USD": "150.0" }
             }
         }"#;
-        let result = parse_coinbase_response_body(body, "BTC").unwrap();
-        assert_eq!(result, 50000 * FLOAT_PRECISION);
+        Mock::given(method("GET"))
+            .and(path("/SOL"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json"))
+            .mount(&server)
+            .await;
+
+        let base_url = format!("{}/", server.uri());
+        let result = super::fetch_spot_price_with_url(&base_url, "SOLUSDT")
+            .await
+            .unwrap();
+        assert_eq!(result, 150 * FLOAT_PRECISION);
+
+        let requests = server.received_requests().await.unwrap();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(
+            requests[0].url.path(),
+            "/SOL",
+            "the USDT suffix must be stripped from the request URL"
+        );
     }
 
     /// #347 — USD suffix is also stripped.
