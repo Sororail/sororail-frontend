@@ -1,5 +1,5 @@
 use std::collections::{BTreeMap, HashMap, VecDeque};
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, AtomicU64};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 
@@ -167,6 +167,11 @@ pub struct AppState {
     /// Scoped to AppState instead of a bare process-global to avoid races
     /// between concurrent /ready and /keeper/balance checks (#737).
     pub keeper_balance_below_min: Arc<AtomicBool>,
+    /// Bumped once at the start and once at the end of every `run_keeper_cycle`.
+    /// `keeper_status_snapshot` uses it to detect a keeper-cycle boundary that
+    /// crossed its two sequential lock reads and retry, rather than returning a
+    /// torn `keeper_status` / `cycle_status` pair (#797).
+    pub keeper_cycle_generation: Arc<AtomicU64>,
 }
 
 impl AppState {
@@ -185,6 +190,7 @@ impl AppState {
             freeze_failure_counts: Arc::new(Mutex::new(HashMap::new())),
             frozen_order_blacklist: Arc::new(Mutex::new(HashMap::new())),
             keeper_balance_below_min: Arc::new(AtomicBool::new(false)),
+            keeper_cycle_generation: Arc::new(AtomicU64::new(0)),
         }
     }
 }
