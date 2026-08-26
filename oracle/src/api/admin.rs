@@ -63,8 +63,9 @@ pub async fn keeper_status(
     _auth: AdminAuth,
     State(state): State<Arc<AppState>>,
 ) -> Json<KeeperStatusResponse> {
-    let keeper_status = state.keeper_status.read().await.clone();
-    let cycle_status = state.cycle_status.read().await.clone();
+    // One consistent snapshot of both state objects — never a torn pair mixing
+    // pending counts from before a keeper cycle with timing from after it (#797).
+    let (keeper_status, cycle_status) = state.keeper_status_snapshot().await;
 
     let last_cycle_at = cycle_status.last_keeper_cycle_at.and_then(system_time_secs);
     let last_cycle_latency_ms = cycle_status.last_keeper_cycle_latency_ms;
