@@ -109,6 +109,9 @@ pub async fn run_keeper_cycle(state: Arc<AppState>) -> Result<CycleSummary, Stri
         }
     }
 
+    // Close the generation window: all keeper_status / cycle_status writes for
+    // this cycle are now visible (#797).
+    state.keeper_cycle_generation.fetch_add(1, Ordering::Release);
     result
 }
 
