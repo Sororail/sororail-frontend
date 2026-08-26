@@ -1,5 +1,5 @@
 use crate::retry::Retryable;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 
 use crate::stellar_rpc::{rpc_post, JsonRpcRequest, JsonRpcResponse, RpcError};
 
@@ -74,6 +74,8 @@ impl std::fmt::Display for SubmitError {
         }
     }
 }
+
+impl std::error::Error for SubmitError {}
 
 impl From<RpcError> for SubmitError {
     fn from(err: RpcError) -> Self {
