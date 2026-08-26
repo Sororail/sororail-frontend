@@ -306,17 +306,38 @@ mod tests {
         );
     }
 
-    /// #347 — USD suffix is also stripped.
-    #[test]
-    fn coinbase_strips_usd_suffix() {
+    /// #347 / #794 — the "USD" suffix is stripped the same way.
+    #[tokio::test]
+    async fn coinbase_strips_usd_suffix() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
         let body = r#"{
             "data": {
-                "currency": "ETH",
-                "rates": { "USD": "3000.0" }
+                "currency": "ADA",
+                "rates": { "USD": "0.5" }
             }
         }"#;
-        let result = parse_coinbase_response_body(body, "ETH").unwrap();
-        assert_eq!(result, 3000 * FLOAT_PRECISION);
+        Mock::given(method("GET"))
+            .and(path("/ADA"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json"))
+            .mount(&server)
+            .await;
+
+        let base_url = format!("{}/", server.uri());
+        let result = super::fetch_spot_price_with_url(&base_url, "ADAUSD")
+            .await
+            .unwrap();
+        assert_eq!(result, FLOAT_PRECISION / 2);
+
+        let requests = server.received_requests().await.unwrap();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(
+            requests[0].url.path(),
+            "/ADA",
+            "the USD suffix must be stripped from the request URL"
+        );
     }
 
     // #363 — verify the USD rate is extracted and scaled to 1e30 precision
