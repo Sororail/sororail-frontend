@@ -424,17 +424,38 @@ mod tests {
         );
     }
 
-    /// When the symbol is exactly "USD", the suffix-stripping logic must
-    /// keep the symbol as-is (not produce an empty string).
-    #[test]
-    fn coinbase_exact_usd_strips_to_self() {
-        let symbol = "USD";
-        let base = symbol
-            .strip_suffix("USDT")
-            .or_else(|| symbol.strip_suffix("USD"))
-            .filter(|s| !s.is_empty())
-            .unwrap_or(symbol);
-        assert_eq!(base, "USD");
+    /// #795 — same degenerate case for an exact "USD" symbol.
+    #[tokio::test]
+    async fn coinbase_exact_usd_strips_to_self() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let body = r#"{
+            "data": {
+                "currency": "USD",
+                "rates": { "USD": "1.0" }
+            }
+        }"#;
+        Mock::given(method("GET"))
+            .and(path("/USD"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json"))
+            .mount(&server)
+            .await;
+
+        let base_url = format!("{}/", server.uri());
+        let result = super::fetch_spot_price_with_url(&base_url, "USD")
+            .await
+            .unwrap();
+        assert_eq!(result, FLOAT_PRECISION);
+
+        let requests = server.received_requests().await.unwrap();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(
+            requests[0].url.path(),
+            "/USD",
+            "an exact \"USD\" symbol must not be stripped to an empty request path"
+        );
     }
 
     // #364 — a response body without a USD key must return MissingUsdRate
