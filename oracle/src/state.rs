@@ -193,6 +193,39 @@ impl AppState {
             keeper_cycle_generation: Arc::new(AtomicU64::new(0)),
         }
     }
+
+    /// Reads `keeper_status` and `cycle_status` as one consistent snapshot for
+    /// `GET /keeper/status`, which needs `pending_*` / `last_executions` from
+    /// the former and `last_keeper_cycle_*` from the latter.
+    ///
+    /// Acquiring the two `RwLock`s in sequence can straddle a `run_keeper_cycle`
+    /// and return pending counts from before the cycle paired with timing from
+    /// after it (#797). `run_keeper_cycle` bumps `keeper_cycle_generation` at
+    /// its start and end, and within a cycle it always writes `keeper_status`
+    /// (pending counts) strictly before the `cycle_status` keeper-timing fields;
+    /// so if the generation is unchanged across both reads, no cycle boundary
+    /// crossed them and the pair is from a single point in time. Otherwise we
+    /// retry.
+    pub async fn keeper_status_snapshot(&self) -> (KeeperStatus, CycleStatus) {
+        use std::sync::atomic::Ordering;
+
+        for _ in 0..8 {
+            let generation = self.keeper_cycle_generation.load(Ordering::Acquire);
+            let keeper_status = self.keeper_status.read().await.clone();
+            let cycle_status = self.cycle_status.read().await.clone();
+            if self.keeper_cycle_generation.load(Ordering::Acquire) == generation {
+                return (keeper_status, cycle_status);
+            }
+        }
+
+        // A keeper cycle completes at most once per keeper_loop_interval while
+        // these two reads take microseconds, so 8 consecutive collisions is not
+        // realistically reachable; fall back to a best-effort pair.
+        (
+            self.keeper_status.read().await.clone(),
+            self.cycle_status.read().await.clone(),
+        )
+    }
 }
 
 #[cfg(test)]
