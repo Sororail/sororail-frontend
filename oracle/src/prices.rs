@@ -49,7 +49,7 @@ pub fn aggregate_prices(
     let filtered_sources = filter_result.filtered_sources;
 
     if filtered_prices.len() < min_sources {
-        let _rejected_sources: Vec<RejectedSource> = filter_result
+        let rejected_sources: Vec<RejectedSource> = filter_result
             .rejected
             .into_iter()
             .map(|(source, price, deviation)| RejectedSource {
@@ -60,9 +60,11 @@ pub fn aggregate_prices(
             .collect();
 
         return Err(format!(
-            "insufficient sources after filtering: got {}, need {} (rejected by MAD-based outlier filter)",
+            "insufficient sources after filtering: got {} of {}, need {} (rejected by MAD-based outlier filter: {:?})",
             filtered_prices.len(),
-            min_sources
+            prices.len(),
+            min_sources,
+            rejected_sources
         ));
     }
 

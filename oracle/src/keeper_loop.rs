@@ -965,7 +965,11 @@ async fn record_error(
         max: 0,
         tx_hash: None,
         error: error.to_string(),
-        timestamp: 0,
+        timestamp: crate::current_timestamp_secs(),
+        // Unlike price_loop.rs, this loop never fetches a Soroban ledger
+        // sequence anywhere in its execution path - there is no real value
+        // to thread through here (#726). `0` stays honest rather than
+        // fabricated.
         ledger_seq: 0,
     });
 }
