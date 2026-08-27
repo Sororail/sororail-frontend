@@ -9,6 +9,8 @@ use crate::state::{AppState, CachedPrice, FailedSubmission};
 
 const SOURCE_RETRY_ATTEMPTS: u32 = 3;
 const SOURCE_RETRY_BASE_DELAY_MS: u64 = 100;
+const LEDGER_SEQUENCE_RETRY_ATTEMPTS: u32 = 3;
+const LEDGER_SEQUENCE_RETRY_BASE_DELAY_MS: u64 = 100;
 /// Hard cap on a single price cycle — mirrors KEEPER_CYCLE_TIMEOUT_SECS (#781).
 const PRICE_CYCLE_TIMEOUT_SECS: u64 = 60;
 
@@ -110,19 +112,27 @@ async fn execute_price_cycle(state: Arc<AppState>) -> (usize, usize) {
     let mut tokens_stale = 0usize;
     let now = crate::current_timestamp_secs();
 
-    let ledger_seq =
-        match crate::stellar_rpc::get_latest_ledger_sequence(&state.config.stellar_rpc_url).await {
-            Ok(ledger_seq) => ledger_seq,
-            Err(error) => {
-                tracing::error!(
-                    error = %error,
-                    rpc_url = %state.config.stellar_rpc_url,
-                    "price cycle aborted: failed to fetch latest ledger sequence from RPC"
-                );
-                record_error(&state, "get_latest_ledger", error.to_string()).await;
-                return (0, 0);
-            }
-        };
+    let ledger_seq = match crate::retry::retry_with_backoff(
+        || async {
+            crate::stellar_rpc::get_latest_ledger_sequence(&state.config.stellar_rpc_url).await
+        },
+        LEDGER_SEQUENCE_RETRY_ATTEMPTS,
+        LEDGER_SEQUENCE_RETRY_BASE_DELAY_MS,
+        30_000,
+    )
+    .await
+    {
+        Ok(ledger_seq) => ledger_seq,
+        Err(error) => {
+            tracing::error!(
+                error = %error,
+                rpc_url = %state.config.stellar_rpc_url,
+                "price cycle aborted: failed to fetch latest ledger sequence from RPC after retries"
+            );
+            record_error(&state, "get_latest_ledger", error.to_string()).await;
+            return (0, 0);
+        }
+    };
 
     // Hermes accepts multiple `ids[]` values. Fetch all Pyth feeds once per
     // cycle, rather than spending one rate-limited request per token.
@@ -262,7 +272,13 @@ async fn finish_cycle(
         .metrics
         .record_price_cycle(latency_ms, tokens_ok, tokens_failed);
 
-    tracing::info!(tokens_ok, tokens_failed, tokens_stale, latency_ms, "cycle_complete");
+    tracing::info!(
+        tokens_ok,
+        tokens_failed,
+        tokens_stale,
+        latency_ms,
+        "cycle_complete"
+    );
 }
 
 /// Fetches prices from all configured sources, filters and aggregates them,
