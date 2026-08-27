@@ -137,10 +137,20 @@ pub async fn ready(State(state): State<Arc<AppState>>) -> Result<Json<HealthResp
                 if let Some((status, msg)) = cache.last_error.clone() {
                     return Err(ApiError::new(status, msg));
                 }
+                // Compute cycle times like health() does
+                let cycle = state.cycle_status.read().await;
+                let last_price_cycle_secs_ago = cycle
+                    .last_price_cycle_at
+                    .and_then(|t| t.elapsed().ok())
+                    .map(|d| d.as_secs());
+                let last_keeper_cycle_secs_ago = cycle
+                    .last_keeper_cycle_at
+                    .and_then(|t| t.elapsed().ok())
+                    .map(|d| d.as_secs());
                 return Ok(Json(HealthResponse {
                     status: "ok",
-                    last_price_cycle_secs_ago: None,
-                    last_keeper_cycle_secs_ago: None,
+                    last_price_cycle_secs_ago,
+                    last_keeper_cycle_secs_ago,
                     price_cycle_count: metrics.price_cycle_count,
                     keeper_cycle_count: metrics.keeper_cycle_count,
                     token_fetch_failures: metrics.token_fetch_failures,
@@ -166,10 +176,20 @@ pub async fn ready(State(state): State<Arc<AppState>>) -> Result<Json<HealthResp
     }
 
     let metrics = state.metrics.to_response();
+    // Compute cycle times like health() does
+    let cycle = state.cycle_status.read().await;
+    let last_price_cycle_secs_ago = cycle
+        .last_price_cycle_at
+        .and_then(|t| t.elapsed().ok())
+        .map(|d| d.as_secs());
+    let last_keeper_cycle_secs_ago = cycle
+        .last_keeper_cycle_at
+        .and_then(|t| t.elapsed().ok())
+        .map(|d| d.as_secs());
     Ok(Json(HealthResponse {
         status: "ok",
-        last_price_cycle_secs_ago: None,
-        last_keeper_cycle_secs_ago: None,
+        last_price_cycle_secs_ago,
+        last_keeper_cycle_secs_ago,
         price_cycle_count: metrics.price_cycle_count,
         keeper_cycle_count: metrics.keeper_cycle_count,
         token_fetch_failures: metrics.token_fetch_failures,
