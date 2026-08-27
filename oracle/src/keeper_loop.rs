@@ -130,6 +130,16 @@ pub struct CycleSummary {
 }
 
 async fn execute_keeper_cycle(state: Arc<AppState>) -> Result<CycleSummary, String> {
+    // A cycle-level timeout (KEEPER_CYCLE_TIMEOUT_SECS, in run_keeper_cycle)
+    // drops execute_keeper_cycle mid-poll, before the in-flight bookkeeping
+    // in any of the per-item loops below gets a chance to run. If the key
+    // that was mid-flight never reappears in a later cycle's pending-keys
+    // list, the lazy eviction in each loop's "skip in-flight" check never
+    // fires for it either, so it would sit in `in_flight_keys` forever with
+    // no log line at all. Sweep the whole map unconditionally at the start
+    // of every cycle so an entry like that still surfaces eventually (#806).
+    sweep_expired_in_flight_keys(&state).await;
+
     // Get fresh (non-stale) prices from cache
     let now = crate::current_timestamp_secs();
     let fresh_prices = {
@@ -567,6 +577,33 @@ async fn execute_keeper_cycle(state: Arc<AppState>) -> Result<CycleSummary, Stri
 
 fn is_poll_timeout(error: &str) -> bool {
     error.contains("not confirmed after")
+}
+
+/// Evict any `in_flight_keys` entry older than `IN_FLIGHT_EXPIRY`, regardless
+/// of whether that key is part of this cycle's pending work.
+///
+/// Each work-type loop already evicts a stale in-flight entry lazily, but
+/// only when that same key is scanned again in a later cycle's pending-keys
+/// list. A key stranded by the cycle-level `KEEPER_CYCLE_TIMEOUT_SECS`
+/// timeout (rather than the tracked poll-timeout path) may never reappear
+/// there — e.g. if the order actually confirmed on-chain and drops out of
+/// the pending set — so without this sweep it would never be evicted or
+/// logged at all (#806).
+async fn sweep_expired_in_flight_keys(state: &Arc<AppState>) {
+    let mut in_flight = state.in_flight_keys.lock().await;
+    in_flight.retain(|key, inserted_at| {
+        let elapsed = inserted_at.elapsed();
+        if elapsed > IN_FLIGHT_EXPIRY {
+            warn!(
+                key = %key,
+                elapsed_secs = elapsed.as_secs(),
+                "in_flight_key_expired_evicted_stale_sweep"
+            );
+            false
+        } else {
+            true
+        }
+    });
 }
 
 async fn get_pending_keys(
