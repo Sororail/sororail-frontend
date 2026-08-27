@@ -189,6 +189,7 @@ async fn execute_price_cycle(state: Arc<AppState>) -> (usize, usize) {
                     let ctx = ErrorContext {
                         token: token.stellar_address.clone(),
                         symbol: token.symbol.clone(),
+                        ledger_seq,
                     };
                     record_error_with_context(
                         &state,
@@ -315,6 +316,7 @@ async fn build_cached_price(
                 let ctx = ErrorContext {
                     token: token.stellar_address.clone(),
                     symbol: token.symbol.clone(),
+                    ledger_seq,
                 };
                 record_error_with_context(
                     state,
@@ -334,6 +336,25 @@ async fn build_cached_price(
         token.min_sources,
         token.max_deviation_bps,
     )?;
+
+    // Surface which sources the outlier filter excluded on an otherwise
+    // successful cycle - computed by aggregate_prices but previously
+    // dropped before reaching any consumer (#728).
+    for rejected in &aggregate.rejected_sources {
+        state.metrics.record_token_source_outlier_rejection(
+            &token.symbol,
+            &token.stellar_address,
+            &rejected.source,
+        );
+        tracing::warn!(
+            symbol = %token.symbol,
+            source = %rejected.source,
+            price = rejected.price,
+            deviation_bps = rejected.deviation_bps,
+            "price source excluded by outlier filter"
+        );
+    }
+
     signed_cached_price(state, token, ledger_seq, aggregate)
 }
 
@@ -458,6 +479,10 @@ fn signed_cached_price(
 struct ErrorContext {
     token: String,
     symbol: String,
+    /// Ledger sequence in scope when the failure was recorded, if any (#726).
+    /// `0` for failures that occur before any ledger sequence is known for
+    /// this cycle (e.g. the `get_latest_ledger` fetch itself failing).
+    ledger_seq: u32,
 }
 
 async fn record_error(
@@ -472,6 +497,7 @@ async fn record_error(
         ErrorContext {
             token: String::new(),
             symbol: String::new(),
+            ledger_seq: 0,
         },
     )
     .await;
@@ -493,8 +519,8 @@ async fn record_error_with_context(
         max: 0,
         tx_hash: None,
         error: error.into(),
-        timestamp: 0,
-        ledger_seq: 0,
+        timestamp: crate::current_timestamp_secs(),
+        ledger_seq: ctx.ledger_seq,
     });
 }
 
