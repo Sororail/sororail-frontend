@@ -395,7 +395,10 @@ async fn execute_keeper_cycle(state: Arc<AppState>) -> Result<CycleSummary, Stri
                     order_key,
                     None,
                     false,
-                    Some(format!("{}{}", error, freeze_error_msg.unwrap_or_default())),
+                    Some(match freeze_error_msg {
+                        Some(freeze_error) => format!("{error} | freeze_error: {freeze_error}"),
+                        None => error,
+                    }),
                 )
                 .await;
             }
