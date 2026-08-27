@@ -55,7 +55,7 @@ pub struct KeeperStatus {
     pub pending_orders: usize,
     pub pending_deposits: usize,
     pub pending_withdrawals: usize,
-    pub last_executions: Vec<KeeperExecution>,
+    pub last_executions: VecDeque<KeeperExecution>,
 }
 
 #[derive(Debug, Clone, Serialize)]
