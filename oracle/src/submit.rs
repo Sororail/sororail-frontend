@@ -190,7 +190,7 @@ async fn poll_until_confirmed(rpc_url: &str, hash: &str) -> Result<u32, SubmitEr
                         attempt,
                         "transient RPC/network error; will retry"
                     );
-                    sleep_ms(backoff_ms).await;
+                    sleep_ms(crate::retry::jitter(backoff_ms)).await;
                     backoff_ms = (backoff_ms * 2).min(30_000);
                     continue;
                 } else {
@@ -237,7 +237,7 @@ async fn poll_until_confirmed(rpc_url: &str, hash: &str) -> Result<u32, SubmitEr
                     next_backoff_ms = backoff_ms,
                     "transaction still pending"
                 );
-                sleep_ms(backoff_ms).await;
+                sleep_ms(crate::retry::jitter(backoff_ms)).await;
                 backoff_ms = (backoff_ms * 2).min(30_000);
             }
             _ => {
@@ -247,7 +247,7 @@ async fn poll_until_confirmed(rpc_url: &str, hash: &str) -> Result<u32, SubmitEr
                     attempt,
                     "unexpected transaction status; continuing poll"
                 );
-                sleep_ms(backoff_ms).await;
+                sleep_ms(crate::retry::jitter(backoff_ms)).await;
                 backoff_ms = (backoff_ms * 2).min(30_000);
             }
         }
