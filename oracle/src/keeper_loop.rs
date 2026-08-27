@@ -704,32 +704,20 @@ async fn get_account_sequence_once(state: &Arc<AppState>) -> Result<u64, Sequenc
     let rpc_url = &state.config.stellar_rpc_url;
     let account_id = &state.config.keeper_account_id;
 
-    let payload = serde_json::json!({
+    let payload = serde_json::to_string(&serde_json::json!({
         "jsonrpc": "2.0",
         "id": 1,
         "method": "getAccount",
         "params": { "account": account_id }
-    });
-
-    let response = state
-        .http
-        .post(rpc_url)
-        .json(&payload)
-        .send()
-        .await
-        .map_err(|e| SequenceFetchError::Network(format!("getAccount request failed: {e}")))?;
-
-    let status = response.status();
-    let body = response.text().await.map_err(|e| {
-        SequenceFetchError::Network(format!("Failed to read getAccount response: {e}"))
+    }))
+    .map_err(|e| {
+        SequenceFetchError::MissingOrInvalid(format!("failed to serialize request: {e}"))
     })?;
 
-    if !status.is_success() {
-        return Err(SequenceFetchError::Network(format!(
-            "getAccount returned HTTP {}",
-            status.as_u16()
-        )));
-    }
+    // Use the shared RPC POST helper instead of hand-rolling the request here (#751).
+    let body = crate::stellar_rpc::rpc_post(rpc_url, payload)
+        .await
+        .map_err(|e| SequenceFetchError::Network(format!("getAccount request failed: {e}")))?;
 
     let response_json: serde_json::Value = serde_json::from_str(&body).map_err(|e| {
         SequenceFetchError::Network(format!("Failed to parse getAccount response: {e}"))
@@ -789,7 +777,7 @@ async fn simulate_contract_call_once(
         .map(|arg| serde_json::Value::String(arg.to_string()))
         .collect();
 
-    let payload = serde_json::json!({
+    let payload = serde_json::to_string(&serde_json::json!({
         "jsonrpc": "2.0",
         "id": 1,
         "method": "simulateTransaction",
@@ -806,25 +794,13 @@ async fn simulate_contract_call_once(
                 }]
             }
         }
-    });
+    }))
+    .map_err(|e| format!("failed to serialize request: {e}"))?;
 
-    let response = state
-        .http
-        .post(rpc_url)
-        .json(&payload)
-        .send()
+    // Use the shared RPC POST helper instead of hand-rolling the request here (#751).
+    let body = crate::stellar_rpc::rpc_post(rpc_url, payload)
         .await
-        .map_err(|e| format!("RPC request failed: {e}"))?;
-
-    let status = response.status();
-    let body = response
-        .text()
-        .await
-        .map_err(|e| format!("Failed to read RPC response: {e}"))?;
-
-    if !status.is_success() {
-        return Err(format!("RPC request returned HTTP {}", status.as_u16()));
-    }
+        .map_err(|e| e.to_string())?;
 
     let response_json: serde_json::Value =
         serde_json::from_str(&body).map_err(|e| format!("Failed to parse RPC response: {e}"))?;
