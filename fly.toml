@@ -45,6 +45,6 @@ primary_region = 'iad'
   [checks.ready]
     port = 8080
     type = 'http'
-    interval = '10s'
-    timeout = '3s'
+    interval = '20s'
+    timeout = '20s'
     path = '/ready'
