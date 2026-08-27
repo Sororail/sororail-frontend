@@ -50,6 +50,7 @@ pub async fn check_keeper_balance(
             );
         }
         return Err(RpcError::BalanceBelowMinimum {
+            balance_stroops: stroops,
             balance_xlm: xlm,
             min_xlm: cfg.min_balance_xlm,
         });
