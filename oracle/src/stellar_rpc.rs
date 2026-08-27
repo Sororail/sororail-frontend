@@ -6,7 +6,7 @@ pub enum RpcError {
     HttpError { status: u16, body: String },
     JsonError(String),
     RpcFault { code: i64, message: String },
-    BalanceBelowMinimum { balance_xlm: f64, min_xlm: f64 },
+    BalanceBelowMinimum { balance_stroops: i64, balance_xlm: f64, min_xlm: f64 },
 }
 
 impl Eq for RpcError {}
@@ -44,6 +44,7 @@ impl std::fmt::Display for RpcError {
             RpcError::BalanceBelowMinimum {
                 balance_xlm,
                 min_xlm,
+                ..
             } => {
                 write!(
                     f,
