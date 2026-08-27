@@ -1,12 +1,13 @@
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use axum::extract::State;
+use axum::extract::{Path, State};
 use axum::http::header::CONTENT_TYPE;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::Json;
 use serde::Serialize;
+use tracing::info;
 
 use super::{AdminAuth, ApiError};
 use crate::state::{AppState, CachedPrice, FailedSubmission};
@@ -20,6 +21,12 @@ pub struct OracleStatusResponse {
 }
 
 #[derive(Debug, Serialize)]
+pub struct BlacklistedKey {
+    pub key: String,
+    pub consecutive_failures: u32,
+}
+
+#[derive(Debug, Serialize)]
 pub struct KeeperStatusResponse {
     pub pending_orders: usize,
     pub pending_deposits: usize,
@@ -29,6 +36,10 @@ pub struct KeeperStatusResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_cycle_latency_ms: Option<u64>,
     pub last_executions: Vec<crate::state::KeeperExecution>,
+    /// Order keys permanently blacklisted after MAX_CONSECUTIVE_FREEZE_FAILURES
+    /// freeze failures. Previously only visible via a one-time ALERT log line
+    /// with no way to discover or clear it through the API (#802).
+    pub blacklisted_keys: Vec<BlacklistedKey>,
 }
 
 pub async fn oracle_status(
@@ -77,6 +88,17 @@ pub async fn keeper_status(
         .take(50)
         .collect();
 
+    let blacklisted_keys = state
+        .frozen_order_blacklist
+        .lock()
+        .await
+        .iter()
+        .map(|(key, consecutive_failures)| BlacklistedKey {
+            key: key.clone(),
+            consecutive_failures: *consecutive_failures,
+        })
+        .collect();
+
     Json(KeeperStatusResponse {
         pending_orders: keeper_status.pending_orders,
         pending_deposits: keeper_status.pending_deposits,
@@ -84,7 +106,46 @@ pub async fn keeper_status(
         last_cycle_at,
         last_cycle_latency_ms,
         last_executions,
+        blacklisted_keys,
     })
+}
+
+#[derive(Debug, Serialize)]
+pub struct ClearBlacklistResponse {
+    pub key: String,
+    pub cleared: bool,
+}
+
+/// Clear a single order key from `frozen_order_blacklist`, making the
+/// "manual intervention required" the blacklist log message promises
+/// actually possible through the API (#802).
+///
+/// Also resets the key's consecutive freeze-failure count, so it gets a
+/// fresh `MAX_CONSECUTIVE_FREEZE_FAILURES` budget instead of being
+/// re-blacklisted after a single further failure.
+pub async fn clear_blacklisted_key(
+    _auth: AdminAuth,
+    State(state): State<Arc<AppState>>,
+    Path(key): Path<String>,
+) -> Result<Json<ClearBlacklistResponse>, ApiError> {
+    let removed = state
+        .frozen_order_blacklist
+        .lock()
+        .await
+        .remove(&key)
+        .is_some();
+
+    if !removed {
+        return Err(ApiError::new(StatusCode::NOT_FOUND, "key_not_blacklisted"));
+    }
+
+    state.freeze_failure_counts.lock().await.remove(&key);
+
+    info!(key = %key, "blacklisted order key cleared via admin API");
+    Ok(Json(ClearBlacklistResponse {
+        key,
+        cleared: true,
+    }))
 }
 
 pub async fn metrics(_auth: AdminAuth, State(state): State<Arc<AppState>>) -> Response {
