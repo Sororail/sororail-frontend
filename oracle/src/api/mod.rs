@@ -6,7 +6,7 @@ use axum::http::header::AUTHORIZATION;
 use axum::http::request::Parts;
 use axum::http::{Method, StatusCode};
 use axum::response::{IntoResponse, Response};
-use axum::routing::get;
+use axum::routing::{delete, get};
 use axum::{Json, Router};
 use serde::Serialize;
 use std::time::Duration;
@@ -207,6 +207,10 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/oracle/status", get(admin::oracle_status))
         .route("/keeper/status", get(admin::keeper_status))
         .route("/keeper/balance", get(admin::keeper_balance))
+        .route(
+            "/keeper/blacklist/{key}",
+            delete(admin::clear_blacklisted_key),
+        )
         .route("/metrics", get(admin::metrics))
         .route(
             "/oracle/failed-submissions",
