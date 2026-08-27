@@ -77,9 +77,12 @@ pub fn sign_transaction(
     } else if secret_key.len() == 64 && secret_key.chars().all(|c| c.is_ascii_hexdigit()) {
         hex::decode(secret_key).map_err(|e| format!("invalid secret key hex: {e}"))?
     } else {
+        // #735 — never echo any part of the secret key into an error message.
+        // Report only its length and format, which is enough to diagnose a
+        // misconfigured env var without leaking key material into logs.
         return Err(format!(
-            "secret key must be an S-prefixed strkey or 64-char hex, got: {}",
-            &secret_key[..secret_key.len().min(20)]
+            "secret key must be an S-prefixed strkey or 64-char hex (got {} chars, non-hex or wrong prefix)",
+            secret_key.len()
         ));
     };
 
