@@ -2686,7 +2686,6 @@ dependencies = [
  "http-body",
  "percent-encoding",
  "pin-project-lite",
- "tower",
  "tower-layer",
  "tower-service",
  "tracing",
