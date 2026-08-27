@@ -334,6 +334,25 @@ async fn build_cached_price(
         token.min_sources,
         token.max_deviation_bps,
     )?;
+
+    // Surface which sources the outlier filter excluded on an otherwise
+    // successful cycle - computed by aggregate_prices but previously
+    // dropped before reaching any consumer (#728).
+    for rejected in &aggregate.rejected_sources {
+        state.metrics.record_token_source_outlier_rejection(
+            &token.symbol,
+            &token.stellar_address,
+            &rejected.source,
+        );
+        tracing::warn!(
+            symbol = %token.symbol,
+            source = %rejected.source,
+            price = rejected.price,
+            deviation_bps = rejected.deviation_bps,
+            "price source excluded by outlier filter"
+        );
+    }
+
     signed_cached_price(state, token, ledger_seq, aggregate)
 }
 
