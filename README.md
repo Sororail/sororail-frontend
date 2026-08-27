@@ -7,7 +7,7 @@ This repository contains a single Rust binary that runs:
 - Keeper loop that executes pending orders, deposits, and withdrawals on-chain
 - HTTP API for price feeds and operational endpoints
 
-## Architecture
+## Architecture.
 
 ```
 so4-oracle  (single statically-deployed binary)
