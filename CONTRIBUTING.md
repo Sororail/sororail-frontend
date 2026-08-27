@@ -36,7 +36,7 @@ Key variables (see `oracle/src/config.rs` for the full list):
 | `PRICE_FEED_CONFIG` | JSON array of `TokenConfig` entries (see `config/tokens.json` for the schema) |
 | `STELLAR_RPC_URL` | Soroban RPC endpoint |
 | `HORIZON_URL` | Stellar Horizon endpoint |
-| `NETWORK_PASSPHRASE` | `Test SDF Network ; September 2015` (testnet) or mainnet equivalent |
+| `STELLAR_NETWORK` | `testnet` or `mainnet` — the network passphrase is derived from this automatically, it is not itself a configurable variable |
 | `KEEPER_SECRET_KEY` | Stellar secret key for the keeper account |
 | `ORACLE_CONTRACT_ID` | Deployed oracle contract address |
 | `ADMIN_API_TOKEN` | Bearer token for admin routes (`/oracle/status`, `/metrics`, etc.) |

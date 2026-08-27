@@ -7,11 +7,12 @@ primary_region = 'iad'
 [env]
   PORT = '8080'
   BIND_ADDR = '0.0.0.0:8080'
-  # REQUIRED: override these for your target network before deploying.
-  # Testnet:  STELLAR_NETWORK=testnet  NETWORK_PASSPHRASE='Test SDF Network ; September 2015'
-  # Mainnet:  STELLAR_NETWORK=mainnet  NETWORK_PASSPHRASE='Public Global Stellar Network ; September 2015'
+  # REQUIRED: override this for your target network before deploying.
+  # The network passphrase is derived automatically from STELLAR_NETWORK
+  # (see oracle/src/config.rs) — it is not read from the environment.
+  # Testnet:  STELLAR_NETWORK=testnet
+  # Mainnet:  STELLAR_NETWORK=mainnet
   STELLAR_NETWORK = 'YOUR_STELLAR_NETWORK'
-  NETWORK_PASSPHRASE = 'YOUR_NETWORK_PASSPHRASE'
   PRICE_LOOP_MS = '1000'
   KEEPER_LOOP_MS = '1500'
   MIN_KEEPER_BALANCE_XLM = '10'
