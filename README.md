@@ -45,7 +45,7 @@ NETWORK_PASSPHRASE="Test SDF Network ; September 2015"
 RPC_URL=https://soroban-testnet.stellar.org
 ```
 
-## Required Environment Variables
+## Required Environment Variables.
 
 The names below are the exact names the binary reads at startup via
 `Config::from_env()`. Using any other name (e.g. `ORDER_HANDLER_CONTRACT_ID`)
