@@ -891,7 +891,7 @@ async fn record_execution(
     error: Option<String>,
 ) {
     let mut keeper_status = state.keeper_status.write().await;
-    keeper_status.last_executions.push(KeeperExecution {
+    keeper_status.last_executions.push_back(KeeperExecution {
         timestamp: SystemTime::now(),
         operation: operation.into(),
         key: key.into(),
@@ -900,7 +900,7 @@ async fn record_execution(
         error,
     });
     if keeper_status.last_executions.len() > 100 {
-        keeper_status.last_executions.remove(0);
+        keeper_status.last_executions.pop_front();
     }
 }
 
