@@ -374,7 +374,7 @@ async fn keeper_cycle_retries_transient_get_account_sequence_failure() {
 }
 
 #[test]
-fn test_scval_encoding_matches_ts_keeper_pattern() {
+fn test_encode_signed_price_field_order_and_types() {
     use oracle::chain::scval::encode_signed_price;
 
     let price = test_cached_price();
@@ -406,7 +406,7 @@ fn test_scval_encoding_matches_ts_keeper_pattern() {
             ];
             assert_eq!(
                 keys, expected,
-                "keys must match TS keeper buildSignedPriceScVal order"
+                "keys must match encode_signed_price's documented field order"
             );
 
             assert!(matches!(entries[0].val, stellar_xdr::ScVal::U32(0)));
