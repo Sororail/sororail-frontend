@@ -573,9 +573,13 @@ mod tests {
             .await
             .unwrap_err();
 
-        assert!(matches!(err, SubmitError::PollTimeout { .. }));
         if let SubmitError::PollTimeout { hash } = err {
-            assert_eq!(hash, "abc123def456");
+            assert_eq!(
+                hash, "abc123def456",
+                "hash should be available for reconciliation"
+            );
+        } else {
+            panic!("expected PollTimeout error with hash");
         }
     }
 
@@ -599,32 +603,6 @@ mod tests {
 
         assert_eq!(ledger, 77);
         assert_eq!(mock.received_requests().await.unwrap().len(), 3);
-    }
-
-    #[tokio::test]
-    async fn poll_timeout_includes_hash_for_later_reconciliation() {
-        use wiremock::matchers::method;
-        use wiremock::{Mock, MockServer};
-
-        let mock = MockServer::start().await;
-        let pending = serde_json::json!({ "status": "PENDING" });
-        Mock::given(method("POST"))
-            .respond_with(rpc_responder(vec![pending; MAX_POLL_ATTEMPTS as usize]))
-            .mount(&mock)
-            .await;
-
-        let err = submit_and_poll(&mock.uri(), "signed_xdr_base64")
-            .await
-            .unwrap_err();
-
-        if let SubmitError::PollTimeout { hash } = err {
-            assert_eq!(
-                hash, "abc123def456",
-                "hash should be available for reconciliation"
-            );
-        } else {
-            panic!("expected PollTimeout error with hash");
-        }
     }
 
     #[tokio::test]
