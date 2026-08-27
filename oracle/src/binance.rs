@@ -179,7 +179,11 @@ pub fn parse_price_to_precision(raw: &str) -> Result<i128, BinancePriceError> {
 
     let whole_val = whole
         .parse::<i128>()
-        .map_err(|_| BinancePriceError::PriceParseError(format!("invalid whole part: {text}")))?;
+        .map_err(|_| {
+            BinancePriceError::PriceParseError(format!(
+                "overflow for price (whole part too large): {text}"
+            ))
+        })?;
 
     let scale_digits = 30usize;
     // Use UTF-8-safe char iteration to take at most `scale_digits` digits.
@@ -247,6 +251,18 @@ mod tests {
     #[test]
     fn parse_price_invalid() {
         assert!(parse_price_to_precision("abc").is_err());
+    }
+    #[test]
+    fn parse_price_reports_whole_part_overflow() {
+        let oversized_whole = "1".repeat(40);
+        let err = parse_price_to_precision(&oversized_whole).unwrap_err();
+
+        assert_eq!(
+            err,
+            BinancePriceError::PriceParseError(format!(
+                "overflow for price (whole part too large): {oversized_whole}"
+            )),
+        );
     }
 
     // #345 — rejects negatives and multiple dots
