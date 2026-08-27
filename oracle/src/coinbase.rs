@@ -54,10 +54,6 @@ impl crate::retry::Retryable for CoinbasePriceError {
     }
 }
 
-#[derive(Debug, Deserialize)]
-pub struct CoinbaseRates {
-    pub rates: std::collections::HashMap<String, String>,
-}
 
 #[derive(Debug, Deserialize)]
 pub struct CoinbaseResponse {
