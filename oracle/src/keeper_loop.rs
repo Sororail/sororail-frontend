@@ -227,6 +227,11 @@ async fn execute_keeper_cycle(state: Arc<AppState>) -> Result<CycleSummary, Stri
         errors: 0,
     };
 
+    // Cached account sequence, shared across every execute_handler call made
+    // during this cycle so it's fetched via RPC at most once instead of once
+    // per pending order/deposit/withdrawal (#805).
+    let mut sequence_cache: Option<u64> = None;
+
     for order_key in &order_keys {
         // Skip permanently blacklisted orders — retrying burns fee attempts (#498).
         {
@@ -267,6 +272,7 @@ async fn execute_keeper_cycle(state: Arc<AppState>) -> Result<CycleSummary, Stri
             &state.config.order_handler_contract_id,
             "execute_order",
             order_key,
+            &mut sequence_cache,
         )
         .await
         {
@@ -316,6 +322,7 @@ async fn execute_keeper_cycle(state: Arc<AppState>) -> Result<CycleSummary, Stri
                         &state.config.order_handler_contract_id,
                         "freeze_order",
                         order_key,
+                        &mut sequence_cache,
                     )
                     .await
                     {
@@ -409,6 +416,7 @@ async fn execute_keeper_cycle(state: Arc<AppState>) -> Result<CycleSummary, Stri
             &state.config.deposit_handler_contract_id,
             "execute_deposit",
             deposit_key,
+            &mut sequence_cache,
         )
         .await
         {
@@ -493,6 +501,7 @@ async fn execute_keeper_cycle(state: Arc<AppState>) -> Result<CycleSummary, Stri
             &state.config.withdrawal_handler_contract_id,
             "execute_withdrawal",
             withdrawal_key,
+            &mut sequence_cache,
         )
         .await
         {
@@ -644,11 +653,33 @@ async fn set_prices_on_chain(
     Ok(format!("confirmed on ledger {ledger}"))
 }
 
+/// True if `error` indicates the submitted transaction was rejected for
+/// carrying a stale/incorrect account sequence number (e.g. RPC status
+/// `BAD_SEQUENCE`, or classic Horizon's `tx_bad_seq`), as opposed to any
+/// other submission failure. Used to decide when a locally-cached sequence
+/// number needs to be re-fetched from the network (#805).
+fn is_bad_sequence_error(error: &str) -> bool {
+    let lower = error.to_ascii_lowercase();
+    lower.contains("bad_sequence") || lower.contains("bad_seq") || lower.contains("badseq")
+}
+
+/// Execute a handler contract call, using and maintaining a per-cycle cached
+/// account sequence number instead of fetching it via RPC on every call.
+///
+/// `sequence_cache` is shared across every `execute_handler` invocation
+/// within one keeper cycle: the first call of the cycle fetches the account
+/// sequence once and caches it; every subsequent call reuses and locally
+/// increments that cached value on success, avoiding a redundant `getAccount`
+/// RPC round-trip per pending order/deposit/withdrawal (#805). The cache is
+/// only cleared (forcing a fresh fetch on the next call) when a submission is
+/// rejected for a sequence-related reason, since that's the one case where
+/// the cached value is known to be wrong.
 async fn execute_handler(
     state: &Arc<AppState>,
     contract_id: &str,
     method: &str,
     key: &str,
+    sequence_cache: &mut Option<u64>,
 ) -> Result<String, String> {
     let key_bytes = hex::decode(key).map_err(|e| format!("invalid key hex: {e}"))?;
     let key_scval = stellar_xdr::ScVal::Bytes(stellar_xdr::ScBytes(
@@ -657,9 +688,16 @@ async fn execute_handler(
             .map_err(|e| format!("key bytes conversion failed: {e}"))?,
     ));
 
-    let sequence = get_account_sequence(state)
-        .await
-        .map_err(|e| e.to_string())?;
+    let sequence = match *sequence_cache {
+        Some(seq) => seq,
+        None => {
+            let seq = get_account_sequence(state)
+                .await
+                .map_err(|e| e.to_string())?;
+            *sequence_cache = Some(seq);
+            seq
+        }
+    };
 
     let tx = tx_builder::build_invoke_tx(
         &state.config.keeper_account_id,
@@ -682,12 +720,25 @@ async fn execute_handler(
         &state.config.network_passphrase,
     )?;
 
-    let ledger = crate::submit::submit_and_poll(&state.config.stellar_rpc_url, &signed_xdr)
-        .await
-        .map_err(|e| format!("{method} submit failed: {e}"))?;
-
-    info!(method, key = %key, ledger, "handler_confirmed");
-    Ok(format!("confirmed on ledger {ledger}"))
+    match crate::submit::submit_and_poll(&state.config.stellar_rpc_url, &signed_xdr).await {
+        Ok(ledger) => {
+            // Success consumed `sequence`; the next call in this cycle can
+            // use `sequence + 1` without asking the network.
+            *sequence_cache = Some(sequence + 1);
+            info!(method, key = %key, ledger, "handler_confirmed");
+            Ok(format!("confirmed on ledger {ledger}"))
+        }
+        Err(error) => {
+            let msg = error.to_string();
+            if is_bad_sequence_error(&msg) {
+                // The cached sequence is stale relative to the network;
+                // drop it so the next call re-fetches instead of retrying
+                // with the same wrong value.
+                *sequence_cache = None;
+            }
+            Err(format!("{method} submit failed: {msg}"))
+        }
+    }
 }
 
 async fn get_account_sequence(state: &Arc<AppState>) -> Result<u64, SequenceFetchError> {
