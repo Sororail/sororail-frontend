@@ -265,10 +265,10 @@ mod tests {
         let state = Arc::new(AppState::new(Arc::new(config)));
         let app = super::build_router(Arc::clone(&state));
 
-        // Make an unauthorized admin request
-        let _request = Request::builder()
+        // Make both successful and failing admin requests to test that secrets don't leak in either case
+        let successful_request = Request::builder()
             .uri("/oracle/status")
-            .header("Authorization", format!("Bearer {}", test_admin_token)) // wait, we want a failing one to check auth failure metrics
+            .header("Authorization", format!("Bearer {}", test_admin_token))
             .body(Body::empty())
             .unwrap();
 
@@ -278,6 +278,8 @@ mod tests {
             .body(Body::empty())
             .unwrap();
 
+        // Send both requests
+        let _ = app.clone().oneshot(successful_request).await;
         let _ = app.clone().oneshot(failing_request).await;
 
         let metrics_out = state.metrics.to_prometheus();
