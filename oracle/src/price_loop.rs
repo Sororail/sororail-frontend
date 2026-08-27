@@ -144,16 +144,18 @@ async fn execute_price_cycle(state: Arc<AppState>) -> (usize, usize) {
         .filter(|token| token.sources.iter().any(|source| source == "pyth"))
         .filter_map(|token| token.pyth_feed_id.as_deref())
         .collect();
-    let pyth_prices = match crate::pyth::fetch_pyth_prices(
+    
+    // Track whether the batch request succeeded or failed
+    let (pyth_prices, batch_failed) = match crate::pyth::fetch_pyth_prices(
         &pyth_feed_ids,
         state.config.pyth_api_key.as_ref().map(|key| key.as_str()),
     )
     .await
     {
-        Ok(prices) => prices,
+        Ok(prices) => (prices, false),
         Err(error) => {
             tracing::warn!(error = %error, "batched Pyth request failed");
-            std::collections::HashMap::new()
+            (std::collections::HashMap::new(), true)
         }
     };
 
@@ -180,7 +182,7 @@ async fn execute_price_cycle(state: Arc<AppState>) -> (usize, usize) {
                 }
             }
             // Token is either not in cache or not stale, try to fetch fresh price
-            match build_cached_price(&state, token, ledger_seq, &pyth_prices).await {
+            match build_cached_price(&state, token, ledger_seq, &pyth_prices, batch_failed).await {
                 Ok(price) => {
                     new_prices.insert(key, price);
                     tokens_ok += 1;
@@ -289,6 +291,7 @@ async fn build_cached_price(
     token: &TokenConfig,
     ledger_seq: u32,
     pyth_prices: &std::collections::HashMap<String, crate::pyth::PythPriceFeed>,
+    pyth_batch_failed: bool,
 ) -> Result<CachedPrice, String> {
     let mut prices = Vec::new();
     let mut sources = Vec::new();
@@ -299,6 +302,7 @@ async fn build_cached_price(
             token,
             state.config.pyth_api_key.as_ref().map(|key| key.as_str()),
             pyth_prices,
+            pyth_batch_failed,
         )
         .await
         {
@@ -363,9 +367,10 @@ async fn fetch_source_with_retry(
     token: &TokenConfig,
     pyth_api_key: Option<&str>,
     pyth_prices: &std::collections::HashMap<String, crate::pyth::PythPriceFeed>,
+    pyth_batch_failed: bool,
 ) -> Result<i128, PriceSourceError> {
     crate::retry::retry_with_backoff(
-        || async { fetch_source_price(source, token, pyth_api_key, pyth_prices).await },
+        || async { fetch_source_price(source, token, pyth_api_key, pyth_prices, pyth_batch_failed).await },
         SOURCE_RETRY_ATTEMPTS,
         SOURCE_RETRY_BASE_DELAY_MS,
         30_000,
@@ -378,6 +383,7 @@ async fn fetch_source_price(
     token: &TokenConfig,
     pyth_api_key: Option<&str>,
     pyth_prices: &std::collections::HashMap<String, crate::pyth::PythPriceFeed>,
+    pyth_batch_failed: bool,
 ) -> Result<i128, PriceSourceError> {
     match source {
         "binance" => {
@@ -418,6 +424,24 @@ async fn fetch_source_price(
                     50,
                 )
             } else {
+                // If batch failed, we should not fall back to individual requests
+                // as this would create N requests when Hermes is unstable
+                if pyth_batch_failed {
+                    tracing::warn!(
+                        symbol = %token.symbol,
+                        feed_id = %feed_id,
+                        "skipping Pyth price fetch due to batch failure"
+                    );
+                    return Err(PriceSourceError::Pyth(crate::pyth::PythPriceError::NetworkError(
+                        "batch request failed, skipping individual fallback".to_string()
+                    )));
+                }
+                
+                tracing::warn!(
+                    symbol = %token.symbol,
+                    feed_id = %feed_id,
+                    "Pyth feed not found in batch, falling back to individual request"
+                );
                 crate::pyth::fetch_pyth_prices(&[feed_id], pyth_api_key)
                     .await
                     .and_then(|mut feeds| {
