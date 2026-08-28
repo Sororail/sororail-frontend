@@ -217,9 +217,16 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             get(prices::failed_submissions),
         )
         .with_state(state.clone())
+        // Layer ordering: `.layer()` calls chained directly on a `Router` make
+        // the LAST-added layer the OUTERMOST — it sees the request first. So
+        // `SetRequestIdLayer` must be added *after* `trace_layer` for the ID
+        // to be in the request extensions by the time `trace_layer`'s
+        // `make_span_with` reads it; otherwise every span's `request_id` is
+        // "" (#790). `PropagateRequestIdLayer` only needs to run after the
+        // handler, so it stays innermost.
         .layer(PropagateRequestIdLayer::x_request_id())
-        .layer(SetRequestIdLayer::x_request_id(MakeRequestUuid))
         .layer(trace_layer)
+        .layer(SetRequestIdLayer::x_request_id(MakeRequestUuid))
         .layer(axum::middleware::from_fn_with_state(state, track_metrics))
 }
 
