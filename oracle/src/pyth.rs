@@ -3,7 +3,11 @@ use std::collections::HashMap;
 
 /// Provider endpoint recommended by Pyth for authenticated production traffic.
 pub const PYTH_HERMES_URL: &str = "https://pyth.dourolabs.app/hermes/api/latest_price_feeds";
-pub const FLOAT_PRECISION: i128 = 1_000_000_000_000_000_000_000_000_000_000;
+
+/// Re-exported from the crate root so existing `crate::pyth::FLOAT_PRECISION`
+/// callers keep working; the precision invariant has one source of truth now
+/// (#709) rather than a separate copy per module.
+pub use crate::FLOAT_PRECISION;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum PythPriceError {
@@ -113,7 +117,10 @@ enum HermesResponse {
 }
 
 pub fn normalize_pyth_price(price_str: &str, exponent: i32) -> Result<i128, PythPriceError> {
-    if !(-30..=0).contains(&exponent) {
+    // Pyth exponents are negative (or zero); anything below -SCALE_DIGITS
+    // can't be represented at our on-chain precision (#709).
+    let min_exponent = -(crate::SCALE_DIGITS as i32);
+    if !(min_exponent..=0).contains(&exponent) {
         return Err(PythPriceError::PriceParseError(format!(
             "unsupported exponent: {exponent}"
         )));
@@ -130,7 +137,7 @@ pub fn normalize_pyth_price(price_str: &str, exponent: i32) -> Result<i128, Pyth
         ));
     }
 
-    let exponent_diff = 30 + exponent;
+    let exponent_diff = crate::SCALE_DIGITS as i32 + exponent;
 
     if exponent_diff >= 0 {
         price_int

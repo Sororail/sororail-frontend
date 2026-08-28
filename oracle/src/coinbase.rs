@@ -635,4 +635,49 @@ mod tests {
             CoinbasePriceError::HttpError { status: 500, .. }
         ));
     }
+
+    /// #706 — every other HTTP test builds `base_url` as `"{uri}/"`, which
+    /// contains neither `"currency="` nor `"exchange-rates"`, so they all
+    /// exercise the `use_query = false` (`format!`-concatenated) branch that
+    /// production never takes. The real `COINBASE_EXCHANGE_RATES_URL` shape
+    /// (`.../v2/exchange-rates?currency=`) drives `use_query = true` — the
+    /// `reqwest .query()` path. This test covers that branch at the HTTP
+    /// level: `?currency=` is trimmed, and the currency arrives as a real
+    /// query parameter.
+    #[tokio::test]
+    async fn fetch_spot_price_production_url_shape_uses_query_param_branch() {
+        use wiremock::matchers::{method, path, query_param};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let body = r#"{
+            "data": {
+                "currency": "BTC",
+                "rates": { "USD": "50000.0" }
+            }
+        }"#;
+
+        Mock::given(method("GET"))
+            .and(path("/v2/exchange-rates"))
+            .and(query_param("currency", "BTC"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json"))
+            .mount(&server)
+            .await;
+
+        // Same shape as the real COINBASE_EXCHANGE_RATES_URL constant.
+        let base_url = format!("{}/v2/exchange-rates?currency=", server.uri());
+        let result = super::fetch_spot_price_with_url(&base_url, "BTCUSDT")
+            .await
+            .unwrap();
+        assert_eq!(result, 50000 * FLOAT_PRECISION);
+
+        let requests = server.received_requests().await.unwrap();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].url.path(), "/v2/exchange-rates");
+        assert_eq!(
+            requests[0].url.query(),
+            Some("currency=BTC"),
+            "currency must be sent as a query parameter, not concatenated into the path"
+        );
+    }
 }
