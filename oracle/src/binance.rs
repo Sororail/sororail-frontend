@@ -1,7 +1,10 @@
 use serde::Deserialize;
 
 pub const BINANCE_TICKER_PRICE_URL: &str = "https://data-api.binance.vision/api/v3/ticker/price";
-pub const FLOAT_PRECISION: i128 = 1_000_000_000_000_000_000_000_000_000_000;
+
+/// Re-exported from the crate root so existing `crate::binance::FLOAT_PRECISION`
+/// callers keep working; the value lives in one place now (#709).
+pub use crate::FLOAT_PRECISION;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BinancePriceError {
@@ -185,7 +188,7 @@ pub fn parse_price_to_precision(raw: &str) -> Result<i128, BinancePriceError> {
             ))
         })?;
 
-    let scale_digits = 30usize;
+    let scale_digits = crate::SCALE_DIGITS as usize;
     // Use UTF-8-safe char iteration to take at most `scale_digits` digits.
     let normalized_frac = if frac.chars().count() >= scale_digits {
         frac.chars().take(scale_digits).collect::<String>()
