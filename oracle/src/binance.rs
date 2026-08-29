@@ -180,13 +180,11 @@ pub fn parse_price_to_precision(raw: &str) -> Result<i128, BinancePriceError> {
         )));
     }
 
-    let whole_val = whole
-        .parse::<i128>()
-        .map_err(|_| {
-            BinancePriceError::PriceParseError(format!(
-                "overflow for price (whole part too large): {text}"
-            ))
-        })?;
+    let whole_val = whole.parse::<i128>().map_err(|_| {
+        BinancePriceError::PriceParseError(format!(
+            "overflow for price (whole part too large): {text}"
+        ))
+    })?;
 
     let scale_digits = crate::SCALE_DIGITS as usize;
     // Use UTF-8-safe char iteration to take at most `scale_digits` digits.
