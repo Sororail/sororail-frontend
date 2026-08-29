@@ -102,8 +102,8 @@ pub fn parse_ticker_http_result(
     parse_ticker_http_response(status_code, &body, symbols)
 }
 
-// Only exercised by the URL-shape tests below; the live fetch path builds its
-// query through reqwest instead.
+// Test-only convenience wrapper around the same URL builder used by the live
+// fetch path.
 #[cfg(test)]
 fn build_spot_price_url(symbols: &[String]) -> String {
     build_spot_price_url_for(BINANCE_TICKER_PRICE_URL, symbols)
