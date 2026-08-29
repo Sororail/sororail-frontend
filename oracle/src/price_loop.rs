@@ -71,7 +71,13 @@ pub async fn run_price_loop(state: Arc<AppState>) {
                 break;
             }
         }
-        run_price_cycle(Arc::clone(&state)).await;
+        tokio::select! {
+            _ = state.shutdown_token.cancelled() => {
+                tracing::info!("price_loop shutting down");
+                break;
+            }
+            _ = run_price_cycle(Arc::clone(&state)) => {}
+        }
     }
 }
 
