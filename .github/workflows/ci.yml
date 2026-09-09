@@ -21,8 +21,10 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm typecheck
+      # @sororail/sdk only exposes its type declarations from dist/, built by
+      # tsup, so apps/web can't typecheck against it until this runs first.
       - run: pnpm build
+      - run: pnpm typecheck
       # Playwright needs a built app and its own browser download.
       - run: pnpm exec playwright install --with-deps chromium
       - run: pnpm test
