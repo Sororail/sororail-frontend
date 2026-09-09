@@ -36,7 +36,7 @@ stellar-rpc-client = "27.0.0"
 # `base64` crate below (see chain/tx_builder.rs); stellar-xdr's own
 # `to_xdr_base64`/`from_xdr_base64` helpers are never called, so the
 # `base64` feature only adds a redundant dependency edge (#815).
-stellar-xdr = { version = "27", features = ["std"] }
+stellar-xdr = { version = "28", features = ["std"] }
 stellar-strkey = "0.0.18"
 base64 = "0.22"
 sha2 = "0.10"
