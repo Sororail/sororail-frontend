@@ -86,13 +86,16 @@ export function WhenLabel({ at, now }: { at: bigint; now: bigint }) {
   const days = Math.floor(seconds / 86_400);
   const hours = Math.floor((seconds % 86_400) / 3_600);
   const minutes = Math.floor((seconds % 3_600) / 60);
+  const secs = Math.floor(seconds % 60);
 
   const relative =
     days > 0
       ? `in ${days}d ${hours}h`
       : hours > 0
         ? `in ${hours}h ${minutes}m`
-        : `in ${minutes}m`;
+        : minutes > 0
+          ? `in ${minutes}m`
+          : `in <1m`;
 
   return <span title={absolute}>{relative}</span>;
 }
