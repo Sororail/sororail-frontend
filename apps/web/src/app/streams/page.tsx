@@ -74,11 +74,17 @@ function StreamCard({ position }: { position: Position }) {
       const record = await client.get();
       setStream(record);
       setLoadError(null);
-      // Read the recipient's position; if the connected wallet is the sender,
-      // balanceOf reports their refundable remainder instead.
-      setAvailable(await client.balanceOf(record.recipient));
     } catch (error) {
       setLoadError(error);
+      return;
+    }
+    // Read the recipient's position separately; balanceOf errors are non-fatal.
+    // If the connected wallet is the sender, balanceOf reports their refundable remainder instead.
+    try {
+      setAvailable(await client.balanceOf((await client.get()).recipient));
+    } catch (error) {
+      console.error("Failed to read balance", error);
+      setAvailable(null);
     }
   }, [client, address]);
 
@@ -212,12 +218,14 @@ function StreamCard({ position }: { position: Position }) {
         <button
           type="button"
           className="button--primary"
-          disabled={!isRecipient || !available || available <= 0n}
+          disabled={!isRecipient || available === null || available <= 0n}
           onClick={() => setPending("withdraw")}
           title={
-            isRecipient
-              ? undefined
-              : "Only the recipient can withdraw from a stream."
+            !isRecipient
+              ? "Only the recipient can withdraw from a stream."
+              : available === null
+                ? "Unable to read balance from chain."
+                : undefined
           }
         >
           Withdraw
