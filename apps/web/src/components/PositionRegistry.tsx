@@ -61,11 +61,15 @@ export function AddPositionForm({
     event.preventDefault();
     if (!looksLikeContractId(contractId)) {
       setError(
-        "That does not look like a contract address. It should start with C and be 56 characters.",
+        "That does not look like a contract address. It should start with C and be 56 characters with a valid checksum.",
       );
       return;
     }
-    addPosition(kind, contractId, label);
+    const added = addPosition(kind, contractId, label);
+    if (!added) {
+      setError("That contract address is already tracked.");
+      return;
+    }
     setContractId("");
     setLabel("");
     setError(null);

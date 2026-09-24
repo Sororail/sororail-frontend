@@ -1,5 +1,7 @@
 "use client";
 
+import { StrKey } from "@stellar/stellar-sdk";
+
 import { RPC_URL } from "./network";
 
 /**
@@ -228,44 +230,56 @@ export function addPosition(
   contractId: string,
   label: string,
   network: string = RPC_URL,
-): void {
-  const trimmed = contractId.trim();
+): boolean {
+  const normalized = contractId.trim().toUpperCase();
   const existing = read();
-  if (existing.some((p) => p.contractId === trimmed && p.network === network)) return;
+  if (
+    existing.some(
+      (p) => p.contractId.toUpperCase() === normalized && p.network === network,
+    )
+  ) {
+    return false;
+  }
   write([
     ...existing,
     {
       kind,
-      contractId: trimmed,
-      label: label.trim() || trimmed,
+      contractId: normalized,
+      label: label.trim() || normalized,
       addedAt: Date.now(),
       network,
     },
   ]);
+  return true;
 }
 
 export function removePosition(contractId: string): void {
-  write(read().filter((p) => p.contractId !== contractId));
+  const normalized = contractId.trim().toUpperCase();
+  write(read().filter((p) => p.contractId.toUpperCase() !== normalized));
 }
 
 /** Reinsert a previously removed position, e.g. from an undo toast. */
 export function restorePosition(position: Position): void {
+  const normalized = position.contractId.trim().toUpperCase();
   const existing = read();
   if (
     existing.some(
-      (p) => p.contractId === position.contractId && p.network === position.network,
+      (p) =>
+        p.contractId.toUpperCase() === normalized &&
+        p.network === position.network,
     )
   ) {
     return;
   }
-  write([...existing, position]);
+  write([...existing, { ...position, contractId: normalized }]);
 }
 
 export function renamePosition(contractId: string, label: string): void {
   const trimmed = label.trim();
   if (!trimmed) return;
+  const normalized = contractId.trim().toUpperCase();
   write(
-    read().map((p) => (p.contractId === contractId ? { ...p, label: trimmed } : p)),
+    read().map((p) => (p.contractId.toUpperCase() === normalized ? { ...p, label: trimmed } : p)),
   );
 }
 
@@ -310,10 +324,18 @@ export function importPositions(json: string): ImportPositionsResult {
   }
 
   const existing = read();
-  const existingKeys = new Set(existing.map((p) => `${p.network}::${p.contractId}`));
-  const toAdd = incoming.filter(
-    (p) => !existingKeys.has(`${p.network}::${p.contractId}`),
+  const existingKeys = new Set(
+    existing.map((p) => `${p.network}::${p.contractId.toUpperCase()}`),
   );
+  const toAdd: Position[] = [];
+  for (const p of incoming) {
+    const normalizedId = p.contractId.trim().toUpperCase();
+    const key = `${p.network}::${normalizedId}`;
+    if (!existingKeys.has(key)) {
+      existingKeys.add(key);
+      toAdd.push({ ...p, contractId: normalizedId });
+    }
+  }
 
   write([...existing, ...toAdd]);
 
@@ -322,5 +344,6 @@ export function importPositions(json: string): ImportPositionsResult {
 
 /** A contract address is a 56-character `C…` strkey. */
 export function looksLikeContractId(value: string): boolean {
-  return /^C[A-Z2-7]{55}$/.test(value.trim());
+  const trimmed = value.trim().toUpperCase();
+  return StrKey.isValidContract(trimmed);
 }

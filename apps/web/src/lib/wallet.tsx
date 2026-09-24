@@ -222,17 +222,3 @@ export function useWallet(): WalletState {
   }
   return context;
 }
-
-/** Client options every SDK client in this app shares. */
-export function useClientOptions(contractId: string) {
-  const { address } = useWallet();
-  return useMemo(
-    () => ({
-      contractId,
-      rpcUrl: RPC_URL,
-      networkPassphrase: NETWORK_PASSPHRASE,
-      ...(address ? { publicKey: address } : {}),
-    }),
-    [contractId, address],
-  );
-}

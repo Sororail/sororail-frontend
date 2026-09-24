@@ -21,6 +21,7 @@
   ],
   "scripts": {
     "build": "tsup",
+    "lint": "tsc --noEmit",
     "test": "vitest run",
     "test:integration": "bash examples/run-integration.sh",
     "typecheck": "tsc --noEmit"

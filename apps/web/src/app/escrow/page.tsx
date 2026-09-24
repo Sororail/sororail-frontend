@@ -6,7 +6,7 @@ import {
   isTerminalEscrowState,
   type Escrow,
 } from "@sororail/sdk";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 
 import { CardSkeleton } from "@/components/CardSkeleton";
 import { Confirm } from "@/components/Confirm";
@@ -17,10 +17,12 @@ import {
   PositionHeader,
   usePositions,
 } from "@/components/PositionRegistry";
+import { PositionCardState } from "@/components/PositionCardState";
 import { WhenLabel } from "@/components/Schedule";
-import { NETWORK_PASSPHRASE, RPC_URL } from "@/lib/network";
 import type { Position } from "@/lib/positions";
+import { RPC_URL } from "@/lib/network";
 import { useWallet } from "@/lib/wallet";
+import { usePositionCard } from "@/hooks/usePositionCard";
 
 type Action = "fund" | "release" | "refund" | "dispute";
 
@@ -56,39 +58,26 @@ export default function EscrowPage() {
 
 function EscrowCard({ position }: { position: Position }) {
   const { address, signer } = useWallet();
-  const [escrow, setEscrow] = useState<Escrow | null>(null);
-  const [loadError, setLoadError] = useState<unknown>(null);
   const [actionError, setActionError] = useState<unknown>(null);
   const [pending, setPending] = useState<Action | null>(null);
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState<{ text: string; hash: string } | null>(null);
-  const now = BigInt(Math.floor(Date.now() / 1000));
+  const [now, setNow] = useState<bigint>(() => BigInt(Math.floor(Date.now() / 1000)));
 
-  const client = useMemo(
-    () =>
-      new EscrowClient({
-        contractId: position.contractId,
-        rpcUrl: RPC_URL,
-        networkPassphrase: NETWORK_PASSPHRASE,
-        ...(address ? { publicKey: address } : {}),
-      }),
-    [position.contractId, address],
+  const { data: escrow, loadError, client, refresh } = usePositionCard(
+    EscrowClient,
+    position,
+    address,
   );
 
-  const refresh = useCallback(async () => {
-    if (!address) return;
-    if (position.network && position.network !== RPC_URL) return;
-    try {
-      setEscrow(await client.get());
-      setLoadError(null);
-    } catch (error) {
-      setLoadError(error);
-    }
-  }, [client, address, position.network]);
 
   useEffect(() => {
-    void refresh();
-  }, [refresh]);
+    const id = setInterval(
+      () => setNow(BigInt(Math.floor(Date.now() / 1000))),
+      1_000,
+    );
+    return () => clearInterval(id);
+  }, []);
 
   async function run(action: Action) {
     if (!signer || !address) {

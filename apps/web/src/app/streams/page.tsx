@@ -1,7 +1,7 @@
 "use client";
 
 import { SigningError, StreamClient, type Stream } from "@sororail/sdk";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import { CardSkeleton } from "@/components/CardSkeleton";
 import { Confirm } from "@/components/Confirm";
@@ -12,10 +12,12 @@ import {
   PositionHeader,
   usePositions,
 } from "@/components/PositionRegistry";
+import { PositionCardState } from "@/components/PositionCardState";
 import { Schedule } from "@/components/Schedule";
-import { NETWORK_PASSPHRASE, RPC_URL } from "@/lib/network";
 import type { Position } from "@/lib/positions";
+import { RPC_URL } from "@/lib/network";
 import { useWallet } from "@/lib/wallet";
+import { usePositionCard } from "@/hooks/usePositionCard";
 
 export default function StreamsPage() {
   const positions = usePositions("stream");
@@ -49,9 +51,7 @@ export default function StreamsPage() {
 
 function StreamCard({ position }: { position: Position }) {
   const { address, signer } = useWallet();
-  const [stream, setStream] = useState<Stream | null>(null);
   const [available, setAvailable] = useState<bigint | null>(null);
-  const [loadError, setLoadError] = useState<unknown>(null);
   const [actionError, setActionError] = useState<unknown>(null);
   const [pending, setPending] = useState<"withdraw" | "cancel" | "topUp" | "extend" | null>(null);
   const [topUpAmount, setTopUpAmount] = useState("");
@@ -60,41 +60,27 @@ function StreamCard({ position }: { position: Position }) {
   const [done, setDone] = useState<{ text: string; hash: string } | null>(null);
   const [now, setNow] = useState<bigint>(() => BigInt(Math.floor(Date.now() / 1000)));
 
-  const client = useMemo(
-    () =>
-      new StreamClient({
-        contractId: position.contractId,
-        rpcUrl: RPC_URL,
-        networkPassphrase: NETWORK_PASSPHRASE,
-        ...(address ? { publicKey: address } : {}),
-      }),
-    [position.contractId, address],
+  const { data: stream, loadError, client, refresh } = usePositionCard(
+    StreamClient,
+    position,
+    address,
   );
 
-  const refresh = useCallback(async () => {
-    if (!address) return;
-    if (position.network && position.network !== RPC_URL) return;
+  // Read balance separately after stream data loads
+  useEffect(() => {
+    if (!address || !stream) return;
     try {
-      const record = await client.get();
-      setStream(record);
-      setLoadError(null);
-    } catch (error) {
-      setLoadError(error);
-      return;
-    }
-    // Read the recipient's position separately; balanceOf errors are non-fatal.
-    // If the connected wallet is the sender, balanceOf reports their refundable remainder instead.
-    try {
-      setAvailable(await client.balanceOf((await client.get()).recipient));
-    } catch (error) {
-      console.error("Failed to read balance", error);
+      void client
+        .balanceOf(stream.recipient)
+        .then(setAvailable)
+        .catch((error) => {
+          console.error("Failed to read balance", error);
+          setAvailable(null);
+        });
+    } catch {
       setAvailable(null);
     }
-  }, [client, address, position.network]);
-
-  useEffect(() => {
-    void refresh();
-  }, [refresh]);
+  }, [address, stream, client]);
 
   // Keep the clock moving so the schedule and accrual stay honest on screen.
   useEffect(() => {

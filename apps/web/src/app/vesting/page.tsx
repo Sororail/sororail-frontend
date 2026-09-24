@@ -1,7 +1,7 @@
 "use client";
 
 import { SigningError, VestingClient, type Grant } from "@sororail/sdk";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 
 import { CardSkeleton } from "@/components/CardSkeleton";
 import { Confirm } from "@/components/Confirm";
@@ -12,10 +12,12 @@ import {
   PositionHeader,
   usePositions,
 } from "@/components/PositionRegistry";
+import { PositionCardState } from "@/components/PositionCardState";
 import { Schedule } from "@/components/Schedule";
-import { NETWORK_PASSPHRASE, RPC_URL } from "@/lib/network";
 import type { Position } from "@/lib/positions";
+import { RPC_URL } from "@/lib/network";
 import { useWallet } from "@/lib/wallet";
+import { usePositionCard } from "@/hooks/usePositionCard";
 
 export default function VestingPage() {
   const positions = usePositions("vesting");
@@ -49,41 +51,27 @@ export default function VestingPage() {
 
 function GrantCard({ position }: { position: Position }) {
   const { address, signer } = useWallet();
-  const [grant, setGrant] = useState<Grant | null>(null);
   const [claimable, setClaimable] = useState<bigint | null>(null);
-  const [loadError, setLoadError] = useState<unknown>(null);
   const [actionError, setActionError] = useState<unknown>(null);
   const [pending, setPending] = useState<"claim" | "revoke" | null>(null);
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState<{ text: string; hash: string } | null>(null);
   const [now, setNow] = useState<bigint>(() => BigInt(Math.floor(Date.now() / 1000)));
 
-  const client = useMemo(
-    () =>
-      new VestingClient({
-        contractId: position.contractId,
-        rpcUrl: RPC_URL,
-        networkPassphrase: NETWORK_PASSPHRASE,
-        ...(address ? { publicKey: address } : {}),
-      }),
-    [position.contractId, address],
+  const { data: grant, loadError, client, refresh } = usePositionCard(
+    VestingClient,
+    position,
+    address,
+    async (client) => {
+      try {
+        setClaimable(await client.claimable());
+      } catch (error) {
+        console.error("Failed to read claimable", error);
+        setClaimable(null);
+      }
+    },
   );
 
-  const refresh = useCallback(async () => {
-    if (!address) return;
-    if (position.network && position.network !== RPC_URL) return;
-    try {
-      setGrant(await client.get());
-      setClaimable(await client.claimable());
-      setLoadError(null);
-    } catch (error) {
-      setLoadError(error);
-    }
-  }, [client, address, position.network]);
-
-  useEffect(() => {
-    void refresh();
-  }, [refresh]);
 
   useEffect(() => {
     const id = setInterval(
