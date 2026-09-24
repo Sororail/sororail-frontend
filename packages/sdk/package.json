@@ -24,6 +24,9 @@
     "docs:api": "typedoc",
     "lint": "tsc --noEmit",
     "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "api:check": "node scripts/api-surface.mjs",
+    "api:update": "node scripts/api-surface.mjs --update",
     "test:integration": "bash examples/run-integration.sh",
     "typecheck": "tsc --noEmit"
   },
@@ -31,6 +34,7 @@
     "@stellar/stellar-sdk": "^17.0.1"
   },
   "devDependencies": {
+    "@vitest/coverage-v8": "^2.1.9",
     "tsup": "^8.3.5",
     "tsx": "^4.23.13",
     "typedoc": "^0.28.0",

@@ -29,12 +29,27 @@ jobs:
       # @sororail/sdk only exposes its type declarations from dist/, built by
       # tsup, so apps/web can't typecheck against it until this runs first.
       - run: pnpm build
+      # Budget for the client JS the reference app ships.
+      - run: pnpm --filter @sororail/web bundle:check
+      # Fails when the SDK's exported types change without the snapshot being
+      # updated, so a breaking change is always a visible, deliberate diff.
+      - run: pnpm --filter @sororail/sdk api:check
       - run: pnpm typecheck
       - run: pnpm lint
       - run: pnpm audit
       # Playwright needs a built app and its own browser download.
       - run: pnpm exec playwright install --with-deps chromium
       - run: pnpm test
+      # Coverage is reported once, on the newest Node version in the matrix.
+      - name: SDK test coverage
+        if: matrix.node-version == 22
+        run: pnpm --filter @sororail/sdk test:coverage
+      - uses: actions/upload-artifact@v4
+        if: matrix.node-version == 22
+        with:
+          name: sdk-coverage
+          path: packages/sdk/coverage/
+          retention-days: 14
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
