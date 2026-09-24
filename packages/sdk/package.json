@@ -31,7 +31,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@stellar/stellar-sdk": "^17.0.1"
+    "@stellar/stellar-sdk": "^17.1.0"
   },
   "devDependencies": {
     "@vitest/coverage-v8": "^2.1.9",
