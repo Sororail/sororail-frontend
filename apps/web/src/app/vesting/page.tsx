@@ -1,7 +1,7 @@
 "use client";
 
 import { SigningError, VestingClient, type Grant } from "@sororail/sdk";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import { CardSkeleton } from "@/components/CardSkeleton";
 import { Confirm } from "@/components/Confirm";
@@ -61,15 +61,24 @@ function GrantCard({ position }: { position: Position }) {
     VestingClient,
     position,
     address,
-    async (client) => {
+    useCallback(async (client: VestingClient, isCurrent?: () => boolean) => {
       try {
-        setClaimable(await client.claimable());
+        const amount = await client.claimable();
+        if (isCurrent && !isCurrent()) return;
+        setClaimable(amount);
       } catch (error) {
+        if (isCurrent && !isCurrent()) return;
         console.error("Failed to read claimable", error);
         setClaimable(null);
       }
-    },
+    }, []),
   );
+
+  useEffect(() => {
+    if (!address) {
+      setClaimable(null);
+    }
+  }, [address]);
 
   useEffect(() => {
     const id = setInterval(

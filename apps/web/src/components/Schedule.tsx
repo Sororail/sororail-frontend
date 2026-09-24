@@ -48,20 +48,36 @@ export function Schedule({
   marks?: ScheduleMark[];
 }) {
   const elapsed = percent(now, start, end);
+  const sortedMarks = [...marks].sort((a, b) =>
+    a.at < b.at ? -1 : a.at > b.at ? 1 : 0,
+  );
 
   return (
     <div>
       <div className="schedule">
-        <div className="schedule__filled" style={{ width: `${elapsed}%` }} />
-        {marks.map((mark) => {
+        <div
+          className="schedule__filled"
+          style={{ width: `${elapsed}%` }}
+          role="progressbar"
+          aria-valuenow={elapsed}
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-label="Schedule progress"
+          aria-valuetext={`${elapsed}% through schedule`}
+        />
+        {sortedMarks.map((mark) => {
           const at = percent(mark.at, start, end);
           return (
             <div
               key={`${mark.label}-${mark.at}`}
               className="schedule__mark"
               style={{ left: `${at}%` }}
+              role="img"
+              aria-label={`${mark.label} marker at ${formatDate(mark.at)}`}
             >
-              <span className="schedule__mark-label">{mark.label}</span>
+              <span className="schedule__mark-label" aria-hidden="true">
+                {mark.label}
+              </span>
             </div>
           );
         })}

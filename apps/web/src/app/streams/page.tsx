@@ -67,18 +67,25 @@ function StreamCard({ position }: { position: Position }) {
 
   // Read balance separately after stream data loads
   useEffect(() => {
-    if (!address || !stream) return;
-    try {
-      void client
-        .balanceOf(stream.recipient)
-        .then(setAvailable)
-        .catch((error) => {
+    if (!address || !stream) {
+      setAvailable(null);
+      return;
+    }
+    let cancelled = false;
+    client
+      .balanceOf(stream.recipient)
+      .then((bal) => {
+        if (!cancelled) setAvailable(bal);
+      })
+      .catch((error) => {
+        if (!cancelled) {
           console.error("Failed to read balance", error);
           setAvailable(null);
-        });
-    } catch {
-      setAvailable(null);
-    }
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [address, stream, client]);
 
   // Keep the clock moving so the schedule and accrual stay honest on screen.
