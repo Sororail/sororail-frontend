@@ -77,13 +77,14 @@ function EscrowCard({ position }: { position: Position }) {
 
   const refresh = useCallback(async () => {
     if (!address) return;
+    if (position.network && position.network !== RPC_URL) return;
     try {
       setEscrow(await client.get());
       setLoadError(null);
     } catch (error) {
       setLoadError(error);
     }
-  }, [client, address]);
+  }, [client, address, position.network]);
 
   useEffect(() => {
     void refresh();
@@ -116,6 +117,20 @@ function EscrowCard({ position }: { position: Position }) {
     } finally {
       setBusy(false);
     }
+  }
+
+  if (position.network && position.network !== RPC_URL) {
+    return (
+      <div className="card stack stack--tight">
+        <PositionHeader position={position} />
+        <div className="notice notice--warn">
+          <div className="notice__title">Different network</div>
+          <div className="notice__detail">
+            This position is from a different network.
+          </div>
+        </div>
+      </div>
+    );
   }
 
   if (!address) {

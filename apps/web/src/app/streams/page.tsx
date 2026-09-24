@@ -73,6 +73,7 @@ function StreamCard({ position }: { position: Position }) {
 
   const refresh = useCallback(async () => {
     if (!address) return;
+    if (position.network && position.network !== RPC_URL) return;
     try {
       const record = await client.get();
       setStream(record);
@@ -89,7 +90,7 @@ function StreamCard({ position }: { position: Position }) {
       console.error("Failed to read balance", error);
       setAvailable(null);
     }
-  }, [client, address]);
+  }, [client, address, position.network]);
 
   useEffect(() => {
     void refresh();
@@ -142,6 +143,20 @@ function StreamCard({ position }: { position: Position }) {
     } finally {
       setBusy(false);
     }
+  }
+
+  if (position.network && position.network !== RPC_URL) {
+    return (
+      <div className="card stack stack--tight">
+        <PositionHeader position={position} />
+        <div className="notice notice--warn">
+          <div className="notice__title">Different network</div>
+          <div className="notice__detail">
+            This position is from a different network.
+          </div>
+        </div>
+      </div>
+    );
   }
 
   if (!address) {

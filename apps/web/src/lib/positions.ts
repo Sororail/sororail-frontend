@@ -1,5 +1,7 @@
 "use client";
 
+import { RPC_URL } from "./network";
+
 /**
  * The registry of contract instances this browser knows about.
  *
@@ -25,6 +27,8 @@ export interface Position {
   /** A name the user gave it. Purely local; never on chain. */
   label: string;
   addedAt: number;
+  /** The network/RPC endpoint this position was added against. */
+  network: string;
 }
 
 const STORAGE_KEY_PREFIX = "sororail.positions";
@@ -35,7 +39,7 @@ const STORAGE_KEY_PREFIX = "sororail.positions";
  * The on-disk key carries the version (`sororail.positions.vN`) so a future
  * build can read older keys and upgrade them — see `MIGRATIONS`.
  */
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 
 const STORAGE_KEY = `${STORAGE_KEY_PREFIX}.v${SCHEMA_VERSION}`;
 
@@ -50,8 +54,18 @@ const STORAGE_KEY = `${STORAGE_KEY_PREFIX}.v${SCHEMA_VERSION}`;
  * silently drop every pre-upgrade entry instead of upgrading it.
  */
 const MIGRATIONS: Record<number, (data: unknown) => unknown> = {
-  // Example for a future v1 → v2 change:
-  // 1: (data) => upgradeNetworkField(data),
+  1: (data) => {
+    if (!Array.isArray(data)) return [];
+    return data.map((entry) => {
+      if (typeof entry === "object" && entry !== null) {
+        return {
+          ...entry,
+          network: (entry as Record<string, unknown>)["network"] ?? RPC_URL,
+        };
+      }
+      return entry;
+    });
+  },
 };
 
 /** Listeners notified whenever the registry changes (this tab or another). */
@@ -190,7 +204,8 @@ function isPosition(value: unknown): value is Position {
     typeof candidate["kind"] === "string" &&
     ["stream", "vesting", "escrow"].includes(
       candidate["kind"] as string,
-    )
+    ) &&
+    typeof candidate["network"] === "string"
   );
 }
 
@@ -212,13 +227,20 @@ export function addPosition(
   kind: PositionKind,
   contractId: string,
   label: string,
+  network: string = RPC_URL,
 ): void {
   const trimmed = contractId.trim();
   const existing = read();
-  if (existing.some((p) => p.contractId === trimmed)) return;
+  if (existing.some((p) => p.contractId === trimmed && p.network === network)) return;
   write([
     ...existing,
-    { kind, contractId: trimmed, label: label.trim() || trimmed, addedAt: Date.now() },
+    {
+      kind,
+      contractId: trimmed,
+      label: label.trim() || trimmed,
+      addedAt: Date.now(),
+      network,
+    },
   ]);
 }
 
@@ -229,7 +251,13 @@ export function removePosition(contractId: string): void {
 /** Reinsert a previously removed position, e.g. from an undo toast. */
 export function restorePosition(position: Position): void {
   const existing = read();
-  if (existing.some((p) => p.contractId === position.contractId)) return;
+  if (
+    existing.some(
+      (p) => p.contractId === position.contractId && p.network === position.network,
+    )
+  ) {
+    return;
+  }
   write([...existing, position]);
 }
 
@@ -266,14 +294,26 @@ export function importPositions(json: string): ImportPositionsResult {
   if (!Array.isArray(parsed)) {
     throw new Error("Expected a JSON array of positions.");
   }
-  const incoming = parsed.filter(isPosition);
+  const upgraded = parsed.map((item) => {
+    if (
+      typeof item === "object" &&
+      item !== null &&
+      typeof (item as Record<string, unknown>)["network"] !== "string"
+    ) {
+      return { ...item, network: RPC_URL };
+    }
+    return item;
+  });
+  const incoming = upgraded.filter(isPosition);
   if (incoming.length === 0) {
     throw new Error("No valid positions found in that file.");
   }
 
   const existing = read();
-  const existingIds = new Set(existing.map((p) => p.contractId));
-  const toAdd = incoming.filter((p) => !existingIds.has(p.contractId));
+  const existingKeys = new Set(existing.map((p) => `${p.network}::${p.contractId}`));
+  const toAdd = incoming.filter(
+    (p) => !existingKeys.has(`${p.network}::${p.contractId}`),
+  );
 
   write([...existing, ...toAdd]);
 
