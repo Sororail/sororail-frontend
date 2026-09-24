@@ -44,13 +44,13 @@ jobs:
       - name: SDK test coverage
         if: matrix.node-version == 22
         run: pnpm --filter @sororail/sdk test:coverage
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: matrix.node-version == 22
         with:
           name: sdk-coverage
           path: packages/sdk/coverage/
           retention-days: 14
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: failure()
         with:
           name: playwright-report-node-${{ matrix.node-version }}
