@@ -69,7 +69,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup
-      - uses: stellar/stellar-cli@v23.0.1
+      - uses: stellar/stellar-cli@v28.0.0
       - name: Check out the contracts
         uses: actions/checkout@v4
         with:
