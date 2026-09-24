@@ -43,7 +43,7 @@ export function splitCsvLine(line: string): string[] {
   return fields;
 }
 
-export function parseCsv(text: string): ParsedLine[] {
+export function parseCsv(text: string, decimals?: number): ParsedLine[] {
   return text
     .split("\n")
     .map((raw, index) => ({ raw: raw.trim(), index }))
@@ -67,7 +67,7 @@ export function parseCsv(text: string): ParsedLine[] {
         return { line, to, amount, error: "Not a valid account address (G…)" };
       }
       try {
-        const stroops = toStroops(amount);
+        const stroops = toStroops(amount, decimals);
         if (stroops <= 0n) {
           return { line, to, amount, error: "Amount must be greater than zero" };
         }

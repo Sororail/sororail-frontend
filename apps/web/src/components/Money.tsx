@@ -25,12 +25,15 @@ export function Money({
    * prefixed with "≥".
    */
   approximate = false,
+  decimals,
 }: {
   value: bigint;
   unit?: string;
   size?: "lg";
   direction?: "incoming" | "outgoing";
   approximate?: boolean;
+  /** The token's decimals; omit for the classic 7. */
+  decimals?: number | undefined;
 }) {
   const classes = [
     "amount",
@@ -46,7 +49,7 @@ export function Money({
       title={approximate ? "At least this much — accrual continues" : undefined}
     >
       {approximate ? <span className="amount__approx">≥</span> : null}
-      {formatAmount(value)}
+      {formatAmount(value, decimals === undefined ? {} : { decimals })}
       <span className="amount__unit">{unit}</span>
     </span>
   );
