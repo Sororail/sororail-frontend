@@ -4,12 +4,14 @@ import { EscrowClient, isTerminalEscrowState, type Escrow } from "@sororail/sdk"
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { CardSkeleton } from "@/components/CardSkeleton";
+import { CreatePositionForm } from "@/components/CreatePositionForm";
 import { Confirm } from "@/components/Confirm";
 import { EmptyState, ErrorNotice, SuccessNotice } from "@/components/Feedback";
 import { Address, Money } from "@/components/Money";
 import {
   AddPositionForm,
   PositionHeader,
+  usePositionPolling,
   usePositions,
 } from "@/components/PositionRegistry";
 import { WhenLabel } from "@/components/Schedule";
@@ -35,7 +37,7 @@ export default function EscrowPage() {
       {positions.length === 0 ? (
         <div className="card">
           <EmptyState title="No escrows tracked yet">
-            Deploy an escrow contract, then paste its address below to watch it.
+            Initialize a deployed escrow contract below, or track one that already exists.
           </EmptyState>
         </div>
       ) : (
@@ -44,6 +46,7 @@ export default function EscrowPage() {
         ))
       )}
 
+      <CreatePositionForm kind="escrow" />
       <AddPositionForm kind="escrow" noun="escrow" />
     </div>
   );
@@ -83,6 +86,7 @@ function EscrowCard({ position }: { position: Position }) {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+  usePositionPolling(refresh);
 
   async function run(action: Action) {
     if (!signer || !address) return;

@@ -4,12 +4,14 @@ import { StreamClient, type Stream } from "@sororail/sdk";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { CardSkeleton } from "@/components/CardSkeleton";
+import { CreatePositionForm } from "@/components/CreatePositionForm";
 import { Confirm } from "@/components/Confirm";
 import { EmptyState, ErrorNotice, SuccessNotice } from "@/components/Feedback";
 import { Money, Address } from "@/components/Money";
 import {
   AddPositionForm,
   PositionHeader,
+  usePositionPolling,
   usePositions,
 } from "@/components/PositionRegistry";
 import { Schedule } from "@/components/Schedule";
@@ -33,7 +35,7 @@ export default function StreamsPage() {
       {positions.length === 0 ? (
         <div className="card">
           <EmptyState title="No streams tracked yet">
-            Deploy a stream contract, then paste its address below to watch it.
+            Initialize a deployed stream contract below, or track one that already exists.
           </EmptyState>
         </div>
       ) : (
@@ -42,6 +44,7 @@ export default function StreamsPage() {
         ))
       )}
 
+      <CreatePositionForm kind="stream" />
       <AddPositionForm kind="stream" noun="stream" />
     </div>
   );
@@ -89,9 +92,8 @@ function StreamCard({ position }: { position: Position }) {
     }
   }, [client, address]);
 
-  useEffect(() => {
-    void refresh();
-  }, [refresh]);
+  useEffect(() => { void refresh(); }, [refresh]);
+  usePositionPolling(refresh);
 
   // Keep the clock moving so the schedule and accrual stay honest on screen.
   useEffect(() => {
@@ -286,7 +288,9 @@ function StreamCard({ position }: { position: Position }) {
               label: "Returns to you",
               value: (
                 <Money
-                  value={Math.max(0n, stream.deposited - stream.withdrawn - (available ?? 0n))}
+                  value={stream.deposited - stream.withdrawn - (available ?? 0n) > 0n
+                    ? stream.deposited - stream.withdrawn - (available ?? 0n)
+                    : 0n}
                   approximate
                 />
               ),

@@ -37,6 +37,26 @@ export function usePositions(kind: PositionKind): Position[] {
   return positions;
 }
 
+/** Refresh chain-backed position state periodically and when a tab returns. */
+export function usePositionPolling(refresh: () => void | Promise<void>) {
+  useEffect(() => {
+    let active = false;
+    const poll = () => {
+      if (document.visibilityState !== "visible" || active) return;
+      active = true;
+      void Promise.resolve(refresh()).finally(() => {
+        active = false;
+      });
+    };
+    const interval = window.setInterval(poll, 15_000);
+    document.addEventListener("visibilitychange", poll);
+    return () => {
+      window.clearInterval(interval);
+      document.removeEventListener("visibilitychange", poll);
+    };
+  }, [refresh]);
+}
+
 /**
  * Registers a contract address with the app.
  *
@@ -64,7 +84,10 @@ export function AddPositionForm({
       );
       return;
     }
-    addPosition(kind, contractId, label);
+    if (!addPosition(kind, contractId, label)) {
+      setError("Could not save in this browser, or this contract is already tracked.");
+      return;
+    }
     setContractId("");
     setLabel("");
     setError(null);
