@@ -1,6 +1,3 @@
-import { Networks } from "@stellar/stellar-sdk";
-import { TESTNET_DEFAULTS } from "@sororail/sdk";
-
 /**
  * Network and contract configuration.
  *
@@ -8,21 +5,19 @@ import { TESTNET_DEFAULTS } from "@sororail/sdk";
  * network switcher that can reach mainnet would invite exactly the mistake
  * SECURITY.md asks people not to make.
  */
-export const NETWORK_PASSPHRASE = Networks.TESTNET;
-
- testnet-rpc-validation-sdk-example-config
-export const RPC_URL =
-  process.env["NEXT_PUBLIC_RPC_URL"] ?? TESTNET_DEFAULTS.rpcUrl;
+export const NETWORK_PASSPHRASE = "Test SDF Network ; September 2015";
 
 const DEFAULT_RPC_URL = "https://soroban-testnet.stellar.org";
 
 export const RPC_URL = process.env["NEXT_PUBLIC_RPC_URL"] ?? DEFAULT_RPC_URL;
- main
+
+const DEFAULT_NATIVE_TOKEN =
+  "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC";
 
 /** Native XLM's Stellar Asset Contract on testnet. */
 export const NATIVE_TOKEN =
   process.env["NEXT_PUBLIC_TOKEN_ID"] ??
-  TESTNET_DEFAULTS.nativeToken;
+  DEFAULT_NATIVE_TOKEN;
 
 /**
  * The `batch_payout` deployment.

@@ -1,6 +1,5 @@
 "use client";
 
-import { Server } from "@stellar/stellar-sdk";
 import { useEffect, useState, type ReactNode } from "react";
 
 import { NETWORK_PASSPHRASE, RPC_URL } from "@/lib/network";
@@ -10,8 +9,20 @@ export function NetworkGuard({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     let mounted = true;
-    void new Server(RPC_URL)
-      .getNetwork()
+    void fetch(RPC_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "getNetwork" }),
+    })
+      .then(async (response) => {
+        if (!response.ok) throw new Error(`RPC returned HTTP ${response.status}`);
+        const payload: unknown = await response.json();
+        if (typeof payload !== "object" || payload === null || !("result" in payload)) {
+          throw new Error("RPC returned an invalid getNetwork response.");
+        }
+        const result = (payload as { result?: { passphrase?: unknown } }).result;
+        return result?.passphrase;
+      })
       .then((network) => {
         if (!mounted) return;
         if (network !== NETWORK_PASSPHRASE) {

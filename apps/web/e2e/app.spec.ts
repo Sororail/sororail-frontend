@@ -180,7 +180,8 @@ test.describe("position registry", () => {
   test("empty state says what to do next", async ({ page }) => {
     await page.goto("/streams");
     await expect(page.getByText("No streams tracked yet")).toBeVisible();
-    await expect(page.getByText(/paste its address below/i)).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Create a stream" })).toBeVisible();
+    await expect(page.getByText(/initializes a contract that has already been deployed/i)).toBeVisible();
   });
 
   test("rejects something that is not a contract address", async ({ page }) => {
