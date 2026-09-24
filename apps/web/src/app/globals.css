@@ -19,7 +19,11 @@
 
   --text: #1c1a17;
   --text-muted: #6b6559;
-  --text-faint: #948d80;
+  /*
+   * Faint still has to be readable: at least 4.5:1 (WCAG AA) against --bg,
+   * --surface and --surface-sunken, in both themes.
+   */
+  --text-faint: #736d62;
 
   --accent: #1f5f4b;
   --accent-hover: #17493a;
@@ -63,7 +67,7 @@
 
     --text: #f0ede7;
     --text-muted: #a7a196;
-    --text-faint: #7c766b;
+    --text-faint: #8e887c;
 
     --accent: #5db895;
     --accent-hover: #7ccbab;
