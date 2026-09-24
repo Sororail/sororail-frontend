@@ -181,7 +181,7 @@ test.describe("position registry", () => {
     await page.goto("/streams");
     await expect(page.getByText("No streams tracked yet")).toBeVisible();
     await expect(page.getByRole("heading", { name: "Create a stream" })).toBeVisible();
-    await expect(page.getByText(/initializes a contract that has already been deployed/i)).toBeVisible();
+    await expect(page.getByText(/fresh, uninitialized contract instance/i)).toBeVisible();
   });
 
   test("rejects something that is not a contract address", async ({ page }) => {

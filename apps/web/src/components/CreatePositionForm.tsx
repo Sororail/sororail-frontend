@@ -105,7 +105,7 @@ export function CreatePositionForm({
     <form className="card stack stack--tight" onSubmit={(event) => void submit(event)}>
       <h3>{titles[kind]}</h3>
       <p className="small muted m-0">
-        This initializes a contract that has already been deployed. Contract deployment is not available in this app. Amounts and stream rates use stroops.
+        Use a fresh, uninitialized contract instance. Deploy its WASM first; this form initializes the position and adds it to this browser. Contract deployment is not available here. Amounts and stream rates use stroops.
       </p>
       <Field label="Deployed contract address" value={contractId} onChange={setContractId} required />
       <Field label={kind === "stream" ? "Recipient address" : "Beneficiary address"} value={counterparty} onChange={setCounterparty} required />
