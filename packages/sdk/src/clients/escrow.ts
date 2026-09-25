@@ -1,9 +1,9 @@
-import { ValidationError } from "../errors/index.js";
 import {
   EscrowState,
   type Escrow,
   type EscrowStateName,
 } from "../types/index.js";
+import { requirePositive } from "../utils/amounts.js";
 import {
   addr,
   asBigInt,
@@ -77,9 +77,7 @@ export class EscrowClient extends BaseClient {
     amount: bigint;
     deadline: bigint;
   }): Promise<PreparedCall<void>> {
-    if (args.amount <= 0n) {
-      throw new ValidationError("The escrow amount must be greater than zero.");
-    }
+    requirePositive(args.amount, "escrow amount");
     return this.prepare(
       "init",
       [
@@ -103,8 +101,8 @@ export class EscrowClient extends BaseClient {
    * Pays the beneficiary. Callable by the depositor or the arbiter — never by
    * the beneficiary, which is the point of the escrow.
    */
-  release(caller: string): Promise<PreparedCall<void>> {
-    return this.prepare("release", [addr(caller)], asVoid);
+  release(): Promise<PreparedCall<void>> {
+    return this.prepare("release", [addr(this.options.publicKey!)], asVoid);
   }
 
   /**
@@ -113,13 +111,13 @@ export class EscrowClient extends BaseClient {
    * The depositor may only do this once the deadline has passed; the arbiter
    * may do it at any time.
    */
-  refund(caller: string): Promise<PreparedCall<void>> {
-    return this.prepare("refund", [addr(caller)], asVoid);
+  refund(): Promise<PreparedCall<void>> {
+    return this.prepare("refund", [addr(this.options.publicKey!)], asVoid);
   }
 
   /** Freezes the escrow pending an arbiter decision. Either party may call. */
-  dispute(caller: string): Promise<PreparedCall<void>> {
-    return this.prepare("dispute", [addr(caller)], asVoid);
+  dispute(): Promise<PreparedCall<void>> {
+    return this.prepare("dispute", [addr(this.options.publicKey!)], asVoid);
   }
 
   /**
