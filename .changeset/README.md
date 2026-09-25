@@ -11,9 +11,10 @@ pnpm changeset
 pick the bump, and describe the change in a sentence a consumer would
 understand. Commit the generated file with your PR.
 
-`@sororail/web` is in `ignore`: the reference app is not published, so it does
-not get versioned or released, and it has no changelog. Its changes are
-described in the pull requests that make them.
+`@sororail/web` and `@sororail/docs` are in `ignore`: the reference app and the
+documentation site are not published, so they do not get versioned or
+released, and they have no changelog. Their changes are described in the pull
+requests that make them.
 
 ## Where the changelog lands
 
