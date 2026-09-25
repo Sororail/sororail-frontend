@@ -131,7 +131,7 @@ async function main(): Promise<void> {
   }
 
   // Either party can cancel, effective immediately.
-  const cancel = await recurring.cancel(signer.publicKey);
+  const cancel = await recurring.cancel();
   console.log("\ncancelled", (await cancel.signAndSend(signer)).hash);
   const final = await recurring.get();
   console.log("charges taken:", final.periodsCharged);
