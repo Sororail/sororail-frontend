@@ -5,6 +5,14 @@ import { formatAmount } from "@sororail/sdk";
 import { shortAddress } from "@/lib/network";
 
 /**
+ * #76 — Derive the display locale from the browser once at module scope so
+ * every `formatAmount` call uses the visitor's grouping/decimal conventions
+ * instead of always defaulting to "en-US".
+ */
+const BROWSER_LOCALE =
+  typeof navigator !== "undefined" ? navigator.language : "en-US";
+
+/**
  * A monetary figure.
  *
  * Amounts get more typographic weight than the labels around them and use
@@ -49,7 +57,7 @@ export function Money({
       title={approximate ? "At least this much — accrual continues" : undefined}
     >
       {approximate ? <span className="amount__approx">≥</span> : null}
-      {formatAmount(value, decimals === undefined ? {} : { decimals })}
+      {formatAmount(value, { locale: BROWSER_LOCALE, ...(decimals === undefined ? {} : { decimals }) })}
       <span className="amount__unit">{unit}</span>
     </span>
   );
