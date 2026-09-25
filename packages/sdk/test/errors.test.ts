@@ -57,6 +57,38 @@ describe("contractForCode", () => {
     expect(contractForCode(82)).toBe("recurring");
     expect(contractForCode(101)).toBe("batch_payout");
   });
+
+  it("accurately categorises exact boundary values for every reserved range", () => {
+    // Range: common (<20, >=120)
+    expect(contractForCode(-1)).toBe("common");
+    expect(contractForCode(0)).toBe("common");
+    expect(contractForCode(19)).toBe("common");
+
+    // Range: escrow [20, 39]
+    expect(contractForCode(20)).toBe("escrow");
+    expect(contractForCode(39)).toBe("escrow");
+
+    // Range: stream [40, 59]
+    expect(contractForCode(40)).toBe("stream");
+    expect(contractForCode(59)).toBe("stream");
+
+    // Range: vesting [60, 79]
+    expect(contractForCode(60)).toBe("vesting");
+    expect(contractForCode(79)).toBe("vesting");
+
+    // Range: recurring [80, 99]
+    expect(contractForCode(80)).toBe("recurring");
+    expect(contractForCode(99)).toBe("recurring");
+
+    // Range: batch_payout [100, 119]
+    expect(contractForCode(100)).toBe("batch_payout");
+    expect(contractForCode(119)).toBe("batch_payout");
+
+    // Upper boundary fallback to common (>=120)
+    expect(contractForCode(120)).toBe("common");
+    expect(contractForCode(121)).toBe("common");
+    expect(contractForCode(500)).toBe("common");
+  });
 });
 
 describe("extractErrorCode", () => {
@@ -80,6 +112,49 @@ describe("extractErrorCode", () => {
     expect(extractErrorCode(null)).toBeUndefined();
     expect(extractErrorCode({ nothing: true })).toBeUndefined();
   });
+
+  it("falls back gracefully on a circular object without throwing an error", () => {
+    const circular: Record<string, unknown> = {};
+    circular.self = circular;
+    expect(extractErrorCode(circular)).toBeUndefined();
+
+    const circularWithCode: Record<string, unknown> = {};
+    circularWithCode.self = circularWithCode;
+    circularWithCode.toString = () => "HostError: Error(Contract, #42)";
+    expect(extractErrorCode(circularWithCode)).toBe(42);
+  });
+
+  describe("matches all four documented regex patterns independently", () => {
+    it("matches Error(Contract, #N) with varying whitespace", () => {
+      expect(extractErrorCode("Error(Contract, #42)")).toBe(42);
+      expect(extractErrorCode("Error(Contract,#42)")).toBe(42);
+      expect(extractErrorCode("HostError: Error(Contract,   #99) in call")).toBe(99);
+    });
+
+    it("matches ContractError(N) pattern", () => {
+      expect(extractErrorCode("ContractError(42)")).toBe(42);
+      expect(extractErrorCode("Transaction error: ContractError(15)")).toBe(15);
+    });
+
+    it('matches JSON-ish "contract_error": N pattern with varying whitespace', () => {
+      expect(extractErrorCode('{"contract_error": 61}')).toBe(61);
+      expect(extractErrorCode('{"contract_error" : 88}')).toBe(88);
+      expect(extractErrorCode('wrapped {"contract_error":105} response')).toBe(105);
+    });
+
+    it("matches trailing #N pattern", () => {
+      expect(extractErrorCode("host call failed with #42")).toBe(42);
+      expect(extractErrorCode("invocation failed #77)")).toBe(77);
+      expect(extractErrorCode("failed #100 ) ")).toBe(100);
+    });
+
+    it("returns undefined for non-numeric or non-matching tokens", () => {
+      expect(extractErrorCode("Error(Contract, #abc)")).toBeUndefined();
+      expect(extractErrorCode("ContractError()")).toBeUndefined();
+      expect(extractErrorCode('{"contract_error": "none"}')).toBeUndefined();
+      expect(extractErrorCode("#notanumber")).toBeUndefined();
+    });
+  });
 });
 
 describe("decodeError", () => {
@@ -100,6 +175,35 @@ describe("decodeError", () => {
     expect(error.code).toBe(999);
     expect(error.variant).toBe("Unknown");
     expect(error.message).toMatch(/does not recognise/i);
+  });
+
+  it("produces an 'Unknown' ContractError for an unrecognised code with forward compatibility", () => {
+    const error = decodeError("Error(Contract, #999)");
+    expect(error).toBeInstanceOf(ContractError);
+    const contractError = error as ContractError;
+    expect(contractError.name).toBe("ContractError");
+    expect(contractError.code).toBe(999);
+    expect(contractError.variant).toBe("Unknown");
+    expect(contractError.contract).toBe("common");
+    expect(contractError.is("Unknown" as any)).toBe(true);
+    expect(contractError.message).toBe(
+      "The contract failed with code 999, which this version of the SDK does not recognise. It may be newer than the SDK.",
+    );
+    expect(contractError.cause).toBe("Error(Contract, #999)");
+    expect(contractError.toJSON()).toEqual({
+      name: "ContractError",
+      message:
+        "The contract failed with code 999, which this version of the SDK does not recognise. It may be newer than the SDK.",
+      code: 999,
+      variant: "Unknown",
+      contract: "common",
+      cause: "Error(Contract, #999)",
+    });
+
+    const burnedError = decodeError("Error(Contract, #102)") as ContractError;
+    expect(burnedError.code).toBe(102);
+    expect(burnedError.variant).toBe("Unknown");
+    expect(burnedError.contract).toBe("batch_payout");
   });
 
   it("falls back to NetworkError with the cause attached", () => {
