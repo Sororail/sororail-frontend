@@ -38,7 +38,21 @@ jobs:
       - run: pnpm lint
       - run: pnpm audit
       # Playwright needs a built app and its own browser download.
-      - run: pnpm exec playwright install --with-deps chromium
+      # Cache browser binaries to avoid re-downloading on every run (#111).
+      - name: Get Playwright version
+        id: playwright-version
+        run: echo "version=$(pnpm exec playwright --version)" >> "$GITHUB_OUTPUT"
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        id: playwright-cache
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.playwright-version.outputs.version }}
+      - run: pnpm exec playwright install --with-deps chromium firefox webkit
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
+      - name: Install Playwright system deps only
+        if: steps.playwright-cache.outputs.cache-hit == 'true'
+        run: pnpm exec playwright install-deps
       - run: pnpm test
       # Coverage is reported once, on the newest Node version in the matrix.
       - name: SDK test coverage
@@ -68,7 +82,18 @@ jobs:
       - uses: ./.github/actions/setup
       # Advisory: a PR that changes published behaviour should carry a
       # changeset. Not every PR needs one, so this reports rather than blocks.
-      - run: pnpm exec changeset status --since=origin/main || true
+      # Surface the result as a workflow warning so it's visible in the PR
+      # checks UI instead of silently discarded (#113).
+      - name: Check for changeset
+        id: changeset
+        run: pnpm exec changeset status --since=origin/main
+        continue-on-error: true
+      - name: Warn if changeset is missing
+        if: steps.changeset.outcome == 'failure'
+        run: |
+          echo "::warning::No changeset found. If this PR changes published behaviour, add one with \`pnpm exec changeset\`."
+          echo "### ⚠️ No changeset found" >> "$GITHUB_STEP_SUMMARY"
+          echo "If this PR changes published behaviour, add one with \`pnpm exec changeset\`." >> "$GITHUB_STEP_SUMMARY"
 
   # The examples talk to a real network, so they run on a schedule rather than
   # on every PR. Each one asserts what it demonstrates, so together they are the
