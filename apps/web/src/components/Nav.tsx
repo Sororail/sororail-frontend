@@ -33,6 +33,7 @@ export function Nav() {
               key={link.href}
               href={link.href}
               className={`nav__link${active ? " nav__link--active" : ""}`}
+              aria-current={active ? "page" : undefined}
             >
               {link.label}
             </Link>
@@ -64,7 +65,7 @@ export function Nav() {
 
       {error ? (
         <div className="nav__inner nav__feedback">
-          <div className="notice notice--error">
+          <div className="notice notice--error" role="alert">
             <div>{error.message}</div>
           </div>
         </div>
