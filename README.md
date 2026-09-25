@@ -88,8 +88,10 @@ Without `NEXT_PUBLIC_EXPLORER_URL`, an RPC on a testnet host links to the
 testnet explorer; any other RPC (a local quickstart node, futurenet) gets no
 explorer links rather than links that 404.
 
-Next.js inlines `NEXT_PUBLIC_*` values at build time, so restart the dev
-server (or rebuild) after changing them.
+To see the SDK working against a real network, run the five live-testnet
+examples (`stream-lifecycle.ts`, `vesting-lifecycle.ts`, `escrow-lifecycle.ts`,
+`recurring-subscription.ts`, `batch-payout.ts`). Setup and run instructions are
+in [`packages/sdk/examples/README.md`](packages/sdk/examples/README.md).
 
 ## Development
 

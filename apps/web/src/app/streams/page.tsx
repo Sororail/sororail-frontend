@@ -67,18 +67,25 @@ function StreamCard({ position }: { position: Position }) {
 
   // Read balance separately after stream data loads
   useEffect(() => {
-    if (!address || !stream) return;
-    try {
-      void client
-        .balanceOf(stream.recipient)
-        .then(setAvailable)
-        .catch((error) => {
+    if (!address || !stream) {
+      setAvailable(null);
+      return;
+    }
+    let cancelled = false;
+    client
+      .balanceOf(stream.recipient)
+      .then((bal) => {
+        if (!cancelled) setAvailable(bal);
+      })
+      .catch((error) => {
+        if (!cancelled) {
           console.error("Failed to read balance", error);
           setAvailable(null);
-        });
-    } catch {
-      setAvailable(null);
-    }
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [address, stream, client]);
 
   // Keep the clock moving so the schedule and accrual stay honest on screen.
@@ -227,65 +234,63 @@ function StreamCard({ position }: { position: Position }) {
       {done ? <SuccessNotice hash={done.hash}>{done.text}</SuccessNotice> : null}
       {actionError && !pending ? <ErrorNotice error={actionError} /> : null}
 
-      <div className="row">
-        <button
-          type="button"
-          className="button--primary"
-          disabled={!isRecipient || available === null || available <= 0n}
-          onClick={() => setPending("withdraw")}
-          title={
-            !isRecipient
-              ? "Only the recipient can withdraw from a stream."
-              : available === null
-                ? "Unable to read balance from chain."
-                : undefined
-          }
-        >
-          Withdraw
-        </button>
-        <button
-          type="button"
-          disabled={Boolean(stream.cancelledAt) || ended}
-          onClick={() => setPending("topUp")}
-          title={
-            stream.cancelledAt
-              ? "This stream has been cancelled."
-              : ended
-                ? "This stream has already ended."
-                : undefined
-          }
-        >
-          Top up
-        </button>
-        <button
-          type="button"
-          disabled={Boolean(stream.cancelledAt) || ended}
-          onClick={() => setPending("extend")}
-          title={
-            stream.cancelledAt
-              ? "This stream has been cancelled."
-              : ended
-                ? "This stream has already ended."
-                : undefined
-          }
-        >
-          Extend
-        </button>
-        <button
-          type="button"
-          className="button--danger"
-          disabled={!isSender || !stream.cancellable || Boolean(stream.cancelledAt)}
-          onClick={() => setPending("cancel")}
-          title={
-            stream.cancellable
-              ? isSender
-                ? undefined
-                : "Only the sender can cancel."
-              : "This stream was created as non-cancellable."
-          }
-        >
-          Cancel stream
-        </button>
+      <div className="stack stack--tight">
+        <div className="row">
+          <button
+            type="button"
+            className="button--primary"
+            disabled={!isRecipient || available === null || available <= 0n}
+            aria-disabled={!isRecipient || available === null || available <= 0n}
+            onClick={() => setPending("withdraw")}
+          >
+            Withdraw
+          </button>
+          <button
+            type="button"
+            disabled={Boolean(stream.cancelledAt) || ended}
+            aria-disabled={Boolean(stream.cancelledAt) || ended}
+            onClick={() => setPending("topUp")}
+          >
+            Top up
+          </button>
+          <button
+            type="button"
+            disabled={Boolean(stream.cancelledAt) || ended}
+            aria-disabled={Boolean(stream.cancelledAt) || ended}
+            onClick={() => setPending("extend")}
+          >
+            Extend
+          </button>
+          <button
+            type="button"
+            className="button--danger"
+            disabled={!isSender || !stream.cancellable || Boolean(stream.cancelledAt)}
+            aria-disabled={!isSender || !stream.cancellable || Boolean(stream.cancelledAt)}
+            onClick={() => setPending("cancel")}
+          >
+            Cancel stream
+          </button>
+        </div>
+        {(!isRecipient || available === null) && (
+          <div className="small muted">
+            {!isRecipient && "Only the recipient can withdraw from a stream."}
+            {isRecipient && available === null && "Unable to read balance from chain."}
+          </div>
+        )}
+        {(stream.cancelledAt || ended) && (
+          <div className="small muted">
+            {stream.cancelledAt && "This stream has been cancelled."}
+            {!stream.cancelledAt && ended && "This stream has already ended."}
+          </div>
+        )}
+        {(!isSender || !stream.cancellable || stream.cancelledAt) && (
+          <div className="small muted">
+            {!isSender && !stream.cancellable && !stream.cancelledAt && "Only the sender can cancel this stream, and it was created as non-cancellable."}
+            {!isSender && stream.cancellable && !stream.cancelledAt && "Only the sender can cancel this stream."}
+            {!stream.cancellable && isSender && !stream.cancelledAt && "This stream was created as non-cancellable."}
+            {stream.cancelledAt && "This stream has been cancelled."}
+          </div>
+        )}
       </div>
 
       {pending === "withdraw" && available !== null ? (

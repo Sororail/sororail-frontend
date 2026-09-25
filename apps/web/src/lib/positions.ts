@@ -49,10 +49,12 @@ const storeListeners = new Set<() => void>();
  */
 let allSnapshot: Position[] | null = null;
 const kindSnapshots = new Map<PositionKind, Position[]>();
+let countsSnapshot: Record<PositionKind, number> | null = null;
 
 function invalidateSnapshot(): void {
   allSnapshot = null;
   kindSnapshots.clear();
+  countsSnapshot = null;
 }
 
 function emit(): void {
@@ -104,6 +106,27 @@ export function getPositionsSnapshot(kind?: PositionKind): Position[] {
     kindSnapshots.set(kind, snapshot);
   }
   return snapshot;
+}
+
+export function getPositionCountsSnapshot(): Record<PositionKind, number> {
+  if (countsSnapshot === null) {
+    const counts: Record<PositionKind, number> = {
+      stream: 0,
+      vesting: 0,
+      escrow: 0,
+    };
+    for (const position of getPositionsSnapshot()) {
+      if (position.kind in counts) {
+        counts[position.kind] += 1;
+      }
+    }
+    countsSnapshot = counts;
+  }
+  return countsSnapshot;
+}
+
+export function getPositionCountSnapshot(kind: PositionKind): number {
+  return getPositionCountsSnapshot()[kind] ?? 0;
 }
 
 /**

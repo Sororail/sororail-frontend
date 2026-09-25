@@ -20,6 +20,9 @@ export default function RootLayout({ children }: { children: ReactNode }) {
       <body>
         <WalletProvider>
           <NetworkGuard>
+          <a href="#main-content" className="skip-link">
+            Skip to main content
+          </a>
           {/*
            * The testnet warning is a permanent fixture, not a dismissible
            * toast. The contracts are unaudited, and the one thing this app
@@ -30,7 +33,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
             use them with real value.
           </div>
           <Nav />
-          <main className="shell">{children}</main>
+          <main id="main-content" className="shell">{children}</main>
           </NetworkGuard>
         </WalletProvider>
       </body>

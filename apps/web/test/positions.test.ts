@@ -24,6 +24,8 @@ Object.defineProperty(globalThis, "localStorage", {
 
 import {
   addPosition,
+  getPositionCountSnapshot,
+  getPositionCountsSnapshot,
   getPositionsSnapshot,
   importPositions,
   looksLikeContractId,
@@ -32,6 +34,8 @@ import {
 } from "../src/lib/positions";
 
 const VALID_CONTRACT_1 = "CDKJ56S7K7QC4LG6SFF2OGDTG6N4QBCJOVRWHY7MKCWD5JPQ6MDAHRAM";
+const VALID_CONTRACT_2 = "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC";
+const VALID_CONTRACT_3 = "CBEE4SRXRGCJDWXP6DDOSX6FR4S2PJ5KHUQCHI3ABY3SQTCHYSA7CGC7";
 
 describe("looksLikeContractId", () => {
   it("accepts valid contract strkeys", () => {
@@ -111,5 +115,42 @@ describe("positions management", () => {
     const res = importPositions(exportJson);
     expect(res.added).toBe(0);
     expect(res.skipped).toBe(1);
+  });
+
+  it("computes and memoizes derived position counts", () => {
+    expect(getPositionCountsSnapshot()).toEqual({
+      stream: 0,
+      vesting: 0,
+      escrow: 0,
+    });
+    expect(getPositionCountSnapshot("stream")).toBe(0);
+    expect(getPositionCountSnapshot("vesting")).toBe(0);
+    expect(getPositionCountSnapshot("escrow")).toBe(0);
+
+    addPosition("stream", VALID_CONTRACT_1, "Stream 1");
+    addPosition("vesting", VALID_CONTRACT_2, "Grant 1");
+    addPosition("stream", VALID_CONTRACT_3, "Stream 2");
+
+    const countsBefore = getPositionCountsSnapshot();
+    expect(countsBefore).toEqual({
+      stream: 2,
+      vesting: 1,
+      escrow: 0,
+    });
+    expect(getPositionCountSnapshot("stream")).toBe(2);
+    expect(getPositionCountSnapshot("vesting")).toBe(1);
+    expect(getPositionCountSnapshot("escrow")).toBe(0);
+
+    // Verify memoized reference equality when registry has not changed
+    expect(getPositionCountsSnapshot()).toBe(countsBefore);
+
+    removePosition(VALID_CONTRACT_1);
+    const countsAfter = getPositionCountsSnapshot();
+    expect(countsAfter).toEqual({
+      stream: 1,
+      vesting: 1,
+      escrow: 0,
+    });
+    expect(getPositionCountSnapshot("stream")).toBe(1);
   });
 });

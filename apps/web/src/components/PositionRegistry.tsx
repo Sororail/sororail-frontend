@@ -6,6 +6,8 @@ import { ContractLink } from "@/components/ContractLink";
 import {
   addPosition,
   exportPositions,
+  getPositionCountSnapshot,
+  getPositionCountsSnapshot,
   getPositionsSnapshot,
   importPositions,
   looksLikeContractId,
@@ -21,6 +23,11 @@ const UNDO_WINDOW_MS = 6000;
 
 /** Stable SSR snapshot: localStorage does not exist on the server. */
 const SERVER_POSITIONS: Position[] = [];
+const SERVER_COUNTS: Record<PositionKind, number> = {
+  stream: 0,
+  vesting: 0,
+  escrow: 0,
+};
 
 /**
  * Subscribes to the local registry, re-reading when it changes.
@@ -35,6 +42,22 @@ export function usePositions(kind: PositionKind): Position[] {
     subscribePositions,
     () => getPositionsSnapshot(kind),
     () => SERVER_POSITIONS,
+  );
+}
+
+export function usePositionCount(kind: PositionKind): number {
+  return useSyncExternalStore(
+    subscribePositions,
+    () => getPositionCountSnapshot(kind),
+    () => 0,
+  );
+}
+
+export function usePositionCounts(): Record<PositionKind, number> {
+  return useSyncExternalStore(
+    subscribePositions,
+    getPositionCountsSnapshot,
+    () => SERVER_COUNTS,
   );
 }
 

@@ -200,60 +200,73 @@ function EscrowCard({ position }: { position: Position }) {
       {done ? <SuccessNotice hash={done.hash}>{done.text}</SuccessNotice> : null}
       {actionError && !pending ? <ErrorNotice error={actionError} /> : null}
 
-      <div className="row">
-        <button
-          type="button"
-          className="button--primary"
-          disabled={escrow.state !== "Created" || !isDepositor}
-          onClick={() => setPending("fund")}
-        >
-          Fund
-        </button>
-        <button
-          type="button"
-          className="button--primary"
-          disabled={escrow.state !== "Funded" || !(isDepositor || isArbiter)}
-          onClick={() => setPending("release")}
-          title={
-            isBeneficiary && !isDepositor
-              ? "The beneficiary cannot release to themselves — that is the point of the escrow."
-              : undefined
-          }
-        >
-          Release
-        </button>
-        <button
-          type="button"
-          disabled={
-            escrow.state !== "Funded" ||
-            !(isArbiter || (isDepositor && pastDeadline))
-          }
-          onClick={() => setPending("refund")}
-          title={
-            isDepositor && !pastDeadline
-              ? "The depositor can only refund after the deadline."
-              : undefined
-          }
-        >
-          Refund
-        </button>
-        <button
-          type="button"
-          className="button--danger"
-          disabled={
-            escrow.state !== "Funded" ||
-            escrow.arbiter === null ||
-            !(isDepositor || isBeneficiary)
-          }
-          onClick={() => setPending("dispute")}
-          title={
-            escrow.arbiter === null
-              ? "No arbiter was configured, so there is nobody to resolve a dispute."
-              : undefined
-          }
-        >
-          Dispute
-        </button>
+      <div className="stack stack--tight">
+        <div className="row">
+          <button
+            type="button"
+            className="button--primary"
+            disabled={escrow.state !== "Created" || !isDepositor}
+            aria-disabled={escrow.state !== "Created" || !isDepositor}
+            onClick={() => setPending("fund")}
+          >
+            Fund
+          </button>
+          <button
+            type="button"
+            className="button--primary"
+            disabled={escrow.state !== "Funded" || !(isDepositor || isArbiter)}
+            aria-disabled={escrow.state !== "Funded" || !(isDepositor || isArbiter)}
+            onClick={() => setPending("release")}
+          >
+            Release
+          </button>
+          <button
+            type="button"
+            disabled={
+              escrow.state !== "Funded" ||
+              !(isArbiter || (isDepositor && pastDeadline))
+            }
+            aria-disabled={
+              escrow.state !== "Funded" ||
+              !(isArbiter || (isDepositor && pastDeadline))
+            }
+            onClick={() => setPending("refund")}
+          >
+            Refund
+          </button>
+          <button
+            type="button"
+            className="button--danger"
+            disabled={
+              escrow.state !== "Funded" ||
+              escrow.arbiter === null ||
+              !(isDepositor || isBeneficiary)
+            }
+            aria-disabled={
+              escrow.state !== "Funded" ||
+              escrow.arbiter === null ||
+              !(isDepositor || isBeneficiary)
+            }
+            onClick={() => setPending("dispute")}
+          >
+            Dispute
+          </button>
+        </div>
+        {isBeneficiary && !isDepositor && escrow.state === "Funded" && (
+          <div className="small muted">
+            The beneficiary cannot release to themselves — that is the point of the escrow.
+          </div>
+        )}
+        {isDepositor && !pastDeadline && escrow.state === "Funded" && (
+          <div className="small muted">
+            The depositor can only refund after the deadline.
+          </div>
+        )}
+        {escrow.arbiter === null && escrow.state === "Funded" && (
+          <div className="small muted">
+            No arbiter was configured, so there is nobody to resolve a dispute.
+          </div>
+        )}
       </div>
 
       {pending ? (
