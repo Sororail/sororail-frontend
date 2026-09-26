@@ -1,8 +1,17 @@
-import { Networks } from "@stellar/stellar-sdk";
-import { describe, expect, it, vi } from "vitest";
+import {
+  Account,
+  Asset,
+  Keypair,
+  Networks,
+  Operation,
+  StrKey,
+  TransactionBuilder,
+} from "@stellar/stellar-sdk";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   FreighterSigner,
+  KeypairSigner,
   NetworkMismatchError,
   SigningError,
   type FreighterApi,
@@ -10,6 +19,18 @@ import {
 
 const ALICE = "GC4RWN3HH5H5GMD3NT4MOIYC3H3Q3NUF4BFWATGDI7NKRVLRURKHSIMC";
 const BOB = "GBZXN7PIRZGNMHGA7MUUUF4GWPY5AYPV6LY4UV2GL6VJGIQRXFDNMADI";
+
+/** An unsigned one-operation transaction envelope for `source`. */
+function buildUnsignedXdr(source: string): string {
+  return new TransactionBuilder(new Account(source, "1"), {
+    fee: "100",
+    networkPassphrase: Networks.TESTNET,
+  })
+    .addOperation(Operation.payment({ destination: ALICE, asset: Asset.native(), amount: "1" }))
+    .setTimeout(0)
+    .build()
+    .toXDR();
+}
 
 /** A stub extension whose selected account and network can be changed. */
 function stubFreighter(options: { network?: string } = {}) {
@@ -212,5 +233,114 @@ describe("FreighterSigner.signTransaction result shapes", () => {
     await expect(attempt).rejects.toBeInstanceOf(SigningError);
     await expect(attempt).rejects.toThrow(/did not sign the transaction/);
     await expect(attempt).rejects.toMatchObject({ cause });
+  });
+});
+
+describe("KeypairSigner.random", () => {
+  it("produces a signer with a valid G... public key", () => {
+    const signer = KeypairSigner.random();
+
+    expect(signer.publicKey).toMatch(/^G[A-Z2-7]{55}$/);
+    expect(StrKey.isValidEd25519PublicKey(signer.publicKey)).toBe(true);
+  });
+
+  it("generates a different account each time", () => {
+    expect(KeypairSigner.random().publicKey).not.toBe(KeypairSigner.random().publicKey);
+  });
+
+  it("can sign a transaction as its own account", async () => {
+    const signer = KeypairSigner.random();
+    const xdr = buildUnsignedXdr(signer.publicKey);
+
+    const signed = await signer.signTransaction(xdr, { networkPassphrase: Networks.TESTNET });
+
+    const tx = TransactionBuilder.fromXDR(signed, Networks.TESTNET);
+    expect(tx.signatures).toHaveLength(1);
+  });
+});
+
+describe("KeypairSigner.signTransaction", () => {
+  it("round-trips the envelope, adding one signature that verifies", async () => {
+    const keypair = Keypair.random();
+    const signer = new KeypairSigner(keypair.secret());
+    const xdr = buildUnsignedXdr(keypair.publicKey());
+    const before = TransactionBuilder.fromXDR(xdr, Networks.TESTNET);
+    expect(before.signatures).toHaveLength(0);
+
+    const signed = await signer.signTransaction(xdr, { networkPassphrase: Networks.TESTNET });
+
+    expect(signed).not.toBe(xdr);
+    const after = TransactionBuilder.fromXDR(signed, Networks.TESTNET);
+    // Content is unchanged; only the signature was added.
+    expect(Buffer.from(after.hash()).equals(Buffer.from(before.hash()))).toBe(true);
+    expect(after.signatures).toHaveLength(1);
+    expect(keypair.verify(after.hash(), after.signatures[0]!.signature)).toBe(true);
+  });
+
+  it("signs against the given network passphrase", async () => {
+    const keypair = Keypair.random();
+    const signer = new KeypairSigner(keypair.secret());
+    const xdr = buildUnsignedXdr(keypair.publicKey());
+
+    const signed = await signer.signTransaction(xdr, { networkPassphrase: Networks.PUBLIC });
+
+    const asPublic = TransactionBuilder.fromXDR(signed, Networks.PUBLIC);
+    const asTestnet = TransactionBuilder.fromXDR(signed, Networks.TESTNET);
+    const signature = asPublic.signatures[0]!.signature;
+    expect(keypair.verify(asPublic.hash(), signature)).toBe(true);
+    // The signature is bound to the passphrase it was made for.
+    expect(keypair.verify(asTestnet.hash(), signature)).toBe(false);
+  });
+
+  it("rejects malformed XDR", async () => {
+    const signer = KeypairSigner.random();
+
+    await expect(
+      signer.signTransaction("not-xdr", { networkPassphrase: Networks.TESTNET }),
+    ).rejects.toThrow();
+  });
+});
+
+describe("FreighterSigner.connect availability", () => {
+  afterEach(() => {
+    delete (globalThis as { freighterApi?: FreighterApi }).freighterApi;
+  });
+
+  it("throws SigningError when no extension is present", async () => {
+    delete (globalThis as { freighterApi?: FreighterApi }).freighterApi;
+
+    const attempt = FreighterSigner.connect();
+    await expect(attempt).rejects.toBeInstanceOf(SigningError);
+    await expect(attempt).rejects.toThrow(/Freighter was not found/);
+  });
+
+  it("uses globalThis.freighterApi when no api is passed", async () => {
+    (globalThis as { freighterApi?: FreighterApi }).freighterApi = stubFreighter().api;
+
+    const signer = await FreighterSigner.connect();
+    expect(signer.publicKey).toBe(ALICE);
+  });
+
+  it.each([
+    ["a boolean false", async () => false],
+    ["an { isConnected: false } object", async () => ({ isConnected: false })],
+  ])("throws SigningError when isConnected() returns %s", async (_label, isConnected) => {
+    const getAddress = vi.fn(async () => ({ address: ALICE }));
+    const api: FreighterApi = { isConnected, getAddress, signTransaction: async (x) => x };
+
+    const attempt = FreighterSigner.connect(api);
+    await expect(attempt).rejects.toBeInstanceOf(SigningError);
+    await expect(attempt).rejects.toThrow(/installed but not connected/);
+    expect(getAddress).not.toHaveBeenCalled();
+  });
+
+  it("accepts an { isConnected: true } object", async () => {
+    const api: FreighterApi = {
+      isConnected: async () => ({ isConnected: true }),
+      getAddress: async () => ({ address: ALICE }),
+      signTransaction: async (x) => x,
+    };
+
+    await expect(FreighterSigner.connect(api)).resolves.toMatchObject({ publicKey: ALICE });
   });
 });
