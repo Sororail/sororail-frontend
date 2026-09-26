@@ -115,3 +115,5 @@ export {
   requirePositive,
   toStroops,
 } from "./utils/amounts.js";
+
+export { batchRead, batchReadSafe } from "./utils/batch.js";

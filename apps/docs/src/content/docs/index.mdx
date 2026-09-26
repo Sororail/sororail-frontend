@@ -1,0 +1,41 @@
+---
+title: SoroRail
+description: A typed TypeScript client and reference app for the SoroRail Soroban payment contracts.
+template: splash
+hero:
+  tagline: Streams, vesting, escrow, recurring charges and batch payouts on Stellar's Soroban, through a typed TypeScript client.
+  actions:
+    - text: Get started
+      link: /getting-started/
+      icon: right-arrow
+    - text: View on GitHub
+      link: https://github.com/Sororail/sororail-frontend
+      icon: external
+      variant: minimal
+---
+
+import { Aside, Card, CardGrid } from "@astrojs/starlight/components";
+
+<Aside type="caution" title="Unaudited. Testnet only.">
+  The contracts this talks to have not been audited. **Do not use them with
+  real value.** No mainnet addresses will be published before an audit.
+</Aside>
+
+<CardGrid>
+  <Card title="@sororail/sdk" icon="document">
+    Clients for all five contracts, typed error decoding, Freighter and keypair
+    signers, and amount helpers. Every stage of a call (prepare, simulate, sign
+    and send) is separately accessible, so a screen can show what a transaction
+    will do before anyone signs it.
+  </Card>
+  <Card title="Reference app" icon="setting">
+    A Next.js app with overview, payroll, streams, vesting and escrow screens,
+    built on the SDK and signing through Freighter. It is entirely client-side
+    against Soroban RPC.
+  </Card>
+  <Card title="Contracts" icon="open-book">
+    The Soroban contracts live in
+    [Sororail/sororail-contracts](https://github.com/Sororail/sororail-contracts).
+    This site documents the TypeScript side.
+  </Card>
+</CardGrid>

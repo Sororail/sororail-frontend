@@ -1,7 +1,7 @@
 "use client";
 
 import { SigningError, VestingClient, type Grant } from "@sororail/sdk";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import { CardSkeleton } from "@/components/CardSkeleton";
 import { Confirm } from "@/components/Confirm";
@@ -62,16 +62,25 @@ function GrantCard({ position }: { position: Position }) {
     VestingClient,
     position,
     address,
-    async (client) => {
+    useCallback(async (client: VestingClient, isCurrent?: () => boolean) => {
       try {
-        setClaimable(await client.claimable());
+        const amount = await client.claimable();
+        if (isCurrent && !isCurrent()) return;
+        setClaimable(amount);
       } catch (error) {
+        if (isCurrent && !isCurrent()) return;
         console.error("Failed to read claimable", error);
         setClaimable(null);
       }
-    },
+    }, []),
   );
 
+
+  useEffect(() => {
+    if (!address) {
+      setClaimable(null);
+    }
+  }, [address]);
 
   useEffect(() => {
     const id = setInterval(
@@ -226,37 +235,41 @@ function GrantCard({ position }: { position: Position }) {
       {done ? <SuccessNotice hash={done.hash}>{done.text}</SuccessNotice> : null}
       {actionError && !pending ? <ErrorNotice error={actionError} /> : null}
 
-      <div className="row">
-        <button
-          type="button"
-          className="button--primary"
-          disabled={!isBeneficiary || !claimable || claimable <= 0n}
-          onClick={() => setPending("claim")}
-          title={
-            isBeneficiary
-              ? beforeCliff
-                ? "Nothing vests until the cliff."
-                : undefined
-              : "Only the beneficiary can claim."
-          }
-        >
-          Claim
-        </button>
-        <button
-          type="button"
-          className="button--danger"
-          disabled={!isGrantor || !grant.revocable || Boolean(grant.revokedAt)}
-          onClick={() => setPending("revoke")}
-          title={
-            grant.revocable
-              ? isGrantor
-                ? undefined
-                : "Only the grantor can revoke."
-              : "This grant was created as non-revocable."
-          }
-        >
-          Revoke
-        </button>
+      <div className="stack stack--tight">
+        <div className="row">
+          <button
+            type="button"
+            className="button--primary"
+            disabled={!isBeneficiary || !claimable || claimable <= 0n}
+            aria-disabled={!isBeneficiary || !claimable || claimable <= 0n}
+            onClick={() => setPending("claim")}
+          >
+            Claim
+          </button>
+          <button
+            type="button"
+            className="button--danger"
+            disabled={!isGrantor || !grant.revocable || Boolean(grant.revokedAt)}
+            aria-disabled={!isGrantor || !grant.revocable || Boolean(grant.revokedAt)}
+            onClick={() => setPending("revoke")}
+          >
+            Revoke
+          </button>
+        </div>
+        {(!isBeneficiary || beforeCliff) && (
+          <div className="small muted">
+            {!isBeneficiary && "Only the beneficiary can claim."}
+            {isBeneficiary && beforeCliff && "Nothing vests until the cliff."}
+          </div>
+        )}
+        {(!isGrantor || !grant.revocable || grant.revokedAt) && (
+          <div className="small muted">
+            {!isGrantor && !grant.revocable && !grant.revokedAt && "Only the grantor can revoke, and this grant was created as non-revocable."}
+            {!isGrantor && grant.revocable && !grant.revokedAt && "Only the grantor can revoke."}
+            {!grant.revocable && isGrantor && !grant.revokedAt && "This grant was created as non-revocable."}
+            {grant.revokedAt && "This grant has been revoked."}
+          </div>
+        )}
       </div>
 
       {pending === "claim" && claimable !== null ? (

@@ -7,6 +7,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -65,6 +66,31 @@ async function networkErrorFor(signer: FreighterSigner): Promise<string | null> 
   }
 }
 
+/**
+ * Where an explicit Disconnect is remembered, so a reload or a new tab does
+ * not silently reconnect a user who chose to disconnect (#129).
+ */
+const DISCONNECTED_STORAGE_KEY = "sororail:wallet-disconnected";
+
+function readDisconnected(): boolean {
+  try {
+    return window.localStorage.getItem(DISCONNECTED_STORAGE_KEY) === "1";
+  } catch {
+    // Storage can be unavailable (private mode, blocked): fall back to
+    // in-memory behaviour rather than failing to render.
+    return false;
+  }
+}
+
+function writeDisconnected(value: boolean): void {
+  try {
+    if (value) window.localStorage.setItem(DISCONNECTED_STORAGE_KEY, "1");
+    else window.localStorage.removeItem(DISCONNECTED_STORAGE_KEY);
+  } catch {
+    /* Not persisted; the in-memory flag still applies for this page load. */
+  }
+}
+
 const WalletContext = createContext<WalletState | null>(null);
 
 export function WalletProvider({ children }: { children: ReactNode }) {
@@ -77,15 +103,33 @@ export function WalletProvider({ children }: { children: ReactNode }) {
    * immediately reconnecting them. Without it, Disconnect would appear to do
    * nothing at all.
    */
-  const [disconnected, setDisconnected] = useState(false);
+  const [disconnected, setDisconnected] = useState(readDisconnected);
+  /**
+   * The handshake currently in progress, if any. `connect()` and the restore
+   * effect share it, so they can never run two `FreighterSigner.connect()`
+   * calls at once (#130).
+   */
+  const inFlightConnect = useRef<Promise<FreighterSigner> | null>(null);
+
+  const connectSigner = useCallback((): Promise<FreighterSigner> => {
+    if (!inFlightConnect.current) {
+      inFlightConnect.current = (async () => {
+        const { FreighterSigner } = await import("@sororail/sdk");
+        return FreighterSigner.connect();
+      })().finally(() => {
+        inFlightConnect.current = null;
+      });
+    }
+    return inFlightConnect.current;
+  }, []);
 
   const connect = useCallback(async () => {
     setConnecting(true);
     setError(null);
+    writeDisconnected(false);
     setDisconnected(false);
     try {
-      const { FreighterSigner } = await import("@sororail/sdk");
-      const connected = await FreighterSigner.connect();
+      const connected = await connectSigner();
       setSigner(connected);
     } catch (cause) {
       setError(
@@ -96,7 +140,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     } finally {
       setConnecting(false);
     }
-  }, []);
+  }, [connectSigner]);
 
   /**
    * Restores the session on load.
@@ -115,9 +159,9 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     let cancelled = false;
     void (async () => {
       try {
-        const { FreighterSigner, SigningError } = await import("@sororail/sdk");
+        const { SigningError } = await import("@sororail/sdk");
         try {
-          const restored = await FreighterSigner.connect();
+          const restored = await connectSigner();
           if (!cancelled) setSigner(restored);
         } catch (cause) {
           // Missing, locked, or not-yet-authorised wallets are normal while
@@ -140,7 +184,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, [disconnected]);
+  }, [disconnected, connectSigner]);
 
   /**
    * Follows account and network switches made inside the extension.
@@ -194,6 +238,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     // until the user revokes it there, which is the extension's call to make.
     setSigner(null);
     setError(null);
+    writeDisconnected(true);
     setDisconnected(true);
   }, []);
 

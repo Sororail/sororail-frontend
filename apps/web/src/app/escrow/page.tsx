@@ -24,7 +24,7 @@ import { RPC_URL } from "@/lib/network";
 import { useWallet } from "@/lib/wallet";
 import { usePositionCard } from "@/hooks/usePositionCard";
 
-type Action = "fund" | "release" | "refund" | "dispute";
+type Action = "fund" | "release" | "refund" | "dispute" | "resolve";
 
 export default function EscrowPage() {
   const positions = usePositions("escrow");
@@ -63,6 +63,7 @@ function EscrowCard({ position }: { position: Position }) {
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState<{ text: string; hash: string } | null>(null);
   const [now, setNow] = useState<bigint>(() => BigInt(Math.floor(Date.now() / 1000)));
+  const [splitBps, setSplitBps] = useState(5000);
 
   const { data: escrow, loadError, client, refresh } = usePositionCard(
     EscrowClient,
@@ -93,10 +94,12 @@ function EscrowCard({ position }: { position: Position }) {
         action === "fund"
           ? await client.fund()
           : action === "release"
-            ? await client.release(address)
+            ? await client.release()
             : action === "refund"
-              ? await client.refund(address)
-              : await client.dispute(address);
+              ? await client.refund()
+              : action === "dispute"
+                ? await client.dispute()
+                : await client.resolve(splitBps);
       const sent = await call.signAndSend(signer);
       setDone({ text: successMessage(action), hash: sent.hash });
       setPending(null);
@@ -216,60 +219,96 @@ function EscrowCard({ position }: { position: Position }) {
       {done ? <SuccessNotice hash={done.hash}>{done.text}</SuccessNotice> : null}
       {actionError && !pending ? <ErrorNotice error={actionError} /> : null}
 
-      <div className="row">
-        <button
-          type="button"
-          className="button--primary"
-          disabled={escrow.state !== "Created" || !isDepositor}
-          onClick={() => setPending("fund")}
-        >
-          Fund
-        </button>
-        <button
-          type="button"
-          className="button--primary"
-          disabled={escrow.state !== "Funded" || !(isDepositor || isArbiter)}
-          onClick={() => setPending("release")}
-          title={
-            isBeneficiary && !isDepositor
-              ? "The beneficiary cannot release to themselves — that is the point of the escrow."
-              : undefined
-          }
-        >
-          Release
-        </button>
-        <button
-          type="button"
-          disabled={
-            escrow.state !== "Funded" ||
-            !(isArbiter || (isDepositor && pastDeadline))
-          }
-          onClick={() => setPending("refund")}
-          title={
-            isDepositor && !pastDeadline
-              ? "The depositor can only refund after the deadline."
-              : undefined
-          }
-        >
-          Refund
-        </button>
-        <button
-          type="button"
-          className="button--danger"
-          disabled={
-            escrow.state !== "Funded" ||
-            escrow.arbiter === null ||
-            !(isDepositor || isBeneficiary)
-          }
-          onClick={() => setPending("dispute")}
-          title={
-            escrow.arbiter === null
-              ? "No arbiter was configured, so there is nobody to resolve a dispute."
-              : undefined
-          }
-        >
-          Dispute
-        </button>
+      <div className="stack stack--tight">
+        <div className="row">
+          <button
+            type="button"
+            className="button--primary"
+            disabled={escrow.state !== "Created" || !isDepositor}
+            aria-disabled={escrow.state !== "Created" || !isDepositor}
+            onClick={() => setPending("fund")}
+          >
+            Fund
+          </button>
+          <button
+            type="button"
+            className="button--primary"
+            disabled={escrow.state !== "Funded" || !(isDepositor || isArbiter)}
+            aria-disabled={escrow.state !== "Funded" || !(isDepositor || isArbiter)}
+            onClick={() => setPending("release")}
+          >
+            Release
+          </button>
+          <button
+            type="button"
+            disabled={
+              escrow.state !== "Funded" ||
+              !(isArbiter || (isDepositor && pastDeadline))
+            }
+            aria-disabled={
+              escrow.state !== "Funded" ||
+              !(isArbiter || (isDepositor && pastDeadline))
+            }
+            onClick={() => setPending("refund")}
+          >
+            Refund
+          </button>
+          <button
+            type="button"
+            className="button--danger"
+            disabled={
+              escrow.state !== "Funded" ||
+              escrow.arbiter === null ||
+              !(isDepositor || isBeneficiary)
+            }
+            aria-disabled={
+              escrow.state !== "Funded" ||
+              escrow.arbiter === null ||
+              !(isDepositor || isBeneficiary)
+            }
+            onClick={() => setPending("dispute")}
+          >
+            Dispute
+          </button>
+          {escrow.state === "Disputed" && isArbiter && (
+            <>
+              <div>
+                <label htmlFor="split-bps" className="small">Beneficiary split (bps):</label>
+                <input
+                  id="split-bps"
+                  type="number"
+                  min={0}
+                  max={10000}
+                  value={splitBps}
+                  onChange={(e) => setSplitBps(Number(e.target.value))}
+                  className="small"
+                  style={{ width: 80, marginLeft: 4 }}
+                />
+              </div>
+              <button
+                type="button"
+                onClick={() => setPending("resolve")}
+              >
+                Resolve
+              </button>
+            </>
+          )}
+        </div>
+        {isBeneficiary && !isDepositor && escrow.state === "Funded" && (
+          <div className="small muted">
+            The beneficiary cannot release to themselves — that is the point of the escrow.
+          </div>
+        )}
+        {isDepositor && !pastDeadline && escrow.state === "Funded" && (
+          <div className="small muted">
+            The depositor can only refund after the deadline.
+          </div>
+        )}
+        {escrow.arbiter === null && escrow.state === "Funded" && (
+          <div className="small muted">
+            No arbiter was configured, so there is nobody to resolve a dispute.
+          </div>
+        )}
       </div>
 
       {pending ? (
@@ -279,8 +318,10 @@ function EscrowCard({ position }: { position: Position }) {
           lines={[
             { label: "Amount", value: <Money value={escrow.amount} /> },
             {
-              label: pending === "refund" ? "Returns to" : "Goes to",
-              value: (
+              label: pending === "refund" ? "Returns to" : pending === "resolve" ? "Split" : "Goes to",
+              value: pending === "resolve" ? (
+                <span>{splitBps / 100}% beneficiary, {(10000 - splitBps) / 100}% depositor</span>
+              ) : (
                 <Address
                   value={
                     pending === "release" ? escrow.beneficiary : escrow.depositor
@@ -290,7 +331,7 @@ function EscrowCard({ position }: { position: Position }) {
             },
             { label: "Contract", value: <Address value={position.contractId} /> },
           ]}
-          irreversible={irreversibleNote(pending)}
+          irreversible={irreversibleNote(pending, splitBps)}
           confirmLabel={confirmTitle(pending)}
           busy={busy}
           error={actionError ? <ErrorNotice error={actionError} /> : null}
@@ -315,6 +356,8 @@ function successMessage(action: Action): string {
       return "Funds refunded to the depositor.";
     case "dispute":
       return "Dispute raised. The arbiter will now decide.";
+    case "resolve":
+      return "Arbiter decision recorded. Funds split according to the basis-point allocation.";
   }
 }
 
@@ -328,10 +371,12 @@ function confirmTitle(action: Action): string {
       return "Refund to depositor";
     case "dispute":
       return "Raise a dispute";
+    case "resolve":
+      return "Resolve dispute";
   }
 }
 
-function irreversibleNote(action: Action): string {
+function irreversibleNote(action: Action, splitBps: number): string {
   switch (action) {
     case "fund":
       return "The funds leave your account and are held by the contract. From then on they can only be released to the beneficiary, refunded to you after the deadline, or split by the arbiter.";
@@ -341,5 +386,7 @@ function irreversibleNote(action: Action): string {
       return "The full amount returns to the depositor and the escrow closes permanently.";
     case "dispute":
       return "The escrow freezes. Neither release nor refund is possible afterwards — only the arbiter can decide how the funds are split, and their decision is final.";
+    case "resolve":
+      return `The beneficiary receives ${splitBps / 100}% of the escrowed amount and the depositor receives the remainder. This is final and cannot be undone.`;
   }
 }

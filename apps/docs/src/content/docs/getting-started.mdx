@@ -1,0 +1,54 @@
+---
+title: Getting started
+description: Set up the workspace and run a real stream against Stellar testnet with the SDK.
+---
+
+import { Aside, Code } from "@astrojs/starlight/components";
+import streamLifecycle from "../../../../../packages/sdk/examples/stream-lifecycle.ts?raw";
+
+The TypeScript half of SoroRail is one pnpm workspace: `@sororail/sdk` (the
+typed client), `apps/web` (the Next.js reference app) and this site. The SDK
+is not published to npm yet, so for now you use it from the workspace.
+
+## Install
+
+```bash
+git clone https://github.com/Sororail/sororail-frontend.git
+cd sororail-frontend
+pnpm install
+```
+
+You need Node 20 or later and pnpm 10.
+
+## Run an example against testnet
+
+The fastest way to see the SDK work end to end is to run one of the examples
+in `packages/sdk/examples`. They run against a real network and assert what
+they demonstrate, so a wrong result exits non-zero instead of just printing.
+
+Each example needs a funded testnet account and a freshly deployed contract
+instance. The
+[examples README](https://github.com/Sororail/sororail-frontend/blob/main/packages/sdk/examples/README.md)
+walks through that setup and how to run them.
+
+<Aside>
+  A stream contract holds one position for its whole life, so the first
+  `create` claims the instance permanently. Deploy a fresh instance for every
+  run, or the second run fails with `AlreadyInitialized`.
+</Aside>
+
+This is the complete stream example, included straight from the repository so
+it cannot drift from what actually runs. It builds a call, simulates it, signs
+and sends it, reads the stream back, and then withdraws as the recipient.
+
+<Code code={streamLifecycle} lang="ts" title="packages/sdk/examples/stream-lifecycle.ts" />
+
+## Next steps
+
+- [Choosing a signer](https://github.com/Sororail/sororail-frontend#choosing-a-signer):
+  `KeypairSigner` for scripts and servers, `FreighterSigner` in the browser.
+- [Amounts and the decimals trap](/concepts/amounts/): why every amount is a
+  `bigint`, and why you read a token's decimals instead of assuming 7.
+- [Handling errors](https://github.com/Sororail/sororail-frontend#the-sdk):
+  what each error class means and how to recover.
+- [Running the reference app](https://github.com/Sororail/sororail-frontend#running-the-app).

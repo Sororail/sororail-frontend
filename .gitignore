@@ -1,6 +1,7 @@
 node_modules/
 dist/
 .next/
+.astro/
 out/
 coverage/
 *.tsbuildinfo
@@ -9,3 +10,4 @@ coverage/
 .DS_Store
 playwright-report/
 test-results/
+api-docs/

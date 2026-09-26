@@ -51,7 +51,7 @@ export function ErrorNotice({ error }: { error: unknown }) {
   if (error instanceof NetworkMismatchError) heading = "Wrong network in Freighter";
 
   return (
-    <div className="notice notice--error">
+    <div className="notice notice--error" role="alert" aria-live="assertive">
       <div className="notice__title">{heading}</div>
       <div>{message}</div>
       {recovery ? <div className="notice__detail">{recovery}</div> : null}
@@ -75,7 +75,7 @@ export function SuccessNotice({
   // No link when the configured network has no explorer to point at.
   const href = hash ? explorerTx(hash) : null;
   return (
-    <div className="notice notice--info">
+    <div className="notice notice--info" role="status" aria-live="polite">
       <div>{children}</div>
       {href ? (
         <div className="notice__detail">

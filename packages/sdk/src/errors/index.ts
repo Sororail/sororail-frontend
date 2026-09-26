@@ -33,6 +33,14 @@ export class SororailError extends Error {
   constructor(message: string, options?: { cause?: unknown }) {
     super(message, options);
   }
+
+  toJSON() {
+    return {
+      name: this.name,
+      message: this.message,
+      cause: this.cause,
+    };
+  }
 }
 
 /**
@@ -65,6 +73,15 @@ export class ContractError extends SororailError {
   /** Whether this is the given variant. */
   is(variant: ErrorCodeName): boolean {
     return this.variant === variant;
+  }
+
+  override toJSON() {
+    return {
+      ...super.toJSON(),
+      code: this.code,
+      variant: this.variant,
+      contract: this.contract,
+    };
   }
 }
 

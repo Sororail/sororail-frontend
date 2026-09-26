@@ -1,6 +1,6 @@
 "use client";
 
-import { usePositions } from "@/components/PositionRegistry";
+import { usePositionCount } from "@/components/PositionRegistry";
 import type { PositionKind } from "@/lib/positions";
 import { useWallet } from "@/lib/wallet";
 
@@ -31,7 +31,7 @@ export function ConnectWalletCard() {
 }
 
 export function PositionCount({ kind }: { kind: PositionKind }) {
-  const positions = usePositions(kind);
+  const count = usePositionCount(kind);
 
-  return <span className="pill">{positions.length} tracked</span>;
+  return <span className="pill">{count} tracked</span>;
 }

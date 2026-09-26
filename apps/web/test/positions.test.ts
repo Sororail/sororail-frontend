@@ -32,6 +32,8 @@ Object.defineProperty(globalThis, "localStorage", {
 
 import {
   addPosition,
+  getPositionCountSnapshot,
+  getPositionCountsSnapshot,
   getPositionsSnapshot,
   importPositions,
   listPositions,
@@ -44,6 +46,8 @@ import {
 import { RPC_URL } from "../src/lib/network";
 
 const VALID_CONTRACT_1 = "CDKJ56S7K7QC4LG6SFF2OGDTG6N4QBCJOVRWHY7MKCWD5JPQ6MDAHRAM";
+const VALID_CONTRACT_2 = "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC";
+const VALID_CONTRACT_3 = "CBEE4SRXRGCJDWXP6DDOSX6FR4S2PJ5KHUQCHI3ABY3SQTCHYSA7CGC7";
 
 describe("looksLikeContractId", () => {
   it("accepts valid contract strkeys", () => {

@@ -19,6 +19,7 @@ import {
   RPC_URL,
 } from "@/lib/network";
 import { parseCsv, removeCsvLines, type ParsedLine } from "@/lib/payroll";
+import { fetchTokenDecimals } from "@/lib/token";
 import { useWallet } from "@/lib/wallet";
 
 const MAX_VISIBLE_VALID_ROWS = 200;
@@ -27,6 +28,7 @@ export default function PayrollPage() {
   const { address, signer, connect } = useWallet();
   const [csv, setCsv] = useState("");
   const [cap, setCap] = useState<number | null>(null);
+  const [capError, setCapError] = useState<unknown>(null);
   const [receipt, setReceipt] = useState<Receipt | null>(null);
   const [previewError, setPreviewError] = useState<unknown>(null);
   const [confirming, setConfirming] = useState(false);
@@ -36,6 +38,10 @@ export default function PayrollPage() {
   const [dragActive, setDragActive] = useState(false);
   const [fileError, setFileError] = useState<string | null>(null);
   const previewSeq = useRef(0);
+  // The token's decimals, read from the token contract. Amounts are scaled by
+  // this, so nothing can be sent until it is known (#138).
+  const [decimals, setDecimals] = useState<number | null>(null);
+  const [decimalsError, setDecimalsError] = useState<unknown>(null);
 
   const loadCsvFile = useCallback((file: File) => {
     setFileError(null);
@@ -49,6 +55,7 @@ export default function PayrollPage() {
       setCsv(typeof reader.result === "string" ? reader.result : "");
       setReceipt(null);
       setPreviewError(null);
+      setResults([]);
     };
     reader.onerror = () => setFileError("Could not read that file.");
     reader.readAsText(file);
@@ -69,11 +76,36 @@ export default function PayrollPage() {
   // limits and can differ between deployments.
   useEffect(() => {
     if (!address) return;
+    setCapError(null);
     void client
       .maxRecipients()
-      .then(setCap)
-      .catch(() => setCap(null));
+      .then((value) => {
+        setCap(value);
+        setCapError(null);
+      })
+      .catch((error) => {
+        setCap(null);
+        setCapError(error);
+      });
   }, [client, address]);
+
+  // Read the token's decimals rather than assuming 7 (the decimals trap).
+  useEffect(() => {
+    if (!address) return;
+    let cancelled = false;
+    setDecimals(null);
+    setDecimalsError(null);
+    void fetchTokenDecimals(NATIVE_TOKEN, address)
+      .then((value) => {
+        if (!cancelled) setDecimals(value);
+      })
+      .catch((error) => {
+        if (!cancelled) setDecimalsError(error);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [address]);
 
 
   // Everything below derives from `parsed`, and a payroll can run to thousands
@@ -82,7 +114,10 @@ export default function PayrollPage() {
   // receipt, the confirm dialog) recompute nothing. `valid` in particular must
   // keep a stable identity, or `payments`, `duplicates` and `batches` would
   // all be rebuilt on every render regardless of their own memoisation.
-  const parsed = useMemo(() => parseCsv(csv), [csv]);
+  const parsed = useMemo(
+    () => parseCsv(csv, decimals ?? undefined),
+    [csv, decimals],
+  );
   const invalid = useMemo(() => parsed.filter((line) => line.error), [parsed]);
   const valid = useMemo(() => parsed.filter((line) => !line.error), [parsed]);
 
@@ -112,16 +147,20 @@ export default function PayrollPage() {
 
   // Duplicates are legitimate on chain -- two invoices for one contractor --
   // so this warns rather than blocks. Catching them here is exactly where the
-  // contract expects the check to live.
+  // contract expects the check to live. Check against all parsed lines (valid
+  // and invalid), not just valid ones, to catch cases where the same address
+  // appears in both a valid line and a line with a parsing error.
   const duplicates = useMemo(() => {
     const seen = new Set<string>();
     const repeated = new Set<string>();
-    for (const payment of payments) {
-      if (seen.has(payment.to)) repeated.add(payment.to);
-      seen.add(payment.to);
+    for (const line of parsed) {
+      if (line.to && seen.has(line.to)) repeated.add(line.to);
+      if (line.to) seen.add(line.to);
     }
     return [...repeated];
-  }, [payments]);
+  }, [parsed]);
+
+  const decimalsKnown = decimals !== null;
 
   const batches = useMemo(
     () => (cap ? BatchPayoutClient.chunk(payments, cap) : [payments]),
@@ -207,7 +246,7 @@ export default function PayrollPage() {
       ) : null}
 
       <div className="card stack stack--tight">
-        <h2>Recipients</h2>
+        <h2 id="recipients-heading">Recipients</h2>
         <p className="small muted m-0">
           One per line: <code>account address, amount</code>. Lines starting
           with <code>#</code> are ignored. Paste below, or drop/upload a CSV
@@ -246,13 +285,20 @@ export default function PayrollPage() {
         </div>
         {fileError ? <p className="small text-danger m-0">{fileError}</p> : null}
 
+        <label htmlFor="payroll-csv-textarea" className="sr-only">
+          Payroll CSV data
+        </label>
         <textarea
+          id="payroll-csv-textarea"
           value={csv}
           onChange={(event) => {
             previewSeq.current += 1;
             setCsv(event.target.value);
             setReceipt(null);
             setPreviewError(null);
+            // A new batch starts here; earlier "Paid N recipients" notices no
+            // longer describe what is on screen (#137).
+            setResults([]);
           }}
           placeholder={"# address,amount\nGABC…,12.50\nGDEF…,100"}
           spellCheck={false}
@@ -260,7 +306,7 @@ export default function PayrollPage() {
 
         {parsed.length > 0 ? (
           <div className="table-scroll">
-            <table>
+            <table aria-describedby="recipients-heading">
               <thead>
                 <tr>
                   <th>Line</th>
@@ -284,7 +330,7 @@ export default function PayrollPage() {
                       {line.error ? (
                         <span className="muted">{line.amount || "—"}</span>
                       ) : (
-                        <Money value={line.stroops!} />
+                        <Money value={line.stroops!} decimals={decimals ?? undefined} />
                       )}
                     </td>
                     <td>
@@ -328,6 +374,32 @@ export default function PayrollPage() {
           </div>
         ) : null}
 
+        {decimalsError ? (
+          <div className="notice notice--warn">
+            <div className="notice__title">
+              Could not read the token&apos;s decimals
+            </div>
+            <div className="notice__detail">
+              Amounts are scaled by the token&apos;s decimals, so payouts stay
+              disabled until they can be read. Check the network and the
+              configured token, then reconnect.
+            </div>
+          </div>
+        ) : null}
+
+        {capError ? (
+          <div className="notice notice--warn">
+            <div className="notice__title">
+              Could not verify the maximum recipients per batch
+            </div>
+            <div className="notice__detail">
+              The batch cap could not be determined (network issue, contract not
+              found, or RPC error). The payroll will be sent as one transaction.
+              If it fails, you may need to split it manually.
+            </div>
+          </div>
+        ) : null}
+
         {cap !== null && payments.length > cap ? (
           <div className="notice notice--info">
             <div className="notice__title">
@@ -344,7 +416,7 @@ export default function PayrollPage() {
         <div className="spread">
           <div>
             <div className="label">Total</div>
-            <Money value={total} size="lg" />
+            <Money value={total} size="lg" decimals={decimals ?? undefined} />
             <span className="small muted ml-md">
               {valid.length} recipient{valid.length === 1 ? "" : "s"}
               {invalid.length > 0 ? `, ${invalid.length} line(s) to fix` : ""}
@@ -354,7 +426,7 @@ export default function PayrollPage() {
             <button
               type="button"
               onClick={() => void preview()}
-              disabled={!address || valid.length === 0 || invalid.length > 0}
+              disabled={!address || !decimalsKnown || valid.length === 0 || invalid.length > 0}
             >
               Check against chain
             </button>
@@ -362,7 +434,7 @@ export default function PayrollPage() {
               type="button"
               className="button--primary"
               onClick={() => setConfirming(true)}
-              disabled={!signer || valid.length === 0 || invalid.length > 0}
+              disabled={!signer || !decimalsKnown || valid.length === 0 || invalid.length > 0}
             >
               Pay {valid.length || ""}
             </button>
@@ -373,7 +445,7 @@ export default function PayrollPage() {
         {receipt ? (
           <SuccessNotice>
             The contract accepts this batch: {receipt.count} recipients,{" "}
-            <Money value={receipt.total} /> total. Nothing has been sent.
+            <Money value={receipt.total} decimals={decimals ?? undefined} /> total. Nothing has been sent.
           </SuccessNotice>
         ) : null}
         {sendError ? <ErrorNotice error={sendError} /> : null}
@@ -397,7 +469,7 @@ export default function PayrollPage() {
         <Confirm
           title={`Pay ${valid.length} recipient${valid.length === 1 ? "" : "s"}`}
           lines={[
-            { label: "Total", value: <Money value={total} /> },
+            { label: "Total", value: <Money value={total} decimals={decimals ?? undefined} /> },
             { label: "Recipients", value: valid.length },
             { label: "Transactions", value: batches.length },
             { label: "Paid from", value: address ? <Address value={address} /> : "—" },

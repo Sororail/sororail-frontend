@@ -116,3 +116,101 @@ describe("FreighterSigner network checks", () => {
     await expect(unreported.assertNetwork(Networks.TESTNET)).resolves.toBeUndefined();
   });
 });
+
+describe("FreighterSigner.connect address resolution", () => {
+  const base = {
+    isConnected: async () => true,
+    signTransaction: async (xdr: string) => xdr,
+  };
+
+  it("reads the address from the current getAddress() API shape", async () => {
+    const api: FreighterApi = {
+      ...base,
+      getAddress: async () => ({ address: ALICE }),
+    };
+
+    const signer = await FreighterSigner.connect(api);
+    expect(signer.publicKey).toBe(ALICE);
+  });
+
+  it("falls back to the legacy getPublicKey() API shape", async () => {
+    const api: FreighterApi = {
+      ...base,
+      getPublicKey: async () => ALICE,
+    };
+
+    const signer = await FreighterSigner.connect(api);
+    expect(signer.publicKey).toBe(ALICE);
+  });
+
+  it("throws when getAddress() reports an error", async () => {
+    const api: FreighterApi = {
+      ...base,
+      getAddress: async () => ({ address: "", error: "User declined access" }),
+    };
+
+    const attempt = FreighterSigner.connect(api);
+    await expect(attempt).rejects.toBeInstanceOf(SigningError);
+    await expect(attempt).rejects.toThrow("User declined access");
+  });
+
+  it("throws when Freighter reports no address at all", async () => {
+    const api: FreighterApi = {
+      ...base,
+      getAddress: async () => ({ address: "" }),
+    };
+
+    const attempt = FreighterSigner.connect(api);
+    await expect(attempt).rejects.toBeInstanceOf(SigningError);
+    await expect(attempt).rejects.toThrow(/did not return an address/);
+  });
+});
+
+describe("FreighterSigner.signTransaction result shapes", () => {
+  function connectedSigner(signTransaction: FreighterApi["signTransaction"]) {
+    return FreighterSigner.connect({
+      isConnected: async () => true,
+      getAddress: async () => ({ address: ALICE }),
+      signTransaction,
+    });
+  }
+
+  it("accepts a bare signed-XDR string", async () => {
+    const signer = await connectedSigner(async (xdr) => `signed:${xdr}`);
+
+    await expect(
+      signer.signTransaction("AAAA", { networkPassphrase: Networks.TESTNET }),
+    ).resolves.toBe("signed:AAAA");
+  });
+
+  it("accepts an {signedTxXdr} object", async () => {
+    const signer = await connectedSigner(async (xdr) => ({ signedTxXdr: `signed:${xdr}` }));
+
+    await expect(
+      signer.signTransaction("AAAA", { networkPassphrase: Networks.TESTNET }),
+    ).resolves.toBe("signed:AAAA");
+  });
+
+  it("throws when the result object carries an error", async () => {
+    const signer = await connectedSigner(async () => ({
+      signedTxXdr: "",
+      error: "User declined access",
+    }));
+
+    const attempt = signer.signTransaction("AAAA", { networkPassphrase: Networks.TESTNET });
+    await expect(attempt).rejects.toBeInstanceOf(SigningError);
+    await expect(attempt).rejects.toThrow("User declined access");
+  });
+
+  it("wraps a thrown/declined signature in a SigningError", async () => {
+    const cause = new Error("User rejected the request");
+    const signer = await connectedSigner(async () => {
+      throw cause;
+    });
+
+    const attempt = signer.signTransaction("AAAA", { networkPassphrase: Networks.TESTNET });
+    await expect(attempt).rejects.toBeInstanceOf(SigningError);
+    await expect(attempt).rejects.toThrow(/did not sign the transaction/);
+    await expect(attempt).rejects.toMatchObject({ cause });
+  });
+});

@@ -28,7 +28,10 @@ export function toStroops(
   if (!Number.isInteger(decimals) || decimals < 0 || decimals > 38) {
     throw new ValidationError(`Invalid decimals: ${decimals}`);
   }
-  const trimmed = amount.trim();
+  // #75 — Strip thousands separators (commas) so spreadsheet exports and
+  // human-pasted amounts like "1,234.50" work instead of failing with a
+  // generic "not a valid decimal amount" error.
+  const trimmed = amount.trim().replace(/,/g, "");
   if (!/^-?\d*(\.\d*)?$/.test(trimmed) || trimmed === "" || trimmed === "-") {
     throw new ValidationError(
       `"${amount}" is not a valid decimal amount. Use a plain string such as "12.50".`,

@@ -23,6 +23,14 @@ export interface MoneyProps {
 }
 
 /**
+ * #76 — Derive the display locale from the browser once at module scope so
+ * every `formatAmount` call uses the visitor's grouping/decimal conventions
+ * instead of always defaulting to "en-US".
+ */
+const BROWSER_LOCALE =
+  typeof navigator !== "undefined" ? navigator.language : "en-US";
+
+/**
  * A monetary figure.
  *
  * Amounts get more typographic weight than the labels around them and use
@@ -48,8 +56,15 @@ export const Money = memo(function Money({
       className={classes}
       title={approximate ? "At least this much — accrual continues" : undefined}
     >
-      {approximate ? <span className="amount__approx">≥</span> : null}
-      {formatAmount(value)}
+      {approximate ? (
+        <>
+          <span className="amount__approx" aria-hidden="true">
+            ≥
+          </span>
+          <span className="sr-only">At least </span>
+        </>
+      ) : null}
+      {formatAmount(value, { locale: BROWSER_LOCALE, ...(decimals === undefined ? {} : { decimals }) })}
       <span className="amount__unit">{unit}</span>
     </span>
   );
@@ -61,13 +76,15 @@ export function Address({ value, href }: { value: string; href?: string }) {
   if (href) {
     return (
       <a className="addr" href={href} target="_blank" rel="noreferrer" title={value}>
-        {short}
+        <span aria-hidden="true">{short}</span>
+        <span className="sr-only">{value}</span>
       </a>
     );
   }
   return (
     <span className="addr" title={value}>
-      {short}
+      <span aria-hidden="true">{short}</span>
+      <span className="sr-only">{value}</span>
     </span>
   );
 }

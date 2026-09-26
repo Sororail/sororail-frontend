@@ -72,7 +72,7 @@ async function main(): Promise<void> {
 
   // The depositor releases to the beneficiary. The beneficiary cannot do this
   // themselves -- that is the point of an escrow.
-  const release = await escrow.release(signer.publicKey);
+  const release = await escrow.release();
   console.log("release", (await release.signAndSend(signer)).hash);
   console.log("state  ", await escrow.state());
 
