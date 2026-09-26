@@ -2,6 +2,25 @@
 
 import { StrKey } from "@stellar/stellar-sdk";
 
+import { RPC_URL } from "./network";
+
+/**
+ * The registry of contract instances this browser knows about.
+ *
+ * Each SoroRail contract except `batch_payout` holds **one position per
+ * deployed instance** — one escrow, one stream, one grant, one subscription.
+ * There is therefore no on-chain index to enumerate: nothing links "my
+ * streams" to an account, because each stream is its own contract.
+ *
+ * So the app keeps a list of addresses the user has told it about. This is
+ * exactly the "database is a cache" rule from the spec, in its smallest form:
+ * **the addresses are a convenience, and every figure shown for one is read
+ * from the chain.** Losing this list loses no money and no state — the
+ * contracts are untouched, and re-adding the address restores the view.
+ *
+ * If the contracts move to an id-keyed design, this file is what disappears.
+ */
+
 export type PositionKind = "stream" | "vesting" | "escrow";
 
 export interface Position {
@@ -10,6 +29,8 @@ export interface Position {
   /** A name the user gave it. Purely local; never on chain. */
   label: string;
   addedAt: number;
+  /** The network/RPC endpoint this position was added against. */
+  network: string;
 }
 
 const STORAGE_KEY_PREFIX = "sororail.positions";
@@ -20,7 +41,7 @@ const STORAGE_KEY_PREFIX = "sororail.positions";
  * The on-disk key carries the version (`sororail.positions.vN`) so a future
  * build can read older keys and upgrade them — see `MIGRATIONS`.
  */
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 
 const STORAGE_KEY = `${STORAGE_KEY_PREFIX}.v${SCHEMA_VERSION}`;
 
@@ -35,8 +56,18 @@ const STORAGE_KEY = `${STORAGE_KEY_PREFIX}.v${SCHEMA_VERSION}`;
  * silently drop every pre-upgrade entry instead of upgrading it.
  */
 const MIGRATIONS: Record<number, (data: unknown) => unknown> = {
-  // Example for a future v1 → v2 change:
-  // 1: (data) => upgradeNetworkField(data),
+  1: (data) => {
+    if (!Array.isArray(data)) return [];
+    return data.map((entry) => {
+      if (typeof entry === "object" && entry !== null) {
+        return {
+          ...entry,
+          network: (entry as Record<string, unknown>)["network"] ?? RPC_URL,
+        };
+      }
+      return entry;
+    });
+  },
 };
 
 /** Listeners notified whenever the registry changes (this tab or another). */
@@ -198,7 +229,8 @@ function isPosition(value: unknown): value is Position {
     typeof candidate["kind"] === "string" &&
     ["stream", "vesting", "escrow"].includes(
       candidate["kind"] as string,
-    )
+    ) &&
+    typeof candidate["network"] === "string"
   );
 }
 
@@ -220,15 +252,26 @@ export function addPosition(
   kind: PositionKind,
   contractId: string,
   label: string,
+  network: string = RPC_URL,
 ): boolean {
   const normalized = contractId.trim().toUpperCase();
   const existing = read();
-  if (existing.some((p) => p.contractId.toUpperCase() === normalized)) {
+  if (
+    existing.some(
+      (p) => p.contractId.toUpperCase() === normalized && p.network === network,
+    )
+  ) {
     return false;
   }
   write([
     ...existing,
-    { kind, contractId: normalized, label: label.trim() || normalized, addedAt: Date.now() },
+    {
+      kind,
+      contractId: normalized,
+      label: label.trim() || normalized,
+      addedAt: Date.now(),
+      network,
+    },
   ]);
   return true;
 }
@@ -240,9 +283,17 @@ export function removePosition(contractId: string): void {
 
 /** Reinsert a previously removed position, e.g. from an undo toast. */
 export function restorePosition(position: Position): void {
-  const existing = read();
   const normalized = position.contractId.trim().toUpperCase();
-  if (existing.some((p) => p.contractId.toUpperCase() === normalized)) return;
+  const existing = read();
+  if (
+    existing.some(
+      (p) =>
+        p.contractId.toUpperCase() === normalized &&
+        p.network === position.network,
+    )
+  ) {
+    return;
+  }
   write([...existing, { ...position, contractId: normalized }]);
 }
 
@@ -280,18 +331,31 @@ export function importPositions(json: string): ImportPositionsResult {
   if (!Array.isArray(parsed)) {
     throw new Error("Expected a JSON array of positions.");
   }
-  const incoming = parsed.filter(isPosition);
+  const upgraded = parsed.map((item) => {
+    if (
+      typeof item === "object" &&
+      item !== null &&
+      typeof (item as Record<string, unknown>)["network"] !== "string"
+    ) {
+      return { ...item, network: RPC_URL };
+    }
+    return item;
+  });
+  const incoming = upgraded.filter(isPosition);
   if (incoming.length === 0) {
     throw new Error("No valid positions found in that file.");
   }
 
   const existing = read();
-  const existingIds = new Set(existing.map((p) => p.contractId.toUpperCase()));
+  const existingKeys = new Set(
+    existing.map((p) => `${p.network}::${p.contractId.toUpperCase()}`),
+  );
   const toAdd: Position[] = [];
   for (const p of incoming) {
     const normalizedId = p.contractId.trim().toUpperCase();
-    if (!existingIds.has(normalizedId)) {
-      existingIds.add(normalizedId);
+    const key = `${p.network}::${normalizedId}`;
+    if (!existingKeys.has(key)) {
+      existingKeys.add(key);
       toAdd.push({ ...p, contractId: normalizedId });
     }
   }

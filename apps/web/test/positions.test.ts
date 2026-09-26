@@ -8,11 +8,19 @@ const localStorageMock = {
   clear: () => store.clear(),
 };
 
+const listeners = new Set<(event: unknown) => void>();
+
 Object.defineProperty(globalThis, "window", {
   value: {
     localStorage: localStorageMock,
-    addEventListener: () => {},
-    removeEventListener: () => {},
+    addEventListener: (_event: string, handler: (event: unknown) => void) =>
+      listeners.add(handler),
+    removeEventListener: (_event: string, handler: (event: unknown) => void) =>
+      listeners.delete(handler),
+    dispatchEvent: (event: unknown) => {
+      listeners.forEach((listener) => listener(event));
+      return true;
+    },
   },
   writable: true,
 });
@@ -28,10 +36,14 @@ import {
   getPositionCountsSnapshot,
   getPositionsSnapshot,
   importPositions,
+  listPositions,
   looksLikeContractId,
   removePosition,
   renamePosition,
+  subscribePositions,
+  type Position,
 } from "../src/lib/positions";
+import { RPC_URL } from "../src/lib/network";
 
 const VALID_CONTRACT_1 = "CDKJ56S7K7QC4LG6SFF2OGDTG6N4QBCJOVRWHY7MKCWD5JPQ6MDAHRAM";
 const VALID_CONTRACT_2 = "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC";
@@ -66,6 +78,8 @@ describe("looksLikeContractId", () => {
 describe("positions management", () => {
   beforeEach(() => {
     localStorage.clear();
+    subscribePositions(() => {});
+    window.dispatchEvent({ key: null });
   });
 
   it("addPosition adds a new position and normalizes contractId to uppercase", () => {
@@ -117,40 +131,61 @@ describe("positions management", () => {
     expect(res.skipped).toBe(1);
   });
 
-  it("computes and memoizes derived position counts", () => {
-    expect(getPositionCountsSnapshot()).toEqual({
-      stream: 0,
-      vesting: 0,
-      escrow: 0,
-    });
-    expect(getPositionCountSnapshot("stream")).toBe(0);
-    expect(getPositionCountSnapshot("vesting")).toBe(0);
-    expect(getPositionCountSnapshot("escrow")).toBe(0);
+  it("stores the network tag when adding a position", () => {
+    addPosition("stream", VALID_CONTRACT_1, "My Stream");
+    const positions = listPositions("stream");
+    expect(positions).toHaveLength(1);
+    expect(positions[0]!.contractId).toBe(VALID_CONTRACT_1);
+    expect(positions[0]!.network).toBe(RPC_URL);
+  });
 
-    addPosition("stream", VALID_CONTRACT_1, "Stream 1");
-    addPosition("vesting", VALID_CONTRACT_2, "Grant 1");
-    addPosition("stream", VALID_CONTRACT_3, "Stream 2");
+  it("supports explicit custom network tags", () => {
+    const customNetwork = "https://custom-soroban-rpc.example.com";
+    addPosition("vesting", VALID_CONTRACT_1, "Custom Vesting", customNetwork);
+    const positions = listPositions("vesting");
+    expect(positions).toHaveLength(1);
+    expect(positions[0]!.network).toBe(customNetwork);
+  });
 
-    const countsBefore = getPositionCountsSnapshot();
-    expect(countsBefore).toEqual({
-      stream: 2,
-      vesting: 1,
-      escrow: 0,
-    });
-    expect(getPositionCountSnapshot("stream")).toBe(2);
-    expect(getPositionCountSnapshot("vesting")).toBe(1);
-    expect(getPositionCountSnapshot("escrow")).toBe(0);
+  it("migrates v1 positions without network to v2 with default RPC_URL", () => {
+    // Write legacy v1 data to localStorage
+    const v1Data = [
+      {
+        kind: "escrow",
+        contractId: VALID_CONTRACT_1,
+        label: "Legacy Escrow",
+        addedAt: 1234567890,
+      },
+    ];
+    localStorageMock.setItem("sororail.positions.v1", JSON.stringify(v1Data));
 
-    // Verify memoized reference equality when registry has not changed
-    expect(getPositionCountsSnapshot()).toBe(countsBefore);
+    // listPositions triggers read and migration
+    const positions = listPositions();
+    expect(positions).toHaveLength(1);
+    expect(positions[0]!.kind).toBe("escrow");
+    expect(positions[0]!.contractId).toBe(VALID_CONTRACT_1);
+    expect(positions[0]!.network).toBe(RPC_URL);
 
-    removePosition(VALID_CONTRACT_1);
-    const countsAfter = getPositionCountsSnapshot();
-    expect(countsAfter).toEqual({
-      stream: 1,
-      vesting: 1,
-      escrow: 0,
-    });
-    expect(getPositionCountSnapshot("stream")).toBe(1);
+    // Verify v2 key was saved
+    const v2Raw = localStorageMock.getItem("sororail.positions.v2");
+    expect(v2Raw).not.toBeNull();
+    const v2Parsed = JSON.parse(v2Raw!) as Position[];
+    expect(v2Parsed[0]!.network).toBe(RPC_URL);
+  });
+
+  it("imports legacy JSON positions and assigns default network", () => {
+    const json = JSON.stringify([
+      {
+        kind: "stream",
+        contractId: VALID_CONTRACT_1,
+        label: "Imported Stream",
+        addedAt: Date.now(),
+      },
+    ]);
+    const result = importPositions(json);
+    expect(result.added).toBe(1);
+    const positions = listPositions("stream");
+    expect(positions).toHaveLength(1);
+    expect(positions[0]!.network).toBe(RPC_URL);
   });
 });

@@ -6,7 +6,7 @@ import {
   type Payment,
   type Receipt,
 } from "@sororail/sdk";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { Confirm } from "@/components/Confirm";
 import { ContractLink } from "@/components/ContractLink";
@@ -37,6 +37,7 @@ export default function PayrollPage() {
   const [results, setResults] = useState<{ hash: string; count: number }[]>([]);
   const [dragActive, setDragActive] = useState(false);
   const [fileError, setFileError] = useState<string | null>(null);
+  const previewSeq = useRef(0);
   // The token's decimals, read from the token contract. Amounts are scaled by
   // this, so nothing can be sent until it is known (#138).
   const [decimals, setDecimals] = useState<number | null>(null);
@@ -50,8 +51,10 @@ export default function PayrollPage() {
     }
     const reader = new FileReader();
     reader.onload = () => {
+      previewSeq.current += 1;
       setCsv(typeof reader.result === "string" ? reader.result : "");
       setReceipt(null);
+      setPreviewError(null);
       setResults([]);
     };
     reader.onerror = () => setFileError("Could not read that file.");
@@ -165,13 +168,19 @@ export default function PayrollPage() {
   );
 
   const preview = useCallback(async () => {
+    const seq = ++previewSeq.current;
     setPreviewError(null);
     setReceipt(null);
     try {
       // Preview runs exactly the validation execute does, against the chain.
-      setReceipt(await client.preview(payments));
+      const res = await client.preview(payments);
+      if (seq === previewSeq.current) {
+        setReceipt(res);
+      }
     } catch (error) {
-      setPreviewError(error);
+      if (seq === previewSeq.current) {
+        setPreviewError(error);
+      }
     }
   }, [client, payments]);
 
@@ -283,8 +292,10 @@ export default function PayrollPage() {
           id="payroll-csv-textarea"
           value={csv}
           onChange={(event) => {
+            previewSeq.current += 1;
             setCsv(event.target.value);
             setReceipt(null);
+            setPreviewError(null);
             // A new batch starts here; earlier "Paid N recipients" notices no
             // longer describe what is on screen (#137).
             setResults([]);

@@ -251,6 +251,37 @@ test.describe("payroll", () => {
     await dialog.getByRole("button", { name: "Cancel" }).click();
     await expect(dialog).not.toBeVisible();
   });
+
+  test("traps focus and sets initial focus inside the dialog", async ({
+    page,
+  }) => {
+    await page.locator("textarea").fill(`${STUB_ADDRESS},10`);
+    await page.getByRole("button", { name: /^Pay/ }).click();
+
+    const dialog = page.getByRole("dialog");
+    await expect(dialog).toBeVisible();
+
+    const cancelButton = dialog.getByRole("button", { name: "Cancel" });
+    const payButton = dialog.getByRole("button", { name: /^Pay/ });
+
+    // Initial focus lands inside the dialog (on the Cancel button)
+    await expect(cancelButton).toBeFocused();
+
+    // Tab moves focus forward to Pay
+    await page.keyboard.press("Tab");
+    await expect(payButton).toBeFocused();
+
+    // Tab wraps around to Cancel instead of escaping into the page
+    await page.keyboard.press("Tab");
+    await expect(cancelButton).toBeFocused();
+
+    // Shift+Tab wraps backwards to Pay
+    await page.keyboard.press("Shift+Tab");
+    await expect(payButton).toBeFocused();
+
+    await page.keyboard.press("Escape");
+    await expect(dialog).not.toBeVisible();
+  });
 });
 
 test.describe("position registry", () => {
@@ -287,6 +318,29 @@ test.describe("position registry", () => {
     await expect(stop).toHaveAttribute("title", /contract is untouched/i);
     await stop.click();
     await expect(page.getByText("No streams tracked yet")).toBeVisible();
+  });
+
+  test("warns when a position is from a different network", async ({ page }) => {
+    const contractId = "CBEE4SRXRGCJDWXP6DDOSX6FR4S2PJ5KHUQCHI3ABY3SQTCHYSA7CGC7";
+    await page.goto("/streams");
+    await page.evaluate((id) => {
+      window.localStorage.setItem(
+        "sororail.positions.v2",
+        JSON.stringify([
+          {
+            kind: "stream",
+            contractId: id,
+            label: "Old Network Stream",
+            addedAt: Date.now(),
+            network: "https://old-testnet-reset.stellar.org",
+          },
+        ]),
+      );
+    }, contractId);
+
+    await page.reload();
+    await expect(page.getByRole("heading", { name: "Old Network Stream" })).toBeVisible();
+    await expect(page.getByText("This position is from a different network.")).toBeVisible();
   });
 });
 

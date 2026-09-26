@@ -20,6 +20,7 @@ import {
 import { PositionCardState } from "@/components/PositionCardState";
 import { WhenLabel } from "@/components/Schedule";
 import type { Position } from "@/lib/positions";
+import { RPC_URL } from "@/lib/network";
 import { useWallet } from "@/lib/wallet";
 import { usePositionCard } from "@/hooks/usePositionCard";
 
@@ -70,6 +71,7 @@ function EscrowCard({ position }: { position: Position }) {
     address,
   );
 
+
   useEffect(() => {
     const id = setInterval(
       () => setNow(BigInt(Math.floor(Date.now() / 1000))),
@@ -107,6 +109,20 @@ function EscrowCard({ position }: { position: Position }) {
     } finally {
       setBusy(false);
     }
+  }
+
+  if (position.network && position.network !== RPC_URL) {
+    return (
+      <div className="card stack stack--tight">
+        <PositionHeader position={position} />
+        <div className="notice notice--warn">
+          <div className="notice__title">Different network</div>
+          <div className="notice__detail">
+            This position is from a different network.
+          </div>
+        </div>
+      </div>
+    );
   }
 
   if (!address) {

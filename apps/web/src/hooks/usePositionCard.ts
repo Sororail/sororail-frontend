@@ -36,17 +36,10 @@ export function usePositionCard<ClientType extends PositionClient>(
   );
 
   const refresh = useCallback(async () => {
-    if (!address) {
-      setData(null);
-      setLoadError(null);
-      return;
-    }
-    const requestId = ++activeRequestIdRef.current;
-    const isCurrent = () => requestId === activeRequestIdRef.current;
+    if (!address) return;
+    if (position.network && position.network !== RPC_URL) return;
     try {
-      const result = (await client.get()) as DataType;
-      if (!isCurrent()) return;
-      setData(result);
+      setData((await client.get()) as Awaited<ReturnType<ClientType["get"]>>);
       setLoadError(null);
       if (onRefresh) {
         await onRefresh(client, isCurrent);
@@ -55,7 +48,7 @@ export function usePositionCard<ClientType extends PositionClient>(
       if (!isCurrent()) return;
       setLoadError(error);
     }
-  }, [client, address, onRefresh]);
+  }, [client, address, position.network, onRefresh]);
 
   useEffect(() => {
     void refresh();
