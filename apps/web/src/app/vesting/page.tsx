@@ -4,12 +4,14 @@ import { SigningError, VestingClient, type Grant } from "@sororail/sdk";
 import { useCallback, useEffect, useState } from "react";
 
 import { CardSkeleton } from "@/components/CardSkeleton";
+import { CreatePositionForm } from "@/components/CreatePositionForm";
 import { Confirm } from "@/components/Confirm";
 import { EmptyState, ErrorNotice, SuccessNotice } from "@/components/Feedback";
 import { Address, Money } from "@/components/Money";
 import {
   AddPositionForm,
   PositionHeader,
+  usePositionPolling,
   usePositions,
 } from "@/components/PositionRegistry";
 import { PositionCardState } from "@/components/PositionCardState";
@@ -35,7 +37,7 @@ export default function VestingPage() {
       {positions.length === 0 ? (
         <div className="card">
           <EmptyState title="No grants tracked yet">
-            Deploy a vesting contract, then paste its address below to watch it.
+            Initialize a deployed vesting contract below, or track one that already exists.
           </EmptyState>
         </div>
       ) : (
@@ -44,6 +46,7 @@ export default function VestingPage() {
         ))
       )}
 
+      <CreatePositionForm kind="vesting" />
       <AddPositionForm kind="vesting" noun="grant" />
     </div>
   );
@@ -77,10 +80,9 @@ function GrantCard({ position }: { position: Position }) {
 
 
   useEffect(() => {
-    if (!address) {
-      setClaimable(null);
-    }
-  }, [address]);
+    void refresh();
+  }, [refresh]);
+  usePositionPolling(refresh);
 
   useEffect(() => {
     const id = setInterval(
@@ -298,7 +300,9 @@ function GrantCard({ position }: { position: Position }) {
           lines={[
             {
               label: "Returns to you",
-              value: <Money value={grant.total - grant.claimed - (claimable ?? 0n) > 0n ? grant.total - grant.claimed - (claimable ?? 0n) : 0n} approximate />,
+              value: <Money value={grant.total - grant.claimed - (claimable ?? 0n) > 0n
+                ? grant.total - grant.claimed - (claimable ?? 0n)
+                : 0n} approximate />,
             },
             {
               label: "Stays claimable by beneficiary",

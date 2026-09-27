@@ -234,14 +234,17 @@ function isPosition(value: unknown): value is Position {
   );
 }
 
-function write(positions: Position[]): void {
-  if (typeof window === "undefined") return;
+function write(positions: Position[]): boolean {
+  if (typeof window === "undefined") return false;
   try {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(positions));
   } catch {
-    // Private browsing, or a full quota. Nothing is lost that matters.
+    // Do not notify subscribers when persistence failed; their next read
+    // would return stale data and imply that the update was saved.
+    return false;
   }
-  emit();
+  window.dispatchEvent(new Event("sororail:positions"));
+  return true;
 }
 
 export function listPositions(kind?: PositionKind): Position[] {
@@ -252,18 +255,11 @@ export function addPosition(
   kind: PositionKind,
   contractId: string,
   label: string,
-  network: string = RPC_URL,
 ): boolean {
-  const normalized = contractId.trim().toUpperCase();
+  const trimmed = contractId.trim();
   const existing = read();
-  if (
-    existing.some(
-      (p) => p.contractId.toUpperCase() === normalized && p.network === network,
-    )
-  ) {
-    return false;
-  }
-  write([
+  if (existing.some((p) => p.contractId === trimmed)) return false;
+  return write([
     ...existing,
     {
       kind,

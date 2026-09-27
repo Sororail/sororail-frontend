@@ -9,12 +9,14 @@ import {
 import { useEffect, useState } from "react";
 
 import { CardSkeleton } from "@/components/CardSkeleton";
+import { CreatePositionForm } from "@/components/CreatePositionForm";
 import { Confirm } from "@/components/Confirm";
 import { EmptyState, ErrorNotice, SuccessNotice } from "@/components/Feedback";
 import { Address, Money } from "@/components/Money";
 import {
   AddPositionForm,
   PositionHeader,
+  usePositionPolling,
   usePositions,
 } from "@/components/PositionRegistry";
 import { PositionCardState } from "@/components/PositionCardState";
@@ -42,7 +44,7 @@ export default function EscrowPage() {
       {positions.length === 0 ? (
         <div className="card">
           <EmptyState title="No escrows tracked yet">
-            Deploy an escrow contract, then paste its address below to watch it.
+            Initialize a deployed escrow contract below, or track one that already exists.
           </EmptyState>
         </div>
       ) : (
@@ -51,6 +53,7 @@ export default function EscrowPage() {
         ))
       )}
 
+      <CreatePositionForm kind="escrow" />
       <AddPositionForm kind="escrow" noun="escrow" />
     </div>
   );
@@ -73,12 +76,9 @@ function EscrowCard({ position }: { position: Position }) {
 
 
   useEffect(() => {
-    const id = setInterval(
-      () => setNow(BigInt(Math.floor(Date.now() / 1000))),
-      1_000,
-    );
-    return () => clearInterval(id);
-  }, []);
+    void refresh();
+  }, [refresh]);
+  usePositionPolling(refresh);
 
   async function run(action: Action) {
     if (!signer || !address) {
