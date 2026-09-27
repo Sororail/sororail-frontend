@@ -7,7 +7,14 @@
  * secret key.
  *
  * ```ts
- * import { StreamClient, KeypairSigner, toStroops } from "@sororail/sdk";
+ * import {
+ *   StreamClient,
+ *   KeypairSigner,
+ *   ContractError,
+ *   NetworkError,
+ *   SigningError,
+ *   ValidationError,
+ * } from "@sororail/sdk";
  * import { Networks } from "@stellar/stellar-sdk";
  *
  * const signer = new KeypairSigner(process.env.SECRET_KEY!);
@@ -18,13 +25,34 @@
  *   publicKey: signer.publicKey,
  * });
  *
- * // Build and inspect before anyone signs.
- * const call = await stream.withdraw();
- * const wouldReceive = await call.simulate();
+ * try {
+ *   // Build and inspect before anyone signs.
+ *   const call = await stream.withdraw();
+ *   const wouldReceive = await call.simulate();
  *
- * // Then commit.
- * const { hash, result } = await call.signAndSend(signer);
+ *   // Then commit.
+ *   const { hash, result } = await call.signAndSend(signer);
+ * } catch (error) {
+ *   if (error instanceof ContractError) {
+ *     // The contract refused. `message` is a sentence to show a person;
+ *     // branch on the variant (or the stable numeric `code`) to recover.
+ *     if (error.is("StreamInsufficientAccrued")) {
+ *       // Asked for more than has accrued: withdraw less, or wait.
+ *     }
+ *   } else if (error instanceof ValidationError) {
+ *     // Rejected before anything was sent. Fix the arguments.
+ *   } else if (error instanceof SigningError) {
+ *     // No wallet, locked, declined, or on the wrong network.
+ *   } else if (error instanceof NetworkError) {
+ *     // Could not simulate or submit. The original failure is `error.cause`.
+ *   } else {
+ *     throw error;
+ *   }
+ * }
  * ```
+ *
+ * Everything the SDK throws extends `SororailError`, so anything else that
+ * reaches the final branch is a bug in the calling code, not a failed call.
  *
  * ## Unaudited
  *
@@ -57,7 +85,12 @@ export {
 } from "./errors/index.js";
 export type { ContractName, ErrorCodeName, ErrorCodeValue } from "./errors/index.js";
 
-export { FreighterSigner, KeypairSigner, SigningError } from "./signers/index.js";
+export {
+  FreighterSigner,
+  KeypairSigner,
+  NetworkMismatchError,
+  SigningError,
+} from "./signers/index.js";
 export type { FreighterApi, Signer } from "./signers/index.js";
 
 export {
@@ -82,3 +115,5 @@ export {
   requirePositive,
   toStroops,
 } from "./utils/amounts.js";
+
+export { batchRead, batchReadSafe } from "./utils/batch.js";

@@ -82,14 +82,14 @@ export const RECOVERY: Record<ErrorCodeName, string> = {
   RecurringCancelled:
     "This subscription is over. Authorize a new one to resume charging.",
   RecurringPeriodNotElapsed:
-    "Wait until the next charge date shown above. Periods that pass uncharged cannot be claimed later.",
+    "The period has not elapsed yet. Try again once enough time has passed.",
   RecurringExhausted:
     "The subscription has taken every charge it was authorized for. Authorize a new one to continue.",
 
   // ----- batch_payout -----
   BatchEmpty: "Add at least one recipient and try again.",
   BatchTooLarge:
-    "Split the payroll into smaller batches. The app can do this for you — reload and try again.",
+    "Split the payroll into smaller batches and try again.",
 };
 
 /** The recovery step for an error, or `null` when it is not a contract failure. */

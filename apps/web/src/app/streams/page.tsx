@@ -1,7 +1,7 @@
 "use client";
 
-import { StreamClient, type Stream } from "@sororail/sdk";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { SigningError, StreamClient, type Stream } from "@sororail/sdk";
+import { useCallback, useEffect, useState } from "react";
 
 import { CardSkeleton } from "@/components/CardSkeleton";
 import { CreatePositionForm } from "@/components/CreatePositionForm";
@@ -14,10 +14,12 @@ import {
   usePositionPolling,
   usePositions,
 } from "@/components/PositionRegistry";
+import { PositionCardState } from "@/components/PositionCardState";
 import { Schedule } from "@/components/Schedule";
-import { NETWORK_PASSPHRASE, RPC_URL } from "@/lib/network";
 import type { Position } from "@/lib/positions";
+import { RPC_URL } from "@/lib/network";
 import { useWallet } from "@/lib/wallet";
+import { usePositionCard } from "@/hooks/usePositionCard";
 
 export default function StreamsPage() {
   const positions = usePositions("stream");
@@ -52,43 +54,26 @@ export default function StreamsPage() {
 
 function StreamCard({ position }: { position: Position }) {
   const { address, signer } = useWallet();
-  const [stream, setStream] = useState<Stream | null>(null);
   const [available, setAvailable] = useState<bigint | null>(null);
-  const [loadError, setLoadError] = useState<unknown>(null);
   const [actionError, setActionError] = useState<unknown>(null);
-  const [pending, setPending] = useState<"withdraw" | "cancel" | null>(null);
+  const [pending, setPending] = useState<"withdraw" | "cancel" | "topUp" | "extend" | null>(null);
+  const [topUpAmount, setTopUpAmount] = useState("");
+  const [extendDate, setExtendDate] = useState("");
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState<{ text: string; hash: string } | null>(null);
   const [now, setNow] = useState<bigint>(() => BigInt(Math.floor(Date.now() / 1000)));
 
-  const client = useMemo(
-    () =>
-      new StreamClient({
-        contractId: position.contractId,
-        rpcUrl: RPC_URL,
-        networkPassphrase: NETWORK_PASSPHRASE,
-        ...(address ? { publicKey: address } : {}),
-      }),
-    [position.contractId, address],
+  const { data: stream, loadError, client, refresh } = usePositionCard(
+    StreamClient,
+    position,
+    address,
   );
 
-  const refresh = useCallback(async () => {
-    if (!address) return;
-    try {
-      const record = await client.get();
-      setStream(record);
-      setLoadError(null);
-    } catch (error) {
-      setLoadError(error);
-      return;
-    }
-    // Read the recipient's position separately; balanceOf errors are non-fatal.
-    // If the connected wallet is the sender, balanceOf reports their refundable remainder instead.
-    try {
-      setAvailable(await client.balanceOf((await client.get()).recipient));
-    } catch (error) {
-      console.error("Failed to read balance", error);
+  // Read balance separately after stream data loads
+  useEffect(() => {
+    if (!address || !stream) {
       setAvailable(null);
+      return;
     }
   }, [client, address]);
 
@@ -104,25 +89,58 @@ function StreamCard({ position }: { position: Position }) {
     return () => clearInterval(id);
   }, []);
 
-  async function run(action: "withdraw" | "cancel") {
-    if (!signer) return;
+  async function run(action: "withdraw" | "cancel" | "topUp" | "extend") {
+    if (!signer) {
+      setActionError(
+        new SigningError("Wallet disconnected. Reconnect to continue."),
+      );
+      return;
+    }
     setBusy(true);
     setActionError(null);
     try {
-      const call =
-        action === "withdraw" ? await client.withdraw() : await client.cancel();
+      let call;
+      let successText: string;
+      if (action === "withdraw") {
+        call = await client.withdraw();
+        successText = "Withdrew accrued funds.";
+      } else if (action === "cancel") {
+        call = await client.cancel();
+        successText = "Stream cancelled.";
+      } else if (action === "topUp") {
+        const stroops = BigInt(Math.round(parseFloat(topUpAmount) * 1e7));
+        call = await client.topUp(stroops);
+        successText = "Stream topped up.";
+      } else {
+        const ts = BigInt(Math.floor(new Date(extendDate).getTime() / 1000));
+        call = await client.extend(ts);
+        successText = "Stream end date extended.";
+      }
       const sent = await call.signAndSend(signer);
-      setDone({
-        text: action === "withdraw" ? "Withdrew accrued funds." : "Stream cancelled.",
-        hash: sent.hash,
-      });
+      setDone({ text: successText, hash: sent.hash });
       setPending(null);
+      setTopUpAmount("");
+      setExtendDate("");
       await refresh();
     } catch (error) {
       setActionError(error);
     } finally {
       setBusy(false);
     }
+  }
+
+  if (position.network && position.network !== RPC_URL) {
+    return (
+      <div className="card stack stack--tight">
+        <PositionHeader position={position} />
+        <div className="notice notice--warn">
+          <div className="notice__title">Different network</div>
+          <div className="notice__detail">
+            This position is from a different network.
+          </div>
+        </div>
+      </div>
+    );
   }
 
   if (!address) {
@@ -139,6 +157,11 @@ function StreamCard({ position }: { position: Position }) {
       <div className="card stack stack--tight">
         <PositionHeader position={position} />
         <ErrorNotice error={loadError} />
+        <div>
+          <button type="button" onClick={() => void refresh()}>
+            Retry
+          </button>
+        </div>
       </div>
     );
   }
@@ -217,37 +240,63 @@ function StreamCard({ position }: { position: Position }) {
       {done ? <SuccessNotice hash={done.hash}>{done.text}</SuccessNotice> : null}
       {actionError && !pending ? <ErrorNotice error={actionError} /> : null}
 
-      <div className="row">
-        <button
-          type="button"
-          className="button--primary"
-          disabled={!isRecipient || available === null || available <= 0n}
-          onClick={() => setPending("withdraw")}
-          title={
-            !isRecipient
-              ? "Only the recipient can withdraw from a stream."
-              : available === null
-                ? "Unable to read balance from chain."
-                : undefined
-          }
-        >
-          Withdraw
-        </button>
-        <button
-          type="button"
-          className="button--danger"
-          disabled={!isSender || !stream.cancellable || Boolean(stream.cancelledAt)}
-          onClick={() => setPending("cancel")}
-          title={
-            stream.cancellable
-              ? isSender
-                ? undefined
-                : "Only the sender can cancel."
-              : "This stream was created as non-cancellable."
-          }
-        >
-          Cancel stream
-        </button>
+      <div className="stack stack--tight">
+        <div className="row">
+          <button
+            type="button"
+            className="button--primary"
+            disabled={!isRecipient || available === null || available <= 0n}
+            aria-disabled={!isRecipient || available === null || available <= 0n}
+            onClick={() => setPending("withdraw")}
+          >
+            Withdraw
+          </button>
+          <button
+            type="button"
+            disabled={Boolean(stream.cancelledAt) || ended}
+            aria-disabled={Boolean(stream.cancelledAt) || ended}
+            onClick={() => setPending("topUp")}
+          >
+            Top up
+          </button>
+          <button
+            type="button"
+            disabled={Boolean(stream.cancelledAt) || ended}
+            aria-disabled={Boolean(stream.cancelledAt) || ended}
+            onClick={() => setPending("extend")}
+          >
+            Extend
+          </button>
+          <button
+            type="button"
+            className="button--danger"
+            disabled={!isSender || !stream.cancellable || Boolean(stream.cancelledAt)}
+            aria-disabled={!isSender || !stream.cancellable || Boolean(stream.cancelledAt)}
+            onClick={() => setPending("cancel")}
+          >
+            Cancel stream
+          </button>
+        </div>
+        {(!isRecipient || available === null) && (
+          <div className="small muted">
+            {!isRecipient && "Only the recipient can withdraw from a stream."}
+            {isRecipient && available === null && "Unable to read balance from chain."}
+          </div>
+        )}
+        {(stream.cancelledAt || ended) && (
+          <div className="small muted">
+            {stream.cancelledAt && "This stream has been cancelled."}
+            {!stream.cancelledAt && ended && "This stream has already ended."}
+          </div>
+        )}
+        {(!isSender || !stream.cancellable || stream.cancelledAt) && (
+          <div className="small muted">
+            {!isSender && !stream.cancellable && !stream.cancelledAt && "Only the sender can cancel this stream, and it was created as non-cancellable."}
+            {!isSender && stream.cancellable && !stream.cancelledAt && "Only the sender can cancel this stream."}
+            {!stream.cancellable && isSender && !stream.cancelledAt && "This stream was created as non-cancellable."}
+            {stream.cancelledAt && "This stream has been cancelled."}
+          </div>
+        )}
       </div>
 
       {pending === "withdraw" && available !== null ? (
@@ -270,6 +319,69 @@ function StreamCard({ position }: { position: Position }) {
           onConfirm={() => void run("withdraw")}
           onCancel={() => {
             setPending(null);
+            setActionError(null);
+          }}
+        />
+      ) : null}
+
+      {pending === "topUp" ? (
+        <Confirm
+          title="Top up this stream"
+          lines={[
+            {
+              label: "Amount (XLM)",
+              value: (
+                <input
+                  type="number"
+                  min="0"
+                  step="0.0000001"
+                  placeholder="e.g. 10"
+                  value={topUpAmount}
+                  onChange={(e) => setTopUpAmount(e.target.value)}
+                  className="input"
+                />
+              ),
+            },
+            { label: "Contract", value: <Address value={position.contractId} /> },
+          ]}
+          irreversible="Funds are transferred immediately from your account to the stream contract. The stop time advances by the span they buy at the current rate. The amount must be an exact multiple of the rate per second."
+          confirmLabel="Top up"
+          busy={busy}
+          error={actionError ? <ErrorNotice error={actionError} /> : null}
+          onConfirm={() => void run("topUp")}
+          onCancel={() => {
+            setPending(null);
+            setTopUpAmount("");
+            setActionError(null);
+          }}
+        />
+      ) : null}
+
+      {pending === "extend" ? (
+        <Confirm
+          title="Extend this stream"
+          lines={[
+            {
+              label: "New end date",
+              value: (
+                <input
+                  type="datetime-local"
+                  value={extendDate}
+                  onChange={(e) => setExtendDate(e.target.value)}
+                  className="input"
+                />
+              ),
+            },
+            { label: "Contract", value: <Address value={position.contractId} /> },
+          ]}
+          irreversible="Funds covering the extra span are pulled from your account immediately. The new stop time must be later than the current one."
+          confirmLabel="Extend"
+          busy={busy}
+          error={actionError ? <ErrorNotice error={actionError} /> : null}
+          onConfirm={() => void run("extend")}
+          onCancel={() => {
+            setPending(null);
+            setExtendDate("");
             setActionError(null);
           }}
         />

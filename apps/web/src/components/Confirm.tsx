@@ -1,6 +1,9 @@
 "use client";
 
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+
+const FOCUSABLE_SELECTOR =
+  'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
 /**
  * Confirmation before consequence.
@@ -44,20 +47,87 @@ export function Confirm({
   onCancel: () => void;
 }) {
   const [mounted, setMounted] = useState(false);
-  useEffect(() => setMounted(true), []);
+  const modalRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    function onKey(event: KeyboardEvent) {
-      if (event.key === "Escape" && !busy) onCancel();
+    setMounted(true);
+    const previousActiveElement =
+      typeof document !== "undefined"
+        ? (document.activeElement as HTMLElement | null)
+        : null;
+
+    return () => {
+      if (previousActiveElement && typeof previousActiveElement.focus === "function") {
+        previousActiveElement.focus();
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!mounted) return;
+    const timer = setTimeout(() => {
+      if (modalRef.current) {
+        const focusable = modalRef.current.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR);
+        if (focusable.length > 0) {
+          focusable[0]?.focus();
+        } else {
+          modalRef.current.focus();
+        }
+      }
+    }, 0);
+    return () => clearTimeout(timer);
+  }, [mounted]);
+
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        if (!busy) onCancel();
+        return;
+      }
+
+      if (event.key === "Tab") {
+        if (!modalRef.current) return;
+        const focusable = Array.from(
+          modalRef.current.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR),
+        );
+        if (focusable.length === 0) {
+          event.preventDefault();
+          return;
+        }
+
+        const firstElement = focusable[0]!;
+        const lastElement = focusable[focusable.length - 1]!;
+
+        if (event.shiftKey) {
+          if (
+            document.activeElement === firstElement ||
+            !modalRef.current.contains(document.activeElement)
+          ) {
+            event.preventDefault();
+            lastElement.focus();
+          }
+        } else {
+          if (
+            document.activeElement === lastElement ||
+            !modalRef.current.contains(document.activeElement)
+          ) {
+            event.preventDefault();
+            firstElement.focus();
+          }
+        }
+      }
     }
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
   }, [busy, onCancel]);
 
   if (!mounted) return null;
 
   return (
     <div
+      ref={modalRef}
+      tabIndex={-1}
       className="modal-backdrop"
       role="dialog"
       aria-modal="true"

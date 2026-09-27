@@ -1,5 +1,6 @@
 import { ValidationError } from "../errors/index.js";
 import type { Stream } from "../types/index.js";
+import { requirePositive } from "../utils/amounts.js";
 import {
   addr,
   asBigInt,
@@ -60,9 +61,7 @@ export class StreamClient extends BaseClient {
     stop: bigint;
     cancellable: boolean;
   }): Promise<PreparedCall<void>> {
-    if (args.ratePerSecond <= 0n) {
-      throw new ValidationError("The rate must be greater than zero.");
-    }
+    requirePositive(args.ratePerSecond, "rate");
     if (args.stop <= args.start) {
       throw new ValidationError("The stream must stop after it starts.");
     }
@@ -87,6 +86,9 @@ export class StreamClient extends BaseClient {
    * Omit `amount` to withdraw everything currently available.
    */
   withdraw(amount?: bigint | null): Promise<PreparedCall<bigint>> {
+    if (amount !== undefined && amount !== null) {
+      requirePositive(amount, "withdrawal amount");
+    }
     return this.prepare("withdraw", [optionI128(amount ?? null)], parseAmount);
   }
 
@@ -106,9 +108,7 @@ export class StreamClient extends BaseClient {
    * the remainder.
    */
   topUp(amount: bigint): Promise<PreparedCall<void>> {
-    if (amount <= 0n) {
-      throw new ValidationError("The top-up must be greater than zero.");
-    }
+    requirePositive(amount, "top-up amount");
     return this.prepare("top_up", [i128(amount)], asVoid);
   }
 

@@ -1,5 +1,6 @@
 import { ValidationError } from "../errors/index.js";
 import type { Grant } from "../types/index.js";
+import { requirePositive } from "../utils/amounts.js";
 import {
   addr,
   asBigInt,
@@ -58,12 +59,8 @@ export class VestingClient extends BaseClient {
     duration: bigint;
     revocable: boolean;
   }): Promise<PreparedCall<void>> {
-    if (args.total <= 0n) {
-      throw new ValidationError("The grant total must be greater than zero.");
-    }
-    if (args.duration <= 0n) {
-      throw new ValidationError("The vesting duration must be greater than zero.");
-    }
+    requirePositive(args.total, "grant total");
+    requirePositive(args.duration, "vesting duration");
     if (args.cliff > args.duration) {
       throw new ValidationError(
         "The cliff cannot fall after the end of the schedule.",

@@ -1,5 +1,6 @@
 import { ValidationError } from "../errors/index.js";
 import type { Authorization } from "../types/index.js";
+import { requirePositive } from "../utils/amounts.js";
 import {
   addr,
   asBigInt,
@@ -63,12 +64,8 @@ export class RecurringClient extends BaseClient {
     /** Cap on the number of charges. Omit for open-ended. */
     maxPeriods?: number | null;
   }): Promise<PreparedCall<void>> {
-    if (args.amountPerPeriod <= 0n) {
-      throw new ValidationError("The amount per period must be greater than zero.");
-    }
-    if (args.periodSeconds <= 0n) {
-      throw new ValidationError("The period must be greater than zero seconds.");
-    }
+    requirePositive(args.amountPerPeriod, "amount per period");
+    requirePositive(args.periodSeconds, "period");
     if (args.maxPeriods !== undefined && args.maxPeriods !== null) {
       if (!Number.isInteger(args.maxPeriods) || args.maxPeriods < 1) {
         throw new ValidationError(
@@ -99,8 +96,8 @@ export class RecurringClient extends BaseClient {
   }
 
   /** Cancels the authorization immediately. Either party may call. */
-  cancel(caller: string): Promise<PreparedCall<void>> {
-    return this.prepare("cancel", [addr(caller)], asVoid);
+  cancel(): Promise<PreparedCall<void>> {
+    return this.prepare("cancel", [addr(this.options.publicKey!)], asVoid);
   }
 
   /**

@@ -1,6 +1,6 @@
 "use client";
 
-import { usePositions } from "@/components/PositionRegistry";
+import { usePositionCount } from "@/components/PositionRegistry";
 import type { PositionKind } from "@/lib/positions";
 import { useWallet } from "@/lib/wallet";
 
@@ -31,18 +31,7 @@ export function ConnectWalletCard() {
 }
 
 export function PositionCount({ kind }: { kind: PositionKind }) {
-  const positions = usePositions(kind);
+  const count = usePositionCount(kind);
 
-  return <span className="pill">{positions.length} tracked</span>;
-}
-
-export function SubscriptionCount() {
-  const subscriptions = usePositions("recurring");
-
-  return (
-    <>
-      <strong>{subscriptions.length}</strong> subscription
-      {subscriptions.length === 1 ? "" : "s"} tracked.
-    </>
-  );
+  return <span className="pill">{count} tracked</span>;
 }

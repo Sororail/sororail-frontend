@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
-import { FRIENDBOT_URL, shortAddress } from "@/lib/network";
+import { shortAddress } from "@/lib/network";
 import { useWallet } from "@/lib/wallet";
 
 const links = [
@@ -16,7 +16,8 @@ const links = [
 
 export function Nav() {
   const pathname = usePathname();
-  const { address, connect, disconnect, connecting, error } = useWallet();
+  const { address, connect, disconnect, connecting, error, networkError } =
+    useWallet();
 
   return (
     <nav className="nav">
@@ -32,6 +33,7 @@ export function Nav() {
               key={link.href}
               href={link.href}
               className={`nav__link${active ? " nav__link--active" : ""}`}
+              aria-current={active ? "page" : undefined}
             >
               {link.label}
             </Link>
@@ -63,15 +65,20 @@ export function Nav() {
 
       {error ? (
         <div className="nav__inner nav__feedback">
-          <div className="notice notice--error">
-            <div>{error}</div>
+          <div className="notice notice--error" role="alert">
+            <div>{error.message}</div>
+          </div>
+        </div>
+      ) : null}
+
+      {networkError ? (
+        <div className="nav__inner nav__feedback">
+          <div className="notice notice--error" role="alert">
+            <div className="notice__title">Wrong network in Freighter</div>
+            <div>{networkError}</div>
             <div className="notice__detail">
-              Freighter is the supported wallet. A testnet account also needs
-              funding —{" "}
-              <a href={FRIENDBOT_URL} target="_blank" rel="noreferrer">
-                friendbot
-              </a>{" "}
-              will do it.
+              Open Freighter, choose the network menu at the top, and select
+              Testnet. This page updates on its own once it matches.
             </div>
           </div>
         </div>

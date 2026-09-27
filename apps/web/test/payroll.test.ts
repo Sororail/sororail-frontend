@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { parseCsv, type ParsedLine } from "../src/lib/payroll";
+import {
+  parseCsv,
+  removeCsvLines,
+  type ParsedLine,
+} from "../src/lib/payroll";
 
 const VALID_ADDR = "GBRPYHIL2CI3WHZDTOOQFC6EB4KJJGUJSY3NXMOCLWEZDTWE47XLNZT7";
 const ANOTHER_ADDR = "GBRPYHIL2CI3WHZDTOOQFC6EB4KJJGUJSY3NXMOCLWEZDTWE47XLNZT7";
@@ -95,5 +99,39 @@ ${ANOTHER_ADDR},30`;
     expect(result[0]!.to).toBe("invalid");
     expect(result[0]!.amount).toBe("10");
     expect(result[0]!.error).toBeDefined();
+  });
+
+  it("handles quoted fields from spreadsheet exports", () => {
+    const csv = `"${VALID_ADDR}","12.50"`;
+    const result = parseCsv(csv);
+    expect(result).toHaveLength(1);
+    expect(result[0]!.to).toBe(VALID_ADDR);
+    expect(result[0]!.amount).toBe("12.50");
+    expect(result[0]!.stroops).toBe(125_000_000n);
+    expect(result[0]!.error).toBeUndefined();
+  });
+
+  it("handles quoted fields with spaces", () => {
+    const csv = `  "${VALID_ADDR}"  ,  "10"  `;
+    const result = parseCsv(csv);
+    expect(result).toHaveLength(1);
+    expect(result[0]!.to).toBe(VALID_ADDR);
+    expect(result[0]!.amount).toBe("10");
+    expect(result[0]!.stroops).toBe(100_000_000n);
+  });
+});
+
+describe("removeCsvLines", () => {
+  it("removes paid rows and preserves comments, blanks, and unpaid rows", () => {
+    const csv = [
+      "# September payroll",
+      `${VALID_ADDR},10`,
+      "",
+      `${ANOTHER_ADDR},20`,
+    ].join("\n");
+
+    expect(removeCsvLines(csv, [2])).toBe(
+      ["# September payroll", "", `${ANOTHER_ADDR},20`].join("\n"),
+    );
   });
 });

@@ -1,5 +1,9 @@
 "use client";
 
+import { StrKey } from "@stellar/stellar-sdk";
+
+import { RPC_URL } from "./network";
+
 /**
  * The registry of contract instances this browser knows about.
  *
@@ -17,7 +21,7 @@
  * If the contracts move to an id-keyed design, this file is what disappears.
  */
 
-export type PositionKind = "stream" | "vesting" | "escrow" | "recurring";
+export type PositionKind = "stream" | "vesting" | "escrow";
 
 export interface Position {
   kind: PositionKind;
@@ -25,23 +29,193 @@ export interface Position {
   /** A name the user gave it. Purely local; never on chain. */
   label: string;
   addedAt: number;
+  /** The network/RPC endpoint this position was added against. */
+  network: string;
 }
 
-const STORAGE_KEY = "sororail.positions.v1";
+const STORAGE_KEY_PREFIX = "sororail.positions";
+
+/**
+ * Schema version of the registry written by this build.
+ *
+ * The on-disk key carries the version (`sororail.positions.vN`) so a future
+ * build can read older keys and upgrade them — see `MIGRATIONS`.
+ */
+const SCHEMA_VERSION = 2;
+
+const STORAGE_KEY = `${STORAGE_KEY_PREFIX}.v${SCHEMA_VERSION}`;
+
+/**
+ * Versioned upgraders applied when reading. The key is the version being
+ * upgraded *from*; each step must produce data the next step (or the final
+ * validator) accepts, and steps chain until `SCHEMA_VERSION`.
+ *
+ * When the stored shape changes — say a `network` or `token` field is added —
+ * add a step here that fills the new field on every existing entry, then bump
+ * `SCHEMA_VERSION` and the key suffix. Without this hook `isPosition` would
+ * silently drop every pre-upgrade entry instead of upgrading it.
+ */
+const MIGRATIONS: Record<number, (data: unknown) => unknown> = {
+  1: (data) => {
+    if (!Array.isArray(data)) return [];
+    return data.map((entry) => {
+      if (typeof entry === "object" && entry !== null) {
+        return {
+          ...entry,
+          network: (entry as Record<string, unknown>)["network"] ?? RPC_URL,
+        };
+      }
+      return entry;
+    });
+  },
+};
+
+/** Listeners notified whenever the registry changes (this tab or another). */
+const storeListeners = new Set<() => void>();
+
+/**
+ * Snapshot caches. `useSyncExternalStore` requires `getSnapshot` to return a
+ * stable reference until the store actually changes, so sorted/filtered
+ * results are memoised and dropped together on invalidation.
+ */
+let allSnapshot: Position[] | null = null;
+const kindSnapshots = new Map<PositionKind, Position[]>();
+let countsSnapshot: Record<PositionKind, number> | null = null;
+
+function invalidateSnapshot(): void {
+  allSnapshot = null;
+  kindSnapshots.clear();
+  countsSnapshot = null;
+}
+
+function emit(): void {
+  invalidateSnapshot();
+  for (const listener of storeListeners) listener();
+}
+
+function handleStorageEvent(event: StorageEvent): void {
+  // `key === null` means the whole area was cleared.
+  if (event.key !== null && !event.key.startsWith(STORAGE_KEY_PREFIX)) return;
+  emit();
+}
+
+/**
+ * Subscribe to registry changes. Compatible with `useSyncExternalStore`:
+ * the returned function unsubscribes, and same-tab writes plus other-tab
+ * `storage` events both notify.
+ */
+export function subscribePositions(listener: () => void): () => void {
+  if (typeof window === "undefined") return () => {};
+  const first = storeListeners.size === 0;
+  storeListeners.add(listener);
+  if (first) window.addEventListener("storage", handleStorageEvent);
+  return () => {
+    storeListeners.delete(listener);
+    if (storeListeners.size === 0) {
+      window.removeEventListener("storage", handleStorageEvent);
+    }
+  };
+}
+
+/**
+ * Memoised registry snapshot for `useSyncExternalStore`.
+ *
+ * Returns the same array reference until the store changes, which React
+ * needs to compare snapshots, and reads localStorage during the first client
+ * render — not in an effect — so consumers never paint an empty state first.
+ */
+export function getPositionsSnapshot(kind?: PositionKind): Position[] {
+  if (!kind) {
+    if (allSnapshot === null) {
+      allSnapshot = read().sort((a, b) => b.addedAt - a.addedAt);
+    }
+    return allSnapshot;
+  }
+  let snapshot = kindSnapshots.get(kind);
+  if (!snapshot) {
+    snapshot = getPositionsSnapshot().filter((position) => position.kind === kind);
+    kindSnapshots.set(kind, snapshot);
+  }
+  return snapshot;
+}
+
+export function getPositionCountsSnapshot(): Record<PositionKind, number> {
+  if (countsSnapshot === null) {
+    const counts: Record<PositionKind, number> = {
+      stream: 0,
+      vesting: 0,
+      escrow: 0,
+    };
+    for (const position of getPositionsSnapshot()) {
+      if (position.kind in counts) {
+        counts[position.kind] += 1;
+      }
+    }
+    countsSnapshot = counts;
+  }
+  return countsSnapshot;
+}
+
+export function getPositionCountSnapshot(kind: PositionKind): number {
+  return getPositionCountsSnapshot()[kind] ?? 0;
+}
+
+/**
+ * Run stored JSON through the migration chain so entries written by older
+ * builds upgrade to the current schema instead of failing validation.
+ *
+ * `fromVersion` is the schema of the key the raw JSON came from. Returns
+ * `null` when a required step is missing (should not happen while steps are
+ * kept chained to `SCHEMA_VERSION`).
+ */
+function migrate(data: unknown, fromVersion: number): unknown | null {
+  let current = data;
+  let version = fromVersion;
+  while (version < SCHEMA_VERSION) {
+    const step = MIGRATIONS[version];
+    if (!step) return null;
+    current = step(current);
+    version += 1;
+  }
+  return current;
+}
 
 function read(): Position[] {
   if (typeof window === "undefined") return [];
-  try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (!raw) return [];
-    const parsed: unknown = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-    return parsed.filter(isPosition);
-  } catch {
-    // A corrupt or unreadable store must not take the app down; the contracts
-    // are the source of truth and the user can re-add addresses.
-    return [];
+
+  // Prefer the current key, then walk down to older versioned keys so data
+  // written before a schema bump is migrated rather than abandoned.
+  for (let version = SCHEMA_VERSION; version >= 1; version -= 1) {
+    let raw: string | null;
+    try {
+      raw = window.localStorage.getItem(`${STORAGE_KEY_PREFIX}.v${version}`);
+    } catch {
+      return [];
+    }
+    if (raw === null) continue;
+
+    try {
+      const parsed: unknown = JSON.parse(raw);
+      const upgraded = migrate(parsed, version);
+      if (upgraded === null || !Array.isArray(upgraded)) return [];
+      const positions = upgraded.filter(isPosition);
+      if (version < SCHEMA_VERSION) {
+        // Persist the upgrade under the current key so the next read starts
+        // clean. Best effort: a failed write is retried on the next load.
+        try {
+          window.localStorage.setItem(STORAGE_KEY, JSON.stringify(positions));
+        } catch {
+          // Quota or private browsing; the in-memory upgrade still applies.
+        }
+      }
+      return positions;
+    } catch {
+      // A corrupt or unreadable store must not take the app down; the contracts
+      // are the source of truth and the user can re-add addresses.
+      return [];
+    }
   }
+  return [];
 }
 
 function isPosition(value: unknown): value is Position {
@@ -53,9 +227,10 @@ function isPosition(value: unknown): value is Position {
     typeof candidate["addedAt"] === "number" &&
     Number.isFinite(candidate["addedAt"]) &&
     typeof candidate["kind"] === "string" &&
-    ["stream", "vesting", "escrow", "recurring"].includes(
+    ["stream", "vesting", "escrow"].includes(
       candidate["kind"] as string,
-    )
+    ) &&
+    typeof candidate["network"] === "string"
   );
 }
 
@@ -73,8 +248,7 @@ function write(positions: Position[]): boolean {
 }
 
 export function listPositions(kind?: PositionKind): Position[] {
-  const all = read().sort((a, b) => b.addedAt - a.addedAt);
-  return kind ? all.filter((p) => p.kind === kind) : all;
+  return getPositionsSnapshot(kind);
 }
 
 export function addPosition(
@@ -87,26 +261,44 @@ export function addPosition(
   if (existing.some((p) => p.contractId === trimmed)) return false;
   return write([
     ...existing,
-    { kind, contractId: trimmed, label: label.trim() || trimmed, addedAt: Date.now() },
+    {
+      kind,
+      contractId: normalized,
+      label: label.trim() || normalized,
+      addedAt: Date.now(),
+      network,
+    },
   ]);
+  return true;
 }
 
 export function removePosition(contractId: string): void {
-  write(read().filter((p) => p.contractId !== contractId));
+  const normalized = contractId.trim().toUpperCase();
+  write(read().filter((p) => p.contractId.toUpperCase() !== normalized));
 }
 
 /** Reinsert a previously removed position, e.g. from an undo toast. */
 export function restorePosition(position: Position): void {
+  const normalized = position.contractId.trim().toUpperCase();
   const existing = read();
-  if (existing.some((p) => p.contractId === position.contractId)) return;
-  write([...existing, position]);
+  if (
+    existing.some(
+      (p) =>
+        p.contractId.toUpperCase() === normalized &&
+        p.network === position.network,
+    )
+  ) {
+    return;
+  }
+  write([...existing, { ...position, contractId: normalized }]);
 }
 
 export function renamePosition(contractId: string, label: string): void {
   const trimmed = label.trim();
   if (!trimmed) return;
+  const normalized = contractId.trim().toUpperCase();
   write(
-    read().map((p) => (p.contractId === contractId ? { ...p, label: trimmed } : p)),
+    read().map((p) => (p.contractId.toUpperCase() === normalized ? { ...p, label: trimmed } : p)),
   );
 }
 
@@ -135,14 +327,34 @@ export function importPositions(json: string): ImportPositionsResult {
   if (!Array.isArray(parsed)) {
     throw new Error("Expected a JSON array of positions.");
   }
-  const incoming = parsed.filter(isPosition);
+  const upgraded = parsed.map((item) => {
+    if (
+      typeof item === "object" &&
+      item !== null &&
+      typeof (item as Record<string, unknown>)["network"] !== "string"
+    ) {
+      return { ...item, network: RPC_URL };
+    }
+    return item;
+  });
+  const incoming = upgraded.filter(isPosition);
   if (incoming.length === 0) {
     throw new Error("No valid positions found in that file.");
   }
 
   const existing = read();
-  const existingIds = new Set(existing.map((p) => p.contractId));
-  const toAdd = incoming.filter((p) => !existingIds.has(p.contractId));
+  const existingKeys = new Set(
+    existing.map((p) => `${p.network}::${p.contractId.toUpperCase()}`),
+  );
+  const toAdd: Position[] = [];
+  for (const p of incoming) {
+    const normalizedId = p.contractId.trim().toUpperCase();
+    const key = `${p.network}::${normalizedId}`;
+    if (!existingKeys.has(key)) {
+      existingKeys.add(key);
+      toAdd.push({ ...p, contractId: normalizedId });
+    }
+  }
 
   write([...existing, ...toAdd]);
 
@@ -151,5 +363,6 @@ export function importPositions(json: string): ImportPositionsResult {
 
 /** A contract address is a 56-character `C…` strkey. */
 export function looksLikeContractId(value: string): boolean {
-  return /^C[A-Z2-7]{55}$/.test(value.trim());
+  const trimmed = value.trim().toUpperCase();
+  return StrKey.isValidContract(trimmed);
 }

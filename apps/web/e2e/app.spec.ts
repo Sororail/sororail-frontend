@@ -11,6 +11,8 @@ import { expect, test, type Page } from "@playwright/test";
  */
 
 const STUB_ADDRESS = "GC4RWN3HH5H5GMD3NT4MOIYC3H3Q3NUF4BFWATGDI7NKRVLRURKHSIMC";
+const OTHER_ADDRESS = "GBZXN7PIRZGNMHGA7MUUUF4GWPY5AYPV6LY4UV2GL6VJGIQRXFDNMADI";
+const MAINNET_PASSPHRASE = "Public Global Stellar Network ; September 2015";
 
 /**
  * Waits for a connected session.
@@ -24,18 +26,40 @@ async function connect(page: Page) {
   await expect(page.getByText("Disconnect")).toBeVisible({ timeout: 10_000 });
 }
 
-/** Installs a fake Freighter that reports connected and returns an address. */
-async function stubWallet(page: Page, options: { connected?: boolean } = {}) {
+/**
+ * Installs a fake Freighter that reports connected and returns an address.
+ *
+ * `networkPassphrase` makes it report a network; `switchFreighterAccount`
+ * changes the selected account the way a user would inside the extension.
+ */
+async function stubWallet(
+  page: Page,
+  options: { connected?: boolean; networkPassphrase?: string } = {},
+) {
   const connected = options.connected ?? true;
   await page.addInitScript(
-    ({ address, isConnected }) => {
-      (globalThis as Record<string, unknown>)["freighterApi"] = {
+    ({ address, isConnected, networkPassphrase }) => {
+      let current = address;
+      const api: Record<string, unknown> = {
         isConnected: async () => isConnected,
-        getAddress: async () => ({ address }),
+        getAddress: async () => ({ address: current }),
         signTransaction: async (xdr: string) => ({ signedTxXdr: xdr }),
       };
+      if (networkPassphrase) {
+        api["getNetworkDetails"] = async () => ({ network: "", networkPassphrase });
+      }
+      (globalThis as Record<string, unknown>)["freighterApi"] = api;
+      (globalThis as Record<string, unknown>)["switchFreighterAccount"] = (
+        next: string,
+      ) => {
+        current = next;
+      };
     },
-    { address: STUB_ADDRESS, isConnected: connected },
+    {
+      address: STUB_ADDRESS,
+      isConnected: connected,
+      networkPassphrase: options.networkPassphrase ?? "",
+    },
   );
 }
 
@@ -81,7 +105,7 @@ test.describe("wallet", () => {
     await page.goto("/");
     await page.getByRole("button", { name: "Connect wallet" }).first().click();
     await expect(page.getByText(/Freighter was not found/i)).toBeVisible();
-    await expect(page.getByRole("link", { name: "friendbot" })).toBeVisible();
+    await expect(page.getByRole("link", { name: "friendbot" })).toHaveCount(0);
   });
 
   test("reports a locked wallet distinctly from a missing one", async ({ page }) => {
@@ -89,6 +113,63 @@ test.describe("wallet", () => {
     await page.goto("/");
     await page.getByRole("button", { name: "Connect wallet" }).first().click();
     await expect(page.getByText(/not connected/i)).toBeVisible();
+    await expect(page.getByRole("link", { name: "friendbot" })).toHaveCount(0);
+  });
+
+  test("does not suggest funding when Freighter returns no address", async ({
+    page,
+  }) => {
+    await page.addInitScript(() => {
+      (globalThis as Record<string, unknown>)["freighterApi"] = {
+        isConnected: async () => true,
+        getAddress: async () => ({ address: "" }),
+        signTransaction: async (xdr: string) => ({ signedTxXdr: xdr }),
+      };
+    });
+    await page.goto("/");
+    await page.getByRole("button", { name: "Connect wallet" }).first().click();
+    await expect(page.getByText(/did not return an address/i)).toBeVisible();
+    await expect(page.getByRole("link", { name: "friendbot" })).toHaveCount(0);
+  });
+
+  test("surfaces an unexpected restore failure", async ({ page }) => {
+    await page.addInitScript(() => {
+      (globalThis as Record<string, unknown>)["freighterApi"] = {
+        isConnected: async () => {
+          throw new Error("Freighter bridge crashed");
+        },
+      };
+    });
+    await page.goto("/");
+    await expect(page.getByText("Freighter bridge crashed")).toBeVisible();
+  });
+
+  test("follows an account switch made inside Freighter", async ({ page }) => {
+    await stubWallet(page);
+    await page.goto("/");
+    await connect(page);
+
+    await page.evaluate((next) => {
+      (
+        globalThis as unknown as { switchFreighterAccount: (a: string) => void }
+      ).switchFreighterAccount(next);
+      // Returning to the tab is when a switch made in the popup shows up.
+      window.dispatchEvent(new Event("focus"));
+    }, OTHER_ADDRESS);
+
+    const nav = page.locator("nav");
+    await expect(nav.locator(`[title="${OTHER_ADDRESS}"]`)).toBeVisible();
+    await expect(nav.locator(`[title="${STUB_ADDRESS}"]`)).toHaveCount(0);
+  });
+
+  test("asks to switch Freighter to Testnet when it is on another network", async ({
+    page,
+  }) => {
+    await stubWallet(page, { networkPassphrase: MAINNET_PASSPHRASE });
+    await page.goto("/");
+    await connect(page);
+    await expect(page.getByText("Wrong network in Freighter")).toBeVisible();
+    await expect(page.getByText(/Switch Freighter to Testnet/)).toBeVisible();
   });
 
   test("disconnect returns to the connect prompt", async ({ page }) => {
@@ -170,6 +251,37 @@ test.describe("payroll", () => {
     await dialog.getByRole("button", { name: "Cancel" }).click();
     await expect(dialog).not.toBeVisible();
   });
+
+  test("traps focus and sets initial focus inside the dialog", async ({
+    page,
+  }) => {
+    await page.locator("textarea").fill(`${STUB_ADDRESS},10`);
+    await page.getByRole("button", { name: /^Pay/ }).click();
+
+    const dialog = page.getByRole("dialog");
+    await expect(dialog).toBeVisible();
+
+    const cancelButton = dialog.getByRole("button", { name: "Cancel" });
+    const payButton = dialog.getByRole("button", { name: /^Pay/ });
+
+    // Initial focus lands inside the dialog (on the Cancel button)
+    await expect(cancelButton).toBeFocused();
+
+    // Tab moves focus forward to Pay
+    await page.keyboard.press("Tab");
+    await expect(payButton).toBeFocused();
+
+    // Tab wraps around to Cancel instead of escaping into the page
+    await page.keyboard.press("Tab");
+    await expect(cancelButton).toBeFocused();
+
+    // Shift+Tab wraps backwards to Pay
+    await page.keyboard.press("Shift+Tab");
+    await expect(payButton).toBeFocused();
+
+    await page.keyboard.press("Escape");
+    await expect(dialog).not.toBeVisible();
+  });
 });
 
 test.describe("position registry", () => {
@@ -207,6 +319,29 @@ test.describe("position registry", () => {
     await expect(stop).toHaveAttribute("title", /contract is untouched/i);
     await stop.click();
     await expect(page.getByText("No streams tracked yet")).toBeVisible();
+  });
+
+  test("warns when a position is from a different network", async ({ page }) => {
+    const contractId = "CBEE4SRXRGCJDWXP6DDOSX6FR4S2PJ5KHUQCHI3ABY3SQTCHYSA7CGC7";
+    await page.goto("/streams");
+    await page.evaluate((id) => {
+      window.localStorage.setItem(
+        "sororail.positions.v2",
+        JSON.stringify([
+          {
+            kind: "stream",
+            contractId: id,
+            label: "Old Network Stream",
+            addedAt: Date.now(),
+            network: "https://old-testnet-reset.stellar.org",
+          },
+        ]),
+      );
+    }, contractId);
+
+    await page.reload();
+    await expect(page.getByRole("heading", { name: "Old Network Stream" })).toBeVisible();
+    await expect(page.getByText("This position is from a different network.")).toBeVisible();
   });
 });
 

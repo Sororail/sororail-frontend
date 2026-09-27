@@ -11,25 +11,9 @@
  * The instance must be fresh: `init` claims an escrow contract permanently.
  */
 import { ContractError, EscrowClient, KeypairSigner, fromStroops } from "../src/index.js";
- testnet-rpc-validation-sdk-example-config
 import { NETWORK, RPC_URL, TOKEN, required } from "./_shared.js";
 
 import { TokenClient, checkEqual } from "./support.js";
-
-const RPC_URL = process.env["RPC_URL"] ?? "https://soroban-testnet.stellar.org";
-const NETWORK = process.env["NETWORK_PASSPHRASE"] ?? Networks.TESTNET;
-const TOKEN =
-  process.env["TOKEN_ID"] ?? "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC";
-
-function required(name: string): string {
-  const value = process.env[name];
-  if (!value) {
-    console.error(`Set ${name} before running this example.`);
-    process.exit(1);
-  }
-  return value;
-}
- main
 
 async function main(): Promise<void> {
   const signer = new KeypairSigner(required("SOROBAN_SECRET_KEY"));
@@ -88,7 +72,7 @@ async function main(): Promise<void> {
 
   // The depositor releases to the beneficiary. The beneficiary cannot do this
   // themselves -- that is the point of an escrow.
-  const release = await escrow.release(signer.publicKey);
+  const release = await escrow.release();
   console.log("release", (await release.signAndSend(signer)).hash);
   console.log("state  ", await escrow.state());
 

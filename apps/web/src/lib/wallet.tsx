@@ -1,12 +1,13 @@
 "use client";
 
-import type { Signer } from "@sororail/sdk";
+import type { FreighterSigner, Signer } from "@sororail/sdk";
 import {
   createContext,
   useCallback,
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -33,42 +34,113 @@ interface WalletState {
   address: string | null;
   signer: Signer | null;
   connecting: boolean;
-  error: string | null;
+  error: Error | null;
+  /**
+   * Set while Freighter is on a different network than the app, saying which
+   * network to switch to. Signing is refused until it clears.
+   */
+  networkError: string | null;
   connect: () => Promise<void>;
   disconnect: () => void;
+}
+
+/**
+ * How often the extension is re-read for account and network switches.
+ * Freighter has no change event, so this polls, and also re-checks whenever
+ * the tab regains focus — which is when a switch made in the extension
+ * popup usually becomes visible.
+ */
+const WALLET_WATCH_INTERVAL_MS = 3_000;
+
+/** The network-mismatch message for `signer`, or `null` when it matches. */
+async function networkErrorFor(signer: FreighterSigner): Promise<string | null> {
+  const { NetworkMismatchError } = await import("@sororail/sdk");
+  try {
+    await signer.assertNetwork(NETWORK_PASSPHRASE);
+    return null;
+  } catch (cause) {
+    if (cause instanceof NetworkMismatchError) return cause.message;
+    // The network could not be read (locked, older extension): signing will
+    // report whatever is actually wrong, so do not guess here.
+    return null;
+  }
+}
+
+/**
+ * Where an explicit Disconnect is remembered, so a reload or a new tab does
+ * not silently reconnect a user who chose to disconnect (#129).
+ */
+const DISCONNECTED_STORAGE_KEY = "sororail:wallet-disconnected";
+
+function readDisconnected(): boolean {
+  try {
+    return window.localStorage.getItem(DISCONNECTED_STORAGE_KEY) === "1";
+  } catch {
+    // Storage can be unavailable (private mode, blocked): fall back to
+    // in-memory behaviour rather than failing to render.
+    return false;
+  }
+}
+
+function writeDisconnected(value: boolean): void {
+  try {
+    if (value) window.localStorage.setItem(DISCONNECTED_STORAGE_KEY, "1");
+    else window.localStorage.removeItem(DISCONNECTED_STORAGE_KEY);
+  } catch {
+    /* Not persisted; the in-memory flag still applies for this page load. */
+  }
 }
 
 const WalletContext = createContext<WalletState | null>(null);
 
 export function WalletProvider({ children }: { children: ReactNode }) {
-  const [signer, setSigner] = useState<Signer | null>(null);
+  const [signer, setSigner] = useState<FreighterSigner | null>(null);
   const [connecting, setConnecting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<Error | null>(null);
+  const [networkError, setNetworkError] = useState<string | null>(null);
   /**
    * Set when the user explicitly disconnects, to stop the restore effect below
    * immediately reconnecting them. Without it, Disconnect would appear to do
    * nothing at all.
    */
-  const [disconnected, setDisconnected] = useState(false);
+  const [disconnected, setDisconnected] = useState(readDisconnected);
+  /**
+   * The handshake currently in progress, if any. `connect()` and the restore
+   * effect share it, so they can never run two `FreighterSigner.connect()`
+   * calls at once (#130).
+   */
+  const inFlightConnect = useRef<Promise<FreighterSigner> | null>(null);
+
+  const connectSigner = useCallback((): Promise<FreighterSigner> => {
+    if (!inFlightConnect.current) {
+      inFlightConnect.current = (async () => {
+        const { FreighterSigner } = await import("@sororail/sdk");
+        return FreighterSigner.connect();
+      })().finally(() => {
+        inFlightConnect.current = null;
+      });
+    }
+    return inFlightConnect.current;
+  }, []);
 
   const connect = useCallback(async () => {
     setConnecting(true);
     setError(null);
+    writeDisconnected(false);
     setDisconnected(false);
     try {
-      const { FreighterSigner } = await import("@sororail/sdk");
-      const connected = await FreighterSigner.connect();
+      const connected = await connectSigner();
       setSigner(connected);
     } catch (cause) {
       setError(
         cause instanceof Error
-          ? cause.message
-          : "Could not connect to a wallet.",
+          ? cause
+          : new Error("Could not connect to a wallet."),
       );
     } finally {
       setConnecting(false);
     }
-  }, []);
+  }, [connectSigner]);
 
   /**
    * Restores the session on load.
@@ -85,24 +157,88 @@ export function WalletProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (disconnected) return;
     let cancelled = false;
-    void import("@sororail/sdk")
-      .then(({ FreighterSigner }) => FreighterSigner.connect())
-      .then((restored) => {
-        if (!cancelled) setSigner(restored);
-      })
-      .catch(() => {
-        /* No wallet, locked, or not yet authorised. Stay disconnected. */
-      });
+    void (async () => {
+      try {
+        const { SigningError } = await import("@sororail/sdk");
+        try {
+          const restored = await connectSigner();
+          if (!cancelled) setSigner(restored);
+        } catch (cause) {
+          // Missing, locked, or not-yet-authorised wallets are normal while
+          // restoring. Anything else means the integration itself failed and
+          // must not be made to look like a disconnected wallet.
+          if (cause instanceof SigningError) return;
+          throw cause;
+        }
+      } catch (cause) {
+        console.error("Failed to restore the wallet session", cause);
+        if (!cancelled) {
+          setError(
+            cause instanceof Error
+              ? cause
+              : new Error("Could not restore the wallet session."),
+          );
+        }
+      }
+    })();
     return () => {
       cancelled = true;
     };
-  }, [disconnected]);
+  }, [disconnected, connectSigner]);
+
+  /**
+   * Follows account and network switches made inside the extension.
+   *
+   * `FreighterSigner` resolves its address once, at connect. Without this, a
+   * switch in Freighter left `address` — and every role check derived from it
+   * — on the old account until a manual disconnect and reconnect. When the
+   * active account changes, the signer is replaced by a fresh one for the new
+   * account; when the network stops matching, `networkError` says so.
+   */
+  useEffect(() => {
+    if (!signer) {
+      setNetworkError(null);
+      return;
+    }
+    let cancelled = false;
+
+    const check = async () => {
+      try {
+        const [active, mismatch] = await Promise.all([
+          signer.currentAddress(),
+          networkErrorFor(signer),
+        ]);
+        if (cancelled) return;
+        setNetworkError(mismatch);
+        if (active !== signer.publicKey) {
+          const { FreighterSigner } = await import("@sororail/sdk");
+          const switched = await FreighterSigner.connect();
+          if (!cancelled) setSigner(switched);
+        }
+      } catch {
+        /* Locked or revoked mid-session. Signing will say so; keep state. */
+      }
+    };
+
+    void check();
+    const interval = window.setInterval(() => void check(), WALLET_WATCH_INTERVAL_MS);
+    const onFocus = () => void check();
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onFocus);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onFocus);
+    };
+  }, [signer]);
 
   const disconnect = useCallback(() => {
     // Forgets the session locally. The extension stays connected to the site
     // until the user revokes it there, which is the extension's call to make.
     setSigner(null);
     setError(null);
+    writeDisconnected(true);
     setDisconnected(true);
   }, []);
 
@@ -112,10 +248,11 @@ export function WalletProvider({ children }: { children: ReactNode }) {
       signer,
       connecting,
       error,
+      networkError,
       connect,
       disconnect,
     }),
-    [signer, connecting, error, connect, disconnect],
+    [signer, connecting, error, networkError, connect, disconnect],
   );
 
   return (
@@ -129,18 +266,4 @@ export function useWallet(): WalletState {
     throw new Error("useWallet must be used inside a WalletProvider");
   }
   return context;
-}
-
-/** Client options every SDK client in this app shares. */
-export function useClientOptions(contractId: string) {
-  const { address } = useWallet();
-  return useMemo(
-    () => ({
-      contractId,
-      rpcUrl: RPC_URL,
-      networkPassphrase: NETWORK_PASSPHRASE,
-      ...(address ? { publicKey: address } : {}),
-    }),
-    [contractId, address],
-  );
 }

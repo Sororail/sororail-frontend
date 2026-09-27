@@ -2,6 +2,7 @@ import { nativeToScVal, type xdr } from "@stellar/stellar-sdk";
 
 import { ValidationError } from "../errors/index.js";
 import type { Payment, Receipt } from "../types/index.js";
+import { requirePositive } from "../utils/amounts.js";
 import { addr, asBigInt, asNumber, asRecord, i128, vec } from "../utils/scval.js";
 import { BaseClient, type PreparedCall } from "./base.js";
 
@@ -25,11 +26,7 @@ function validate(payments: readonly Payment[]): void {
     throw new ValidationError("The payment list is empty.");
   }
   for (const [index, payment] of payments.entries()) {
-    if (payment.amount <= 0n) {
-      throw new ValidationError(
-        `Payment ${index + 1} of ${payments.length} (to ${payment.to}) has a non-positive amount. Every line must be greater than zero.`,
-      );
-    }
+    requirePositive(payment.amount, `payment ${index + 1} of ${payments.length} (to ${payment.to})`);
   }
 }
 
@@ -78,9 +75,7 @@ export class BatchPayoutClient extends BaseClient {
     if (args.recipients.length === 0) {
       throw new ValidationError("The recipient list is empty.");
     }
-    if (args.amountEach <= 0n) {
-      throw new ValidationError("The amount must be greater than zero.");
-    }
+    requirePositive(args.amountEach, "amount");
     return this.prepare(
       "execute_equal",
       [

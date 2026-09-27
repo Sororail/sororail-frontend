@@ -21,6 +21,8 @@ describe("toStroops", () => {
     expect(toStroops(".5")).toBe(5_000_000n);
     expect(toStroops("3.")).toBe(30_000_000n);
     expect(toStroops("  1.25  ")).toBe(12_500_000n);
+    expect(toStroops("1,000")).toBe(10_000_000_000n);
+    expect(toStroops("1,234.50")).toBe(12_345_000_000n);
   });
 
   it("keeps precision that a float would lose", () => {
@@ -40,7 +42,7 @@ describe("toStroops", () => {
   });
 
   it("rejects things that are not decimal amounts", () => {
-    for (const bad of ["", "-", "abc", "1.2.3", "1e5", "0x10", "1,000"]) {
+    for (const bad of ["", "-", "abc", "1.2.3", "1e5", "0x10"]) {
       expect(() => toStroops(bad), bad).toThrow(ValidationError);
     }
   });
