@@ -21,6 +21,12 @@ import { SororailError } from "../src/errors/index.js";
 const ALICE = "GC4RWN3HH5H5GMD3NT4MOIYC3H3Q3NUF4BFWATGDI7NKRVLRURKHSIMC";
 const BOB = "GBZXN7PIRZGNMHGA7MUUUF4GWPY5AYPV6LY4UV2GL6VJGIQRXFDNMADI";
 
+// A fixed, known-matching pair, so the derived address can be asserted against
+// a literal rather than regenerated. Never use a fixture like this outside
+// tests: it is a real seed that anyone reading the repo now holds.
+const FIXTURE_SECRET = "SAAQQDYWDUSCWMRZIBDU4VK4MNVHC6D7Q2GZJG5CVGYLPPWFZTJ5U2HW";
+const FIXTURE_PUBLIC_KEY = "GDSAGCMYZ7K22FZDYFU7SVVKBOPLQYM3LGJL2YJMFL2CR26HT6G7BUY6";
+
 /** An unsigned one-operation transaction envelope for `source`. */
 function buildUnsignedXdr(source: string): string {
   return new TransactionBuilder(new Account(source, "1"), {
@@ -362,5 +368,98 @@ describe("SigningError / NetworkMismatchError", () => {
     expect(error).toBeInstanceOf(SororailError);
     expect(error.walletNetworkPassphrase).toBe(Networks.TESTNET);
     expect(error.expectedNetworkPassphrase).toBe(Networks.PUBLIC);
+  });
+});
+
+// Issue #244: sign a fixture transaction and verify the signature against the
+// public key, rather than only asserting that some signature exists.
+describe("KeypairSigner.signTransaction fixture signature (#244)", () => {
+  it("produces a signature the fixture public key verifies", async () => {
+    const signer = new KeypairSigner(FIXTURE_SECRET);
+    const xdr = buildUnsignedXdr(FIXTURE_PUBLIC_KEY);
+
+    const signed = await signer.signTransaction(xdr, {
+      networkPassphrase: Networks.TESTNET,
+    });
+
+    const tx = TransactionBuilder.fromXDR(signed, Networks.TESTNET);
+    expect(tx.signatures).toHaveLength(1);
+    expect(
+      Keypair.fromPublicKey(FIXTURE_PUBLIC_KEY).verify(
+        tx.hash(),
+        tx.signatures[0]!.signature,
+      ),
+    ).toBe(true);
+  });
+});
+
+// Issue #245: the derived G-address must match a known fixture secret.
+describe("KeypairSigner.publicKey and address (#245)", () => {
+  it("derives the G-address that matches the fixture secret", () => {
+    const signer = new KeypairSigner(FIXTURE_SECRET);
+
+    expect(signer.publicKey).toBe(FIXTURE_PUBLIC_KEY);
+    expect(signer.publicKey).toBe(Keypair.fromSecret(FIXTURE_SECRET).publicKey());
+  });
+
+  it("is a valid Ed25519 G-address", () => {
+    const signer = new KeypairSigner(FIXTURE_SECRET);
+
+    expect(signer.publicKey).toMatch(/^G[A-Z2-7]{55}$/);
+    expect(StrKey.isValidEd25519PublicKey(signer.publicKey)).toBe(true);
+  });
+});
+
+// Issue #246: a different passphrase from the extension must surface as a
+// NetworkMismatchError naming the network, on both API shapes.
+describe("FreighterSigner network mismatch (#246)", () => {
+  it("throws NetworkMismatchError when Freighter reports another passphrase", async () => {
+    const { api, signTransaction } = stubFreighter({ network: Networks.PUBLIC });
+    const signer = await FreighterSigner.connect(api);
+
+    const attempt = signer.signTransaction("AAAA", {
+      networkPassphrase: Networks.TESTNET,
+    });
+    await expect(attempt).rejects.toBeInstanceOf(NetworkMismatchError);
+    await expect(attempt).rejects.toMatchObject({
+      walletNetworkPassphrase: Networks.PUBLIC,
+      expectedNetworkPassphrase: Networks.TESTNET,
+    });
+    expect(signTransaction).not.toHaveBeenCalled();
+  });
+
+  it("catches a legacy getNetwork() name that disagrees", async () => {
+    const signTransaction = vi.fn(async (xdr: string) => xdr);
+    const api: FreighterApi = {
+      isConnected: async () => true,
+      getAddress: async () => ({ address: ALICE }),
+      getNetwork: async () => "PUBLIC",
+      signTransaction,
+    };
+    const signer = await FreighterSigner.connect(api);
+
+    await expect(
+      signer.signTransaction("AAAA", { networkPassphrase: Networks.TESTNET }),
+    ).rejects.toBeInstanceOf(NetworkMismatchError);
+    expect(signTransaction).not.toHaveBeenCalled();
+  });
+});
+
+// Issue #247: no extension must raise a clear SigningError, not crash reading
+// a property off an undefined global.
+describe("FreighterSigner when the extension is not installed (#247)", () => {
+  afterEach(() => {
+    delete (globalThis as { freighterApi?: FreighterApi }).freighterApi;
+  });
+
+  it("raises a clear SigningError, not an undefined property access", async () => {
+    delete (globalThis as { freighterApi?: FreighterApi }).freighterApi;
+
+    const attempt = FreighterSigner.connect();
+    await expect(attempt).rejects.toBeInstanceOf(SigningError);
+    await expect(attempt).rejects.not.toBeInstanceOf(TypeError);
+    await expect(attempt).rejects.toThrow(
+      "Freighter was not found. Install the extension and reload the page.",
+    );
   });
 });
