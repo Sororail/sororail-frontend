@@ -124,3 +124,49 @@ describe("StreamClient.get — parseStream field mapping", () => {
     await expect(new StreamClient(clientOptions).get()).rejects.toThrow(/cancelled_at/);
   });
 });
+
+describe("StreamClient.remaining", () => {
+  let rpc: ReturnType<typeof mockRpc>;
+
+  beforeEach(() => { rpc = mockRpc(); });
+  afterEach(() => { vi.restoreAllMocks(); });
+
+  it.each([
+    ["zero balance", 0n],
+    ["positive balance", 250_000_000n],
+    ["balance beyond JavaScript's safe integer range", 9_007_199_254_740_993n],
+  ] as const)("decodes a %s as an exact bigint", async (_label, amount) => {
+    rpc.simulateTransaction.mockResolvedValue(
+      simulation(nativeToScVal(amount, { type: "i128" })),
+    );
+
+    const result = await new StreamClient(clientOptions).remaining();
+
+    expect(result).toBe(amount);
+    expect(typeof result).toBe("bigint");
+    expect(rpc.getAccount).toHaveBeenCalledWith(PAYER);
+    expect(rpc.simulateTransaction).toHaveBeenCalledTimes(1);
+  });
+
+  it("simulates a zero-argument remaining call on the intended contract", async () => {
+    rpc.simulateTransaction.mockResolvedValue(
+      simulation(nativeToScVal(125n, { type: "i128" })),
+    );
+
+    await new StreamClient(clientOptions).remaining();
+
+    const transaction = rpc.simulateTransaction.mock.calls[0]![0];
+    const invocation = contractInvocation(transaction);
+    expect(Address.fromScAddress(invocation.contractAddress).toString()).toBe(CONTRACT);
+    expect(invocation.functionName.toString()).toBe("remaining");
+    expect(invocation.args).toEqual([]);
+  });
+
+  it("rejects a non-integer remaining return value instead of silently coercing it", async () => {
+    rpc.simulateTransaction.mockResolvedValue(simulation(xdr.ScVal.scvBool(true)));
+
+    await expect(new StreamClient(clientOptions).remaining())
+      .rejects.toThrow(ValidationError);
+    expect(rpc.simulateTransaction).toHaveBeenCalledTimes(1);
+  });
+});

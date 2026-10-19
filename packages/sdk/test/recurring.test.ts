@@ -335,3 +335,39 @@ describe("RecurringClient.charge", () => {
     await expect(result).rejects.toThrow(/amount/);
   });
 });
+
+describe("RecurringClient.cancel", () => {
+  it.each([
+    ["payer", PAYER],
+    ["payee", PAYEE],
+  ] as const)("encodes the %s caller as a Soroban address", async (_label, caller) => {
+    const call = await new RecurringClient({
+      ...clientOptions,
+      publicKey: caller,
+    }).cancel();
+
+    expect(rpc.getAccount).toHaveBeenCalledWith(caller);
+    expect(rpc.simulateTransaction).not.toHaveBeenCalled();
+
+    const invocation = contractInvocation(call);
+    expect(Address.fromScAddress(invocation.contractAddress).toString()).toBe(CONTRACT);
+    expect(invocation.functionName.toString()).toBe("cancel");
+    expect(invocation.args).toHaveLength(1);
+    expect(invocation.args[0]!.type).toBe("scvAddress");
+    expect(Address.fromScVal(invocation.args[0]!).toString()).toBe(caller);
+
+    rpc.simulateTransaction.mockResolvedValue(simulation(xdr.ScVal.scvVoid()));
+    await expect(call.simulate()).resolves.toBeUndefined();
+    expect(rpc.simulateTransaction).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects a missing caller before fetching an account or constructing a transaction", async () => {
+    const client = new RecurringClient({ ...clientOptions, publicKey: undefined });
+
+    // Address encoding can reject synchronously, before prepare() returns
+    // a Promise. This wrapper verifies both synchronous and async failures.
+    await expect(Promise.resolve().then(() => client.cancel())).rejects.toThrow();
+    expect(rpc.getAccount).not.toHaveBeenCalled();
+    expect(rpc.simulateTransaction).not.toHaveBeenCalled();
+  });
+});
