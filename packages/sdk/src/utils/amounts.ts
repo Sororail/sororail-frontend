@@ -32,7 +32,7 @@ export function toStroops(
   // human-pasted amounts like "1,234.50" work instead of failing with a
   // generic "not a valid decimal amount" error.
   const trimmed = amount.trim().replace(/,/g, "");
-  if (!/^-?\d*(\.\d*)?$/.test(trimmed) || trimmed === "" || trimmed === "-") {
+  if (!/^-?\d*(\.\d*)?$/.test(trimmed) || !/\d/.test(trimmed)) {
     throw new ValidationError(
       `"${amount}" is not a valid decimal amount. Use a plain string such as "12.50".`,
     );
@@ -87,6 +87,11 @@ export function fromStroops(
 /**
  * Formats an amount for display, keeping the token's full precision but
  * grouping the whole part so long figures stay readable in a table.
+ *
+ * @param amount - The raw amount in smallest units (bigint)
+ * @param options - Formatting options including custom decimals and locale
+ * @returns A locale-formatted decimal string
+ * @example formatAmount(12345678900000n) === "1,234,567.89"
  */
 export function formatAmount(
   amount: bigint,
@@ -102,7 +107,15 @@ export function formatAmount(
   return negative ? `-${body}` : body;
 }
 
-/** Asserts an amount is strictly positive, as every contract requires. */
+/**
+ * Asserts an amount is strictly positive (> 0n), as every contract requires.
+ *
+ * @param amount - The amount to validate
+ * @param label - Descriptive label for the amount field used in the error message
+ * @throws {ValidationError} When the amount is zero or negative
+ * @example requirePositive(100n, "deposit") // passes
+ * @example requirePositive(0n, "deposit") // throws ValidationError("The deposit must be greater than zero.")
+ */
 export function requirePositive(amount: bigint, label = "amount"): void {
   if (amount <= 0n) {
     throw new ValidationError(`The ${label} must be greater than zero.`);
