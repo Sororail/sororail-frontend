@@ -40,7 +40,7 @@
     "typecheck:examples": "tsc --noEmit -p tsconfig.examples.json"
   },
   "dependencies": {
-    "@stellar/stellar-sdk": "^17.0.1",
+    "@stellar/stellar-sdk": "^17.4.0",
     "sororail-frontend": "file:../.."
   },
   "devDependencies": {
@@ -49,6 +49,6 @@
     "tsx": "^4.23.13",
     "typedoc": "^0.28.0",
     "typescript": "^5.7.2",
-    "vitest": "^2.1.8"
+    "vitest": "^5.1.0"
   }
 }
