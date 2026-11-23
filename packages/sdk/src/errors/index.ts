@@ -27,11 +27,23 @@ export function contractForCode(code: number): ContractName {
   return "common";
 }
 
-/** Base class for everything this SDK throws. */
+/**
+ * Base class for everything this SDK throws.
+ *
+ * When an error wraps a failure from the RPC, a simulation or a transaction,
+ * the original object (the thrown error or the full RPC response) is kept on
+ * `cause`, so a bug report can include exactly what the network returned.
+ * `toString()` stays a one-line `Name: message` and never includes `cause`.
+ */
 export class SororailError extends Error {
   override readonly name: string = "SororailError";
   constructor(message: string, options?: { cause?: unknown }) {
     super(message, options);
+  }
+
+  /** `Name: message` on one line. The wrapped `cause` is never included. */
+  override toString(): string {
+    return `${this.name}: ${this.message}`;
   }
 
   toJSON() {
@@ -140,28 +152,39 @@ export function extractErrorCode(input: unknown): number | undefined {
  * readable message. Anything else becomes a {@link NetworkError} with the
  * original attached as `cause` — never a bare code, and never a silently
  * swallowed failure.
+ *
+ * The code and message are read from `input`. `cause` defaults to `input`;
+ * pass `options.cause` to attach a richer original instead, such as the full
+ * RPC response that `input` (its error string or result XDR) was taken from.
  */
-export function decodeError(input: unknown): SororailError {
+export function decodeError(input: unknown, options?: { cause?: unknown }): SororailError {
   if (input instanceof SororailError) return input;
 
+  const cause = options && "cause" in options ? options.cause : input;
   const code = extractErrorCode(input);
   if (code !== undefined) {
     const variant = errorCodeNames.get(code);
     if (variant) {
-      return new ContractError(code, variant, errorMessages[variant], {
-        cause: input,
-      });
+      return new ContractError(code, variant, errorMessages[variant], { cause });
     }
     return new ContractError(
       code,
       "Unknown",
       `The contract failed with code ${code}, which this version of the SDK does not recognise. It may be newer than the SDK.`,
-      { cause: input },
+      { cause },
     );
   }
 
-  const message = input instanceof Error ? input.message : String(input);
-  return new NetworkError(message, { cause: input });
+  // Keep the message (and so `toString`) short and readable: a non-string,
+  // non-Error input such as an RPC response object would otherwise render as
+  // "[object Object]" or a whole XDR dump. The object itself is on `cause`.
+  const message =
+    input instanceof Error
+      ? input.message
+      : typeof input === "string"
+        ? input
+        : "The network returned an error. See `cause` for the original response.";
+  return new NetworkError(message, { cause });
 }
 
 /** Rethrows `input` as a typed SoroRail error. Never returns. */

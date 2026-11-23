@@ -18,6 +18,7 @@
       "types": "./dist/signers/stellar-wallets-kit.d.ts",
       "import": "./dist/signers/stellar-wallets-kit.js",
       "require": "./dist/signers/stellar-wallets-kit.cjs"
+    },
     "./errors": {
       "types": "./dist/errors/index.d.ts",
       "import": "./dist/errors/index.js",

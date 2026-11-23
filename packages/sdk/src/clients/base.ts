@@ -140,11 +140,14 @@ export class PreparedCall<T> {
     }
 
     if (rpc.Api.isSimulationError(response)) {
-      throw decodeError(response.error);
+      // Decode from the error string, but keep the whole response (events,
+      // ledger) as the cause for diagnosis.
+      throw decodeError(response.error, { cause: response });
     }
     if (!rpc.Api.isSimulationSuccess(response)) {
       throw new NetworkError(
         "The simulation did not complete. The network may be restoring archived state.",
+        { cause: response },
       );
     }
 
@@ -174,11 +177,14 @@ export class PreparedCall<T> {
     }
 
     if (rpc.Api.isSimulationError(response)) {
-      throw decodeError(response.error);
+      // Decode from the error string, but keep the whole response (events,
+      // ledger) as the cause for diagnosis.
+      throw decodeError(response.error, { cause: response });
     }
     if (!rpc.Api.isSimulationSuccess(response)) {
       throw new NetworkError(
         "The simulation did not complete. The network may be restoring archived state.",
+        { cause: response },
       );
     }
 
@@ -228,7 +234,9 @@ export class PreparedCall<T> {
       throw new NetworkError("Could not submit the transaction.", { cause });
     }
     if (sent.status === "ERROR") {
-      throw decodeError(sent.errorResult ?? "The network rejected the transaction.");
+      throw decodeError(sent.errorResult ?? "The network rejected the transaction.", {
+        cause: sent,
+      });
     }
 
     const confirmed = await this.#confirm(sent.hash, options?.signal);
@@ -263,11 +271,13 @@ export class PreparedCall<T> {
     if (response.status === "NOT_FOUND") {
       throw new NetworkError(
         `The transaction (${hash}) was not visible on the network in time. It may still land — check the hash before retrying.`,
+        { cause: response },
       );
     }
     throw decodeError(
       (response as { resultXdr?: unknown }).resultXdr ??
         `Transaction ${hash} failed.`,
+      { cause: response },
     );
   }
 }

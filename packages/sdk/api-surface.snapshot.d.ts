@@ -510,12 +510,21 @@ export type { ErrorCodeName, ErrorCodeValue } from "./codes.js";
 export type ContractName = "escrow" | "stream" | "vesting" | "recurring" | "batch_payout" | "common";
 /** Maps a code to the contract that owns its reserved range. */
 export declare function contractForCode(code: number): ContractName;
-/** Base class for everything this SDK throws. */
+/**
+ * Base class for everything this SDK throws.
+ *
+ * When an error wraps a failure from the RPC, a simulation or a transaction,
+ * the original object (the thrown error or the full RPC response) is kept on
+ * `cause`, so a bug report can include exactly what the network returned.
+ * `toString()` stays a one-line `Name: message` and never includes `cause`.
+ */
 export declare class SororailError extends Error {
     readonly name: string;
     constructor(message: string, options?: {
         cause?: unknown;
     });
+    /** `Name: message` on one line. The wrapped `cause` is never included. */
+    toString(): string;
     toJSON(): {
         name: string;
         message: string;
@@ -574,8 +583,14 @@ export declare function extractErrorCode(input: unknown): number | undefined;
  * readable message. Anything else becomes a {@link NetworkError} with the
  * original attached as `cause` — never a bare code, and never a silently
  * swallowed failure.
+ *
+ * The code and message are read from `input`. `cause` defaults to `input`;
+ * pass `options.cause` to attach a richer original instead, such as the full
+ * RPC response that `input` (its error string or result XDR) was taken from.
  */
-export declare function decodeError(input: unknown): SororailError;
+export declare function decodeError(input: unknown, options?: {
+    cause?: unknown;
+}): SororailError;
 /** Rethrows `input` as a typed SoroRail error. Never returns. */
 export declare function throwDecoded(input: unknown): never;
 
