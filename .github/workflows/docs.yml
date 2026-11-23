@@ -28,7 +28,7 @@ jobs:
       - uses: ./.github/actions/setup
         with:
           node-version: "22"
-      - uses: actions/configure-pages@v5
+      - uses: actions/configure-pages@v6
       # The site includes the example sources from packages/sdk/examples, so the whole repo is needed.
       - run: pnpm --filter @sororail/docs build
       - uses: actions/upload-pages-artifact@v3
