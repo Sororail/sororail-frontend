@@ -28,7 +28,7 @@ jobs:
       # packages" PR, which is the dry run. Publishing needs the repository
       # variable SDK_PUBLISH_ENABLED=true and the NPM_TOKEN secret. See
       # .changeset/README.md.
-      - uses: changesets/action@v1
+      - uses: changesets/action@v2
         with:
           version: pnpm changeset version
           publish: ${{ vars.SDK_PUBLISH_ENABLED == 'true' && 'pnpm changeset publish' || '' }}
